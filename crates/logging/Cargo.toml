@@ -1,0 +1,27 @@
+[package]
+edition = "2024"
+name = "kamu-logging"
+version = "0.1.0"
+
+[features]
+default = ["logging-actix-web"]
+logging-actix-web = ["tracing-actix-web"]
+
+[dependencies]
+console = "0.15"
+thiserror = "2"
+tracing = "0.1"
+tracing-actix-web = { version = "0.7", optional = true }
+tracing-journald = "0.3"
+tracing-log = "0.2"
+tracing-subscriber = { version = "0.3", features = [
+    "ansi",
+    "chrono",
+    "env-filter",
+    "fmt",
+    "json",
+    "registry",
+    "smallvec",
+    "std",
+    "tracing-log",
+] }
