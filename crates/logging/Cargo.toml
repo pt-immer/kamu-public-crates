@@ -1,20 +1,26 @@
 [package]
 edition = "2024"
+license = "MIT"
 name = "kamu-logging"
-version = "0.1.0"
+version = "0.1.1"
 
 [features]
-default = ["logging-actix-web"]
+console_error_panic_hook = ["dep:console_error_panic_hook"]
+default = ["systemd"]
 logging-actix-web = ["tracing-actix-web"]
+logging-journald = ["tracing-journald"]
+systemd = ["console", "logging-actix-web", "logging-journald", "tracing-subscriber"]
+wasm32 = ["console_error_panic_hook", "wasm-tracing"]
 
 [dependencies]
-console = "0.15"
+console = { version = "0.15", optional = true }
+console_error_panic_hook = { version = "0.1.7", optional = true }
 thiserror = "2"
 tracing = "0.1"
 tracing-actix-web = { version = "0.7", optional = true }
-tracing-journald = "0.3"
+tracing-journald = { version = "0.3", optional = true }
 tracing-log = "0.2"
-tracing-subscriber = { version = "0.3", features = [
+tracing-subscriber = { version = "0.3", optional = true, features = [
     "ansi",
     "chrono",
     "env-filter",
@@ -25,3 +31,6 @@ tracing-subscriber = { version = "0.3", features = [
     "std",
     "tracing-log",
 ] }
+wasm-tracing = { git = "https://github.com/pt-immer/wasm-tracing.git", version = "2.0.0", features = [
+    "tracing-log",
+], optional = true }
