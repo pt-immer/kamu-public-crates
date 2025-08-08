@@ -1,8 +1,16 @@
 [package]
+authors = ["IMMER's Developers <dev@immer.com>"]
+categories = ["asynchronous", "development-tools::debugging", "wasm"]
+description = "Small helper crate to configure structured logging for IMMER's services using the tracing ecosystem."
+documentation = "https://docs.rs/kamu-logging"
 edition = "2024"
+keywords = ["actix", "logging", "systemd", "tracing", "wasm"]
 license = "MIT"
 name = "kamu-logging"
-version = "0.1.1"
+publish = true
+readme = "README.md"
+repository = "https://github.com/pt-immer/kamu-logging"
+version = "0.1.3"
 
 [features]
 console_error_panic_hook = ["dep:console_error_panic_hook"]
@@ -13,14 +21,14 @@ systemd = ["console", "logging-actix-web", "logging-journald", "tracing-subscrib
 wasm32 = ["console_error_panic_hook", "wasm-tracing"]
 
 [dependencies]
-console = { version = "0.15", optional = true }
-console_error_panic_hook = { version = "0.1.7", optional = true }
-thiserror = "2"
-tracing = "0.1"
-tracing-actix-web = { version = "0.7", optional = true }
-tracing-journald = { version = "0.3", optional = true }
-tracing-log = "0.2"
-tracing-subscriber = { version = "0.3", optional = true, features = [
+console = { version = "~0.16", optional = true }
+console_error_panic_hook = { version = "~0.1.7", optional = true }
+thiserror = "~2"
+tracing = "~0.1"
+tracing-actix-web = { version = "~0.7", optional = true }
+tracing-journald = { version = "~0.3", optional = true }
+tracing-log = "~0.2"
+tracing-subscriber = { version = "~0.3", optional = true, features = [
     "ansi",
     "chrono",
     "env-filter",
@@ -31,6 +39,6 @@ tracing-subscriber = { version = "0.3", optional = true, features = [
     "std",
     "tracing-log",
 ] }
-wasm-tracing = { git = "https://github.com/pt-immer/wasm-tracing.git", version = "2.0.0", features = [
+wasm-tracing = { git = "https://github.com/pt-immer/wasm-tracing.git", version = "~2.1.0", features = [
     "tracing-log",
 ], optional = true }
