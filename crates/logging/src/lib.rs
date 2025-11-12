@@ -1,16 +1,30 @@
 #[cfg(all(feature = "systemd", feature = "wasm32"))]
 compile_error!("Feature \"systemd\" can't be combined with \"wasm32\".");
 
+#[cfg(all(feature = "with-actix-web", feature = "wasm32"))]
+compile_error!("Feature \"with-actix-web\" can't be combined with \"wasm32\".");
+
 #[cfg(not(any(feature = "systemd", feature = "wasm32")))]
 compile_error!("At least feature \"systemd\" or \"wasm32\" must be enabled.");
 
-#[cfg(debug_assertions)]
-#[cfg(feature = "systemd")]
+#[cfg(all(debug_assertions, feature = "systemd"))]
 const TRACING_FILTER: &str = "debug";
-#[cfg(not(debug_assertions))]
-#[cfg(feature = "systemd")]
+#[cfg(all(not(debug_assertions), feature = "systemd"))]
 const TRACING_FILTER: &str = "info";
 
+#[cfg(feature = "wasm32")]
+static WASM32_LOG_INIT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+#[cfg(feature = "wasm32")]
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("{0}")]
+    IO(#[from] std::io::Error),
+    #[error("{0}")]
+    TracingGlobal(#[from] tracing::subscriber::SetGlobalDefaultError),
+}
+
+#[cfg(feature = "systemd")]
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("{0}")]
@@ -25,7 +39,7 @@ pub fn init() -> std::result::Result<(), Error> {
     #[cfg(feature = "systemd")]
     init_systemd()?;
     #[cfg(feature = "wasm32")]
-    init_wasm32()?;
+    init_wasm32();
 
     tracing::info!("Logging initialized");
 
@@ -63,14 +77,14 @@ fn init_systemd() -> std::result::Result<(), Error> {
 }
 
 #[cfg(feature = "wasm32")]
-fn init_wasm32() -> std::result::Result<(), Error> {
-    console_error_panic_hook::set_once();
-    wasm_tracing::set_as_global_default();
-
-    Ok(())
+fn init_wasm32() {
+    let _ = WASM32_LOG_INIT.get_or_init(|| {
+        console_error_panic_hook::set_once();
+        let _ = wasm_tracing::try_set_as_global_default();
+    });
 }
 
-#[cfg(feature = "logging-actix-web")]
+#[cfg(feature = "with-actix-web")]
 pub fn get_actix_web_logger()
 -> tracing_actix_web::TracingLogger<tracing_actix_web::DefaultRootSpanBuilder> {
     tracing_actix_web::TracingLogger::default()
