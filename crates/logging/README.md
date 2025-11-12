@@ -14,10 +14,10 @@ platform.
 
 * **WASM (`wasm32` feature)** – On WebAssembly targets the crate installs
   [`console_error_panic_hook`](https://docs.rs/console_error_panic_hook)
-  to improve panic messages and configures the [`wasm‑tracing`](https://github.com/pt-immer/wasm-tracing)
+  to improve panic messages and configures the [`wasm‑tracing`](https://github.com/dsgallups/wasm-tracing)
   subscriber.
 
-* **Actix Web (`logging‑actix‑web` feature)** – Exposes a
+* **Actix Web (`with-actix-web` feature)** – Exposes a
   `get_actix_web_logger()` function returning an Actix Web middleware
   logger.
 
