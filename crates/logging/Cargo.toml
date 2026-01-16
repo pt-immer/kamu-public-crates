@@ -10,7 +10,7 @@ name = "kamu-logging"
 publish = true
 readme = "README.md"
 repository = "https://github.com/pt-immer/kamu-logging"
-version = "0.1.3"
+version = "0.1.4"
 
 [features]
 default = ["systemd", "with-actix-web"]
