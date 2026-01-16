@@ -7,6 +7,9 @@ compile_error!("Feature \"with-actix-web\" can't be combined with \"wasm32\".");
 #[cfg(not(any(feature = "systemd", feature = "wasm32")))]
 compile_error!("At least feature \"systemd\" or \"wasm32\" must be enabled.");
 
+/// basic re-exports
+pub use tracing::{debug, error, info, trace, warn};
+
 #[cfg(all(debug_assertions, feature = "systemd"))]
 const TRACING_FILTER: &str = "debug";
 #[cfg(all(not(debug_assertions), feature = "systemd"))]
@@ -67,9 +70,14 @@ fn init_systemd() -> std::result::Result<(), Error> {
         ))?;
     } else {
         let journald_layer = tracing_journald::layer()?;
+        let fmt_layer = tracing_subscriber::fmt::layer()
+            .with_ansi(false)
+            .with_writer(std::io::stderr);
+        let subscriber_with_journald =
+            tracing_subscriber::layer::SubscriberExt::with(subscriber, journald_layer);
         tracing::subscriber::set_global_default(tracing_subscriber::layer::SubscriberExt::with(
-            subscriber,
-            journald_layer,
+            subscriber_with_journald,
+            fmt_layer,
         ))?;
     }
 
