@@ -4,5 +4,6 @@
 target/
 
 **/*.rs.bk
-Cargo.lock.bak
 *.swp
+Cargo.lock
+Cargo.lock.bak
