@@ -1,0 +1,8 @@
+.idea/
+.vscode/
+.env
+target/
+
+**/*.rs.bk
+Cargo.lock.bak
+*.swp
