@@ -1,0 +1,40 @@
+# cargo-deny configuration for kamu-iso3166.
+#
+# The embedded ISO 3166 CSV data is licensed under CC BY-SA 4.0 (vendored
+# from github.com/ipregistry/iso3166). The crate's source code is Apache-2.0.
+# CC-BY-SA-4.0 is explicitly allowed here to cover the NOTICE-documented
+# attribution; it is not mixed into compiled binaries.
+
+[graph]
+all-features = true
+
+[advisories]
+ignore = []
+version = 2
+yanked = "deny"
+
+[licenses]
+allow = [
+    "Apache-2.0 WITH LLVM-exception",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC-BY-SA-4.0",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+]
+confidence-threshold = 0.8
+version = 2
+
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+
+[sources]
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+unknown-git = "deny"
+unknown-registry = "deny"

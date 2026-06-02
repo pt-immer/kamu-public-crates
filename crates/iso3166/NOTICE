@@ -1,0 +1,33 @@
+kamu-iso3166
+Copyright 2026 PT. IMMER
+
+This product includes software developed at PT. IMMER and is licensed under the
+Apache License, Version 2.0. See the LICENSE file for the full license text.
+
+<!-- markdownlint-disable MD022 -->
+--------------------------------------------------------------------------------
+Third-party data attribution
+--------------------------------------------------------------------------------
+<!-- markdownlint-disable MD022 -->
+
+This crate embeds ISO 3166 data compiled from the `ipregistry/iso3166`
+repository:
+
+    Upstream:  https://github.com/ipregistry/iso3166
+    Commit:    1224d32fecbec52b21dc5b18e327fa9c09cb1c92
+    License:   Creative Commons Attribution-ShareAlike 4.0 International
+               (CC BY-SA 4.0)
+    URL:       https://creativecommons.org/licenses/by-sa/4.0/
+
+Required attribution (per upstream README):
+
+    "This site or product includes Ipregistry ISO 3166 data available from
+     https://ipregistry.co."
+
+Downstream consumers of this crate that redistribute the embedded data (either
+as-is or in derived form) must preserve this attribution and honor the
+ShareAlike terms of CC BY-SA 4.0 with respect to the data. The crate source
+code itself remains under the Apache-2.0 license; the CC BY-SA 4.0 terms apply
+to the compiled-in ISO 3166 tables only.
+
+See `VENDORED.md` for fetch metadata and checksums.
