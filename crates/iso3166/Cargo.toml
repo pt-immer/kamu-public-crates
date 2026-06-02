@@ -1,0 +1,56 @@
+[package]
+authors = [
+    "PT. IMMER Contributors <https://github.com/pt-immer>",
+    "PT. IMMER Engineers <https://github.com/orgs/pt-immer/teams/engineering>",
+]
+categories = ["internationalization", "no-std", "parser-implementations"]
+description = "Zero-allocation, no_std-compatible ISO 3166-1 and ISO 3166-2 primitives"
+documentation = "https://docs.rs/kamu-iso3166"
+edition = "2024"
+include = [
+    "CHANGELOG.md",
+    "Cargo.toml",
+    "LICENSE",
+    "NOTICE",
+    "README.md",
+    "VENDORED.md",
+    "build.rs",
+    "build/**/*.rs",
+    "src/**/*.rs",
+    "vendor/iso3166-csv/LICENSE.txt",
+    "vendor/iso3166-csv/README.md",
+    "vendor/iso3166-csv/countries.csv",
+    "vendor/iso3166-csv/subdivisions.csv",
+]
+keywords = ["country", "embedded", "iso3166", "no-std", "subdivision"]
+license = "Apache-2.0"
+name = "kamu-iso3166"
+readme = "README.md"
+repository = "https://github.com/pt-immer/kamu-iso3166"
+rust-version = "1.85"
+version = "0.1.0"
+
+[features]
+alloc = ["serde?/alloc"]
+default = ["std"]
+serde = ["dep:serde"]
+std = ["phf/std", "serde?/std"]
+
+[dependencies]
+phf = { version = "0.13.1", default-features = false }
+serde = { version = "1.0.228", default-features = false, optional = true }
+thiserror = { version = "2.0.18", default-features = false }
+
+[build-dependencies]
+csv = "1.4.0"
+phf_codegen = "0.13.1"
+proc-macro2 = "1.0.106"
+quote = "1.0.45"
+
+[dev-dependencies]
+proptest = "1.11.0"
+serde_json = "1.0.149"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
