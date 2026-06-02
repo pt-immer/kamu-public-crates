@@ -15,7 +15,7 @@ Each crate versions and releases independently — see its own `CHANGELOG.md`.
 
 ## Layout
 
-```
+```text
 kamu-public-crates/
 ├── Cargo.toml            # workspace: shared package metadata, deps, lints
 ├── crates/
@@ -39,9 +39,11 @@ Common tasks are wrapped in a [`Justfile`](Justfile):
 
 ```sh
 just            # list recipes
-just ci         # fmt-check + clippy + test + doc + deny + nostd
-just test       # workspace tests + kamu-iso3166 feature permutations
-just cov        # kamu-iso3166 coverage gate
+just check-all  # lint-all + test-all + cov-all + doc + cross builds + deny
+just ci         # check-all + publish dry-run (the full pipeline)
+just test-all   # workspace tests + kamu-iso3166 feature permutations
+just cov-all    # coverage gates for both crates
+just lint-all   # rustfmt + clippy + Markdown + TOML + spelling
 ```
 
 Without `just`:

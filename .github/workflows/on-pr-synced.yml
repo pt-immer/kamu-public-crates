@@ -97,6 +97,23 @@ jobs:
           submodules: true
       - uses: EmbarkStudios/cargo-deny-action@v2
 
+  lint-docs:
+    name: lint docs (markdown / toml / spelling)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: taplo-cli,typos-cli
+      - run: npm install --no-fund --no-audit
+      - run: npx markdownlint-cli2 "**/*.md"
+      - run: taplo fmt --check
+      - run: taplo lint
+      - run: typos
+
   publish-dry-run:
     name: cargo publish --dry-run
     runs-on: ubuntu-latest

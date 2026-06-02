@@ -31,15 +31,15 @@ wasm-tracing = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tracing-subscriber = { workspace = true, optional = true, features = [
-    "ansi",
-    "chrono",
-    "env-filter",
-    "fmt",
-    "json",
-    "registry",
-    "smallvec",
-    "std",
-    "tracing-log",
+  "ansi",
+  "chrono",
+  "env-filter",
+  "fmt",
+  "json",
+  "registry",
+  "smallvec",
+  "std",
+  "tracing-log",
 ] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
