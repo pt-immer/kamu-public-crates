@@ -140,13 +140,19 @@ jobs:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
-      # The data-heavy crate carries the coverage gate; generated tables and the
-      # build script are excluded from the denominator.
-      - run: >
+      # The data-heavy crate carries the strict coverage gate; generated tables
+      # and the build script are excluded from the denominator.
+      - name: kamu-iso3166 coverage (>= 98% lines)
+        run: >
           cargo llvm-cov -p kamu-iso3166 --all-features
           --ignore-filename-regex 'generated|build/'
-          --fail-under-lines 95
+          --fail-under-lines 98
           --lcov --output-path lcov.info
+      # kamu-logging's global-subscriber + journald/tty branches are
+      # environment-bound and can't be reached on a headless runner, so its gate
+      # is lower. It can't use --all-features (systemd XOR wasm32).
+      - name: kamu-logging coverage (>= 70% lines)
+        run: cargo llvm-cov -p kamu-logging --fail-under-lines 70
       - uses: actions/upload-artifact@v7
         with:
           name: lcov

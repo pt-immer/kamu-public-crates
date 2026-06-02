@@ -49,11 +49,23 @@ pub fn init() -> std::result::Result<(), Error> {
     Ok(())
 }
 
+/// The default tracing directive when `RUST_LOG` is unset: `debug` in debug
+/// builds, `info` in release builds.
+#[cfg(feature = "systemd")]
+fn default_filter() -> tracing_subscriber::EnvFilter {
+    tracing_subscriber::EnvFilter::new(TRACING_FILTER)
+}
+
+/// Resolve the env filter from `RUST_LOG`, falling back to [`default_filter`].
+#[cfg(feature = "systemd")]
+fn resolve_env_filter() -> tracing_subscriber::EnvFilter {
+    tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| default_filter())
+}
+
 #[cfg(feature = "systemd")]
 fn init_systemd() -> std::result::Result<(), Error> {
     tracing_log::LogTracer::init()?;
-    let filter_layer = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(TRACING_FILTER));
+    let filter_layer = resolve_env_filter();
     let subscriber =
         tracing_subscriber::layer::SubscriberExt::with(tracing_subscriber::registry(), filter_layer);
 
@@ -91,4 +103,66 @@ fn init_wasm32() {
 #[cfg(feature = "with-actix-web")]
 pub fn get_actix_web_logger() -> tracing_actix_web::TracingLogger<tracing_actix_web::DefaultRootSpanBuilder> {
     tracing_actix_web::TracingLogger::default()
+}
+
+#[cfg(all(test, feature = "systemd"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tracing_filter_matches_build_profile() {
+        #[cfg(debug_assertions)]
+        assert_eq!(TRACING_FILTER, "debug");
+        #[cfg(not(debug_assertions))]
+        assert_eq!(TRACING_FILTER, "info");
+    }
+
+    #[test]
+    fn default_filter_encodes_the_constant() {
+        let shown = default_filter().to_string();
+        assert!(
+            shown.to_ascii_lowercase().contains(TRACING_FILTER),
+            "default filter {shown:?} should encode {TRACING_FILTER:?}",
+        );
+    }
+
+    #[test]
+    fn resolve_env_filter_is_usable_regardless_of_environment() {
+        // Whether or not RUST_LOG is set in the test environment, this must
+        // yield a usable, non-empty filter.
+        assert!(!resolve_env_filter().to_string().is_empty());
+    }
+
+    #[test]
+    fn global_default_error_is_wrapped_and_displayed() {
+        use tracing::subscriber::set_global_default;
+        // Only this test installs the process-global subscriber, so its first
+        // call is the process's first and always succeeds; the second fails.
+        set_global_default(tracing_subscriber::registry()).expect("first set_global_default");
+        let raw = set_global_default(tracing_subscriber::registry())
+            .expect_err("a second set_global_default must fail");
+        let err = Error::from(raw);
+        assert!(matches!(err, Error::TracingGlobal(_)));
+        assert!(!err.to_string().is_empty());
+        assert!(format!("{err:?}").contains("TracingGlobal"));
+        assert!(std::error::Error::source(&err).is_some());
+    }
+
+    #[test]
+    fn log_tracer_error_is_wrapped_and_displayed() {
+        // The `log` global logger is a separate one-shot; only this test installs it.
+        tracing_log::LogTracer::init().expect("first LogTracer::init");
+        let raw = tracing_log::LogTracer::init().expect_err("a second LogTracer::init must fail");
+        let err = Error::from(raw);
+        assert!(matches!(err, Error::TracingLog(_)));
+        assert!(!err.to_string().is_empty());
+        assert!(format!("{err:?}").contains("TracingLog"));
+        assert!(std::error::Error::source(&err).is_some());
+    }
+
+    #[cfg(feature = "with-actix-web")]
+    #[test]
+    fn actix_web_logger_is_constructible() {
+        let _logger = get_actix_web_logger();
+    }
 }
