@@ -64,7 +64,7 @@ pub fn emit(countries: &[Country], subs: &[Subdivision]) -> TokenStream {
         };
         quote! {
             Subdivision {
-                parent: crate::one::Alpha2::#parent,
+                parent: crate::country::Alpha2::#parent,
                 code: #code,
                 name: #name,
                 language: #lang,
@@ -77,8 +77,7 @@ pub fn emit(countries: &[Country], subs: &[Subdivision]) -> TokenStream {
 
     let total = subs.len();
     let total_lit = Literal::usize_unsuffixed(total);
-    let sub_phf_values =
-        subs.iter().enumerate().map(|(i, _)| format!("{i}usize")).collect::<Vec<_>>();
+    let sub_phf_values = subs.iter().enumerate().map(|(i, _)| format!("{i}usize")).collect::<Vec<_>>();
 
     // Per-country offsets (subdivisions are already sorted by parent order).
     // Emit a match arm per Alpha2 with its (start, end) slice.
@@ -110,7 +109,7 @@ pub fn emit(countries: &[Country], subs: &[Subdivision]) -> TokenStream {
         let (start, end) = *offsets.get(c.alpha2.as_str()).unwrap_or(&(0, 0));
         let s = Literal::usize_unsuffixed(start);
         let e = Literal::usize_unsuffixed(end);
-        quote! { crate::one::Alpha2::#a2 => &ALL_SUBDIVISIONS[#s..#e] }
+        quote! { crate::country::Alpha2::#a2 => &ALL_SUBDIVISIONS[#s..#e] }
     });
 
     // phf map: subdivision code -> index into ALL_SUBDIVISIONS
@@ -170,7 +169,7 @@ pub fn emit(countries: &[Country], subs: &[Subdivision]) -> TokenStream {
 
         #[doc(hidden)]
         #[allow(clippy::match_same_arms)]
-        pub(crate) fn subdivisions_of_generated(a: crate::one::Alpha2) -> &'static [Subdivision] {
+        pub(crate) fn subdivisions_of_generated(a: crate::country::Alpha2) -> &'static [Subdivision] {
             match a { #(#subs_by_country_arms,)* }
         }
 

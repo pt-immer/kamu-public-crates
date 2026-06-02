@@ -41,20 +41,27 @@ These may be consumed in a future version.
 
 ## Schema notes (for codegen)
 
-### `countries.csv` (250 rows + header)
+### `countries.csv` (249 data rows)
 
 Columns: `country_code_alpha2`, `country_code_alpha3`, `numeric_code`,
-`name_short`, `name_long`. Country names are in English.
+`name_short`, `name_long`. Country names are in English. Comment lines begin
+with `#`. This yields `Alpha2::COUNT == 249`.
 
-### `subdivisions.csv` (6261 rows + header)
+### `subdivisions.csv` (6260 data rows → 5046 distinct codes)
 
 Columns: `country_code_alpha2`, `subdivision_code_iso3166-2`,
 `subdivision_name`, `language_code`, `parent_subdivision`, `category`,
-`localVariant`. Each subdivision appears on exactly one row; the
-`language_code` identifies the language the `subdivision_name` is written in
-(most subdivisions do **not** have English names available — only ~23% use
-`en`). The crate therefore exposes subdivision names in their upstream-provided
-language (documented on the public accessor).
+`localVariant`. A subdivision **code** may appear on multiple rows, one per
+language variant; the `language_code` identifies the language the
+`subdivision_name` is written in (most subdivisions do **not** have English
+names available — only ~23% use `en`, and some rows carry no language tag at
+all). `build.rs` keeps one row per code, preferring `en` and otherwise the
+first occurrence, yielding `SUBDIVISION_COUNT == 5046`. Names are therefore
+exposed in their upstream-provided language (documented on the public
+accessor).
+
+These two cardinalities are pinned in `tests/codegen_invariants.rs`; a
+submodule bump that changes them will fail CI until reviewed.
 
 Distinct `category` values: ~100. The `Category` enum is generated with
 `#[non_exhaustive]` + named variants for every value present at the pinned
@@ -81,8 +88,12 @@ This notice is present in the top-level `NOTICE` file and the crate README.
 
 ## Updating the pinned commit
 
-1. `cd vendor/iso3166-csv && git fetch && git checkout <new-sha> && cd ../..`
-2. `git add vendor/iso3166-csv`
+All paths are relative to the workspace root.
+
+1. `cd crates/iso3166/vendor/iso3166-csv && git fetch && git checkout <new-sha> && cd -`
+2. `git add crates/iso3166/vendor/iso3166-csv`
 3. Update the **Pinned commit**, **Fetch date**, and checksum rows above.
-4. Re-run `cargo build` and full test suite.
-5. Commit with a message referencing the upstream SHA change.
+4. Update the pinned cardinalities in `crates/iso3166/tests/codegen_invariants.rs`
+   (`EXPECTED_COUNTRIES`, `EXPECTED_SUBDIVISIONS`) if they changed.
+5. Re-run `cargo build -p kamu-iso3166` and the full test suite.
+6. Commit with a message referencing the upstream SHA change.

@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0]
+
+Moved into the [`kamu-libs`](https://github.com/pt-immer/kamu-public-crates) workspace.
+
+### Changed
+
+- **Breaking:** module `one` renamed to `country` and `two` to `subdivision`.
+  The old paths remain as `#[deprecated]` aliases and will be removed later.
+- Dual-licensed under `MIT OR Apache-2.0` (previously Apache-2.0 only). The
+  vendored ISO 3166 data remains under CC BY-SA 4.0.
+
+### Added
+
+- `Alpha2::iter()`, `Alpha3::iter()`, and `Subdivision::iter()`.
+- `Numeric::new(u16) -> Option<Self>`, a `const`, `Option`-returning constructor.
+- Extreme test coverage: exhaustive sweeps over all countries and subdivisions,
+  property-based parser fuzzing, and pinned codegen-cardinality guards.
+
 ## [0.1.0]
 
 Initial release.

@@ -1,8 +1,8 @@
 use core::fmt;
 use core::str::FromStr;
 
+use crate::country::{Alpha2, Alpha3, Numeric};
 use crate::error::ParseCountryError;
-use crate::one::{Alpha2, Alpha3, Numeric};
 
 impl Alpha2 {
     /// Canonical uppercase two-letter string form (e.g. `"ID"`).
@@ -54,7 +54,7 @@ impl Alpha2 {
             upper[i] = b.to_ascii_uppercase();
         }
         let key = core::str::from_utf8(&upper).map_err(|_| ParseCountryError::NonAscii)?;
-        crate::one::ALPHA2_BY_STR.get(key).copied().ok_or(ParseCountryError::InvalidAlpha2)
+        crate::country::ALPHA2_BY_STR.get(key).copied().ok_or(ParseCountryError::InvalidAlpha2)
     }
 
     /// Parse a two-letter code, case-insensitively.
@@ -69,8 +69,13 @@ impl Alpha2 {
     ///
     /// Returns an empty slice if the country has no subdivisions in the vendored dataset.
     #[must_use]
-    pub fn subdivisions(self) -> &'static [crate::two::Subdivision] {
-        crate::two::subdivisions_of(self)
+    pub fn subdivisions(self) -> &'static [crate::subdivision::Subdivision] {
+        crate::subdivision::subdivisions_of(self)
+    }
+
+    /// Iterate over every assigned ISO 3166-1 alpha-2 code, in ascending numeric order.
+    pub fn iter() -> impl Iterator<Item = Alpha2> {
+        Self::ALL.iter().copied()
     }
 }
 

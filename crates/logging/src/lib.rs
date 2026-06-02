@@ -54,10 +54,8 @@ fn init_systemd() -> std::result::Result<(), Error> {
     tracing_log::LogTracer::init()?;
     let filter_layer = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(TRACING_FILTER));
-    let subscriber = tracing_subscriber::layer::SubscriberExt::with(
-        tracing_subscriber::registry(),
-        filter_layer,
-    );
+    let subscriber =
+        tracing_subscriber::layer::SubscriberExt::with(tracing_subscriber::registry(), filter_layer);
 
     if console::Term::stdout().is_term() {
         let fmt_layer = tracing_subscriber::fmt::layer()
@@ -70,9 +68,7 @@ fn init_systemd() -> std::result::Result<(), Error> {
         ))?;
     } else {
         let journald_layer = tracing_journald::layer()?;
-        let fmt_layer = tracing_subscriber::fmt::layer()
-            .with_ansi(false)
-            .with_writer(std::io::stderr);
+        let fmt_layer = tracing_subscriber::fmt::layer().with_ansi(false).with_writer(std::io::stderr);
         let subscriber_with_journald =
             tracing_subscriber::layer::SubscriberExt::with(subscriber, journald_layer);
         tracing::subscriber::set_global_default(tracing_subscriber::layer::SubscriberExt::with(
@@ -93,7 +89,6 @@ fn init_wasm32() {
 }
 
 #[cfg(feature = "with-actix-web")]
-pub fn get_actix_web_logger()
--> tracing_actix_web::TracingLogger<tracing_actix_web::DefaultRootSpanBuilder> {
+pub fn get_actix_web_logger() -> tracing_actix_web::TracingLogger<tracing_actix_web::DefaultRootSpanBuilder> {
     tracing_actix_web::TracingLogger::default()
 }

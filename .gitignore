@@ -1,0 +1,8 @@
+target/
+**/*.rs.bk
+*.swp
+.idea/
+.vscode/
+.env
+
+# Cargo.lock IS committed at the workspace root for reproducible CI.

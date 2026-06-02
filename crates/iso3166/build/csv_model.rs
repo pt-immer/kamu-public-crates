@@ -37,9 +37,9 @@ pub fn read_countries<P: AsRef<Path>>(path: P) -> Vec<Country> {
         if r.len() != 5 {
             panic!("{}: row {} has {} fields, expected 5", path.display(), i, r.len());
         }
-        let numeric: u16 = r[2].parse().unwrap_or_else(|e| {
-            panic!("{}: row {}: numeric '{}' parse: {e}", path.display(), i, &r[2])
-        });
+        let numeric: u16 = r[2]
+            .parse()
+            .unwrap_or_else(|e| panic!("{}: row {}: numeric '{}' parse: {e}", path.display(), i, &r[2]));
         out.push(Country {
             alpha2: r[0].to_string(),
             alpha3: r[1].to_string(),
@@ -80,16 +80,8 @@ pub fn read_countries<P: AsRef<Path>>(path: P) -> Vec<Country> {
     for c in &out {
         assert_eq!(c.alpha2.len(), 2, "alpha2 wrong length: {}", c.alpha2);
         assert_eq!(c.alpha3.len(), 3, "alpha3 wrong length: {}", c.alpha3);
-        assert!(
-            c.alpha2.bytes().all(|b| b.is_ascii_uppercase()),
-            "alpha2 not uppercase ASCII: {}",
-            c.alpha2
-        );
-        assert!(
-            c.alpha3.bytes().all(|b| b.is_ascii_uppercase()),
-            "alpha3 not uppercase ASCII: {}",
-            c.alpha3
-        );
+        assert!(c.alpha2.bytes().all(|b| b.is_ascii_uppercase()), "alpha2 not uppercase ASCII: {}", c.alpha2);
+        assert!(c.alpha3.bytes().all(|b| b.is_ascii_uppercase()), "alpha3 not uppercase ASCII: {}", c.alpha3);
         assert!(c.numeric <= 999, "numeric out of 3-digit range: {}", c.numeric);
     }
     out
@@ -104,8 +96,7 @@ pub fn read_subdivisions<P: AsRef<Path>>(path: P, countries: &[Country]) -> Vec<
         .from_path(path)
         .unwrap_or_else(|e| panic!("open {}: {e}", path.display()));
 
-    let known: std::collections::BTreeSet<&str> =
-        countries.iter().map(|c| c.alpha2.as_str()).collect();
+    let known: std::collections::BTreeSet<&str> = countries.iter().map(|c| c.alpha2.as_str()).collect();
 
     let mut out = Vec::new();
     for (i, rec) in rdr.records().enumerate() {
@@ -164,11 +155,7 @@ pub fn read_subdivisions<P: AsRef<Path>>(path: P, countries: &[Country]) -> Vec<
     // Validate format: XX-YYY where XX matches parent, YYY is 1-3 ASCII alnum uppercase.
     for s in &out {
         let bytes = s.code.as_bytes();
-        assert!(
-            bytes.len() >= 4 && bytes.len() <= 6,
-            "subdivision code length out of range: {}",
-            s.code
-        );
+        assert!(bytes.len() >= 4 && bytes.len() <= 6, "subdivision code length out of range: {}", s.code);
         assert_eq!(&s.code[..2], s.parent, "subdivision code prefix != parent: {}", s.code);
         assert_eq!(&s.code[2..3], "-", "subdivision code missing '-': {}", s.code);
         for b in &bytes[3..] {
