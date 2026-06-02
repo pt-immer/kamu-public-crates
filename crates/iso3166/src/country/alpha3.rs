@@ -1,8 +1,8 @@
 use core::fmt;
 use core::str::FromStr;
 
+use crate::country::{Alpha2, Alpha3, Numeric};
 use crate::error::ParseCountryError;
-use crate::one::{Alpha2, Alpha3, Numeric};
 
 impl Alpha3 {
     /// Canonical uppercase three-letter string form (e.g. `"IDN"`).
@@ -53,7 +53,7 @@ impl Alpha3 {
             upper[i] = b.to_ascii_uppercase();
         }
         let key = core::str::from_utf8(&upper).map_err(|_| ParseCountryError::NonAscii)?;
-        crate::one::ALPHA3_BY_STR.get(key).copied().ok_or(ParseCountryError::InvalidAlpha3)
+        crate::country::ALPHA3_BY_STR.get(key).copied().ok_or(ParseCountryError::InvalidAlpha3)
     }
 
     /// Parse a three-letter code, case-insensitively.
@@ -62,6 +62,11 @@ impl Alpha3 {
     /// See [`ParseCountryError`].
     pub fn try_from_str(s: &str) -> Result<Self, ParseCountryError> {
         Self::try_from_bytes(s.as_bytes())
+    }
+
+    /// Iterate over every assigned ISO 3166-1 alpha-3 code, in ascending numeric order.
+    pub fn iter() -> impl Iterator<Item = Alpha3> {
+        Self::ALL.iter().copied()
     }
 }
 

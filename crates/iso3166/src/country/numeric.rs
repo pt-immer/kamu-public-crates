@@ -3,8 +3,8 @@
 use core::fmt;
 use core::str::FromStr;
 
+use crate::country::{Alpha2, Alpha3};
 use crate::error::ParseCountryError;
-use crate::one::{Alpha2, Alpha3};
 
 /// ISO 3166-1 numeric country code (`0..=999`).
 ///
@@ -33,16 +33,29 @@ impl Numeric {
         self.0
     }
 
+    /// Construct a [`Numeric`] from a `u16`, returning `None` unless `value` is
+    /// an assigned ISO 3166-1 numeric country code.
+    ///
+    /// This is the `const`, `Option`-returning counterpart to
+    /// [`Numeric::try_from_u16`] (which reports a precise [`ParseCountryError`]).
+    #[must_use]
+    pub const fn new(value: u16) -> Option<Self> {
+        if value > 999 {
+            return None;
+        }
+        if crate::country::numeric_to_alpha2_generated(value).is_some() { Some(Numeric(value)) } else { None }
+    }
+
     /// Convert to [`Alpha2`] if this numeric code is assigned.
     #[must_use]
     pub const fn to_alpha2(self) -> Option<Alpha2> {
-        crate::one::numeric_to_alpha2_generated(self.0)
+        crate::country::numeric_to_alpha2_generated(self.0)
     }
 
     /// Convert to [`Alpha3`] if this numeric code is assigned.
     #[must_use]
     pub const fn to_alpha3(self) -> Option<Alpha3> {
-        crate::one::numeric_to_alpha3_generated(self.0)
+        crate::country::numeric_to_alpha3_generated(self.0)
     }
 
     /// Try to construct a [`Numeric`] from an integer, validating that it
@@ -55,7 +68,7 @@ impl Numeric {
         if value > 999 {
             return Err(ParseCountryError::NumericOutOfRange);
         }
-        if crate::one::numeric_to_alpha2_generated(value).is_some() {
+        if crate::country::numeric_to_alpha2_generated(value).is_some() {
             Ok(Numeric(value))
         } else {
             Err(ParseCountryError::InvalidNumeric)

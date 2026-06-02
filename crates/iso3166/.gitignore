@@ -1,9 +1,0 @@
-.idea/
-.vscode/
-.env
-target/
-
-**/*.rs.bk
-*.swp
-Cargo.lock
-Cargo.lock.bak

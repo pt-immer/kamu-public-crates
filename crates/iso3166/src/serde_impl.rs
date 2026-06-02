@@ -11,8 +11,8 @@
 use core::fmt;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
-use crate::one::{Alpha2, Alpha3, Numeric};
-use crate::two::{Category, Subdivision};
+use crate::country::{Alpha2, Alpha3, Numeric};
+use crate::subdivision::{Category, Subdivision};
 
 impl Serialize for Alpha2 {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
@@ -103,7 +103,7 @@ impl<'de> Deserialize<'de> for Category {
                 f.write_str("ISO 3166-2 subdivision category string")
             }
             fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
-                crate::two::category_from_known_str(v).ok_or_else(|| {
+                crate::subdivision::category_from_known_str(v).ok_or_else(|| {
                     de::Error::custom(
                         "unknown ISO 3166-2 subdivision category; `Category::Other` \
                          variants cannot be deserialized because the crate stores no \

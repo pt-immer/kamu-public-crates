@@ -1,8 +1,9 @@
 kamu-iso3166
 Copyright 2026 PT. IMMER
 
-This product includes software developed at PT. IMMER and is licensed under the
-Apache License, Version 2.0. See the LICENSE file for the full license text.
+This product includes software developed at PT. IMMER and is dual-licensed
+under MIT OR Apache-2.0. See the LICENSE-MIT and LICENSE-APACHE files for the
+full license texts.
 
 <!-- markdownlint-disable MD022 -->
 --------------------------------------------------------------------------------
@@ -27,7 +28,7 @@ Required attribution (per upstream README):
 Downstream consumers of this crate that redistribute the embedded data (either
 as-is or in derived form) must preserve this attribution and honor the
 ShareAlike terms of CC BY-SA 4.0 with respect to the data. The crate source
-code itself remains under the Apache-2.0 license; the CC BY-SA 4.0 terms apply
-to the compiled-in ISO 3166 tables only.
+code itself is dual-licensed under MIT OR Apache-2.0; the CC BY-SA 4.0 terms
+apply to the compiled-in ISO 3166 tables only.
 
 See `VENDORED.md` for fetch metadata and checksums.

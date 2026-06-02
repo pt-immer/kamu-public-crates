@@ -1,16 +1,17 @@
 [package]
-authors = ["IMMER's Developers <dev@immer.com>"]
-categories = ["asynchronous", "development-tools::debugging", "wasm"]
+name = "kamu-logging"
+version = "0.1.4"
 description = "Small helper crate to configure structured logging for IMMER's services using the tracing ecosystem."
 documentation = "https://docs.rs/kamu-logging"
-edition = "2024"
+categories = ["asynchronous", "development-tools::debugging", "wasm"]
 keywords = ["actix", "logging", "systemd", "tracing", "wasm"]
-license = "MIT"
-name = "kamu-logging"
-publish = true
 readme = "README.md"
-repository = "https://github.com/pt-immer/kamu-logging"
-version = "0.1.4"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 
 [features]
 default = ["systemd", "with-actix-web"]
@@ -19,17 +20,17 @@ wasm32 = ["dep:console_error_panic_hook", "dep:tracing-subscriber", "dep:wasm-tr
 with-actix-web = ["dep:tracing-actix-web"]
 
 [dependencies]
-console = { version = "~0.16", optional = true }
-console_error_panic_hook = { version = "~0.1.7", optional = true }
-thiserror = "~2"
-tracing = "~0.1"
-tracing-actix-web = { version = "~0.7", optional = true }
-tracing-journald = { version = "~0.3", optional = true }
-tracing-log = { version = "~0.2", optional = true }
-wasm-tracing = { version = "~2.1.0", features = ["tracing-log"], optional = true }
+thiserror = { workspace = true, features = ["std"] }
+tracing = { workspace = true }
+console = { workspace = true, optional = true }
+console_error_panic_hook = { workspace = true, optional = true }
+tracing-actix-web = { workspace = true, optional = true }
+tracing-journald = { workspace = true, optional = true }
+tracing-log = { workspace = true, optional = true }
+wasm-tracing = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tracing-subscriber = { version = "~0.3", optional = true, features = [
+tracing-subscriber = { workspace = true, optional = true, features = [
     "ansi",
     "chrono",
     "env-filter",
@@ -42,7 +43,7 @@ tracing-subscriber = { version = "~0.3", optional = true, features = [
 ] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-tracing-subscriber = { version = "~0.3", optional = true, default-features = false, features = [
-    "alloc",
-    "fmt",
-] }
+tracing-subscriber = { workspace = true, optional = true, features = ["alloc", "fmt"] }
+
+[lints]
+workspace = true

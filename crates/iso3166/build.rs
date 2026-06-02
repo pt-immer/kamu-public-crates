@@ -28,8 +28,7 @@ fn main() {
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR not set"));
 
     let countries = csv_model::read_countries("vendor/iso3166-csv/countries.csv");
-    let subdivisions =
-        csv_model::read_subdivisions("vendor/iso3166-csv/subdivisions.csv", &countries);
+    let subdivisions = csv_model::read_subdivisions("vendor/iso3166-csv/subdivisions.csv", &countries);
 
     let one_ts = codegen_one::emit(&countries);
     write_formatted(&out_dir.join("one_generated.rs"), one_ts.to_string());

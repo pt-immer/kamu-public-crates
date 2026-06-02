@@ -1,8 +1,8 @@
 use core::fmt;
 use core::str::FromStr;
 
+use crate::country::Alpha2;
 use crate::error::ParseSubdivisionError;
-use crate::one::Alpha2;
 
 use super::generated::Category;
 
@@ -52,17 +52,20 @@ impl Subdivision {
         for (i, &b) in bytes.iter().enumerate() {
             upper[i] = b.to_ascii_uppercase();
         }
-        let key = core::str::from_utf8(&upper[..bytes.len()])
-            .map_err(|_| ParseSubdivisionError::NonAscii)?;
+        let key = core::str::from_utf8(&upper[..bytes.len()]).map_err(|_| ParseSubdivisionError::NonAscii)?;
 
         // Validate parent part first so callers get a precise error.
         Alpha2::try_from_bytes(&upper[..2]).map_err(|_| ParseSubdivisionError::InvalidParent)?;
 
-        let idx = super::SUBDIVISION_BY_CODE
-            .get(key)
-            .copied()
-            .ok_or(ParseSubdivisionError::UnknownSubdivision)?;
+        let idx =
+            super::SUBDIVISION_BY_CODE.get(key).copied().ok_or(ParseSubdivisionError::UnknownSubdivision)?;
         Ok(&super::ALL_SUBDIVISIONS[idx])
+    }
+
+    /// Iterate over every ISO 3166-2 subdivision, sorted by parent country
+    /// numeric code then subdivision code.
+    pub fn iter() -> impl Iterator<Item = &'static Subdivision> {
+        super::ALL_SUBDIVISIONS.iter()
     }
 }
 

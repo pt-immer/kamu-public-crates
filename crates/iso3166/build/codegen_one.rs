@@ -80,10 +80,8 @@ pub fn emit(countries: &[Country]) -> TokenStream {
     // Count constant.
     let count = countries.len();
     let count_lit = Literal::usize_unsuffixed(count);
-    let a2_phf_values =
-        countries.iter().map(|c| format!("Alpha2::{}", c.alpha2)).collect::<Vec<_>>();
-    let a3_phf_values =
-        countries.iter().map(|c| format!("Alpha3::{}", c.alpha3)).collect::<Vec<_>>();
+    let a2_phf_values = countries.iter().map(|c| format!("Alpha2::{}", c.alpha2)).collect::<Vec<_>>();
+    let a3_phf_values = countries.iter().map(|c| format!("Alpha3::{}", c.alpha3)).collect::<Vec<_>>();
 
     // phf maps: uppercase &str key -> Alpha2 / Alpha3 variants.
     let a2_phf = {
