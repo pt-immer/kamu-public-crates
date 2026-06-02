@@ -5,4 +5,12 @@ target/
 .vscode/
 .env
 
+# Repo-local dev tooling (populated by `just setup`).
+/.tools/
+/node_modules/
+
+# Coverage output.
+/lcov.info
+
 # Cargo.lock IS committed at the workspace root for reproducible CI.
+# package-lock.json IS committed so doc-lint tooling is reproducible.

@@ -13,20 +13,20 @@ publish.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 include = [
-    "CHANGELOG.md",
-    "Cargo.toml",
-    "LICENSE-APACHE",
-    "LICENSE-MIT",
-    "NOTICE",
-    "README.md",
-    "VENDORED.md",
-    "build.rs",
-    "build/**/*.rs",
-    "src/**/*.rs",
-    "vendor/iso3166-csv/LICENSE.txt",
-    "vendor/iso3166-csv/README.md",
-    "vendor/iso3166-csv/countries.csv",
-    "vendor/iso3166-csv/subdivisions.csv",
+  "CHANGELOG.md",
+  "Cargo.toml",
+  "LICENSE-APACHE",
+  "LICENSE-MIT",
+  "NOTICE",
+  "README.md",
+  "VENDORED.md",
+  "build.rs",
+  "build/**/*.rs",
+  "src/**/*.rs",
+  "vendor/iso3166-csv/LICENSE.txt",
+  "vendor/iso3166-csv/README.md",
+  "vendor/iso3166-csv/countries.csv",
+  "vendor/iso3166-csv/subdivisions.csv",
 ]
 
 [features]

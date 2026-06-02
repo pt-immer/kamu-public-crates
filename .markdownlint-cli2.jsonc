@@ -1,0 +1,21 @@
+{
+  // House Markdown rules for kamu-libs docs (markdownlint-cli2).
+  "config": {
+    "default": true,
+    // Prose and tables wrap naturally; don't enforce a hard line length.
+    "MD013": false,
+    // Badges and shields are inline HTML/images.
+    "MD033": false,
+    // Changelogs legitimately repeat headings (Added/Changed) across versions.
+    "MD024": { "siblings_only": true },
+    // Don't force monospace pipe-alignment on tables with long badge-URL cells.
+    "MD060": false
+  },
+  "globs": ["**/*.md"],
+  "ignores": [
+    "target/**",
+    "node_modules/**",
+    ".tools/**",
+    "crates/iso3166/vendor/**"
+  ]
+}

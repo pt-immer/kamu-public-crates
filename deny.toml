@@ -11,30 +11,30 @@ all-features = true
 
 [advisories]
 ignore = [
-    # RUSTSEC-2026-0009: stack-exhaustion DoS in `time`'s RFC 2822 *parsing* of
-    # untrusted input. Reached only transitively via actix-web -> tracing-actix-web
-    # (kamu-logging), which uses `time` solely for Date-header *formatting* — no
-    # untrusted RFC 2822 parsing occurs. The fix (time >= 0.3.47) requires Rust
-    # 1.88, which would break the workspace MSRV (1.85). Revisit when actix-web
-    # relaxes its `time` requirement or the workspace MSRV is raised.
-    "RUSTSEC-2026-0009",
+  # RUSTSEC-2026-0009: stack-exhaustion DoS in `time`'s RFC 2822 *parsing* of
+  # untrusted input. Reached only transitively via actix-web -> tracing-actix-web
+  # (kamu-logging), which uses `time` solely for Date-header *formatting* — no
+  # untrusted RFC 2822 parsing occurs. The fix (time >= 0.3.47) requires Rust
+  # 1.88, which would break the workspace MSRV (1.85). Revisit when actix-web
+  # relaxes its `time` requirement or the workspace MSRV is raised.
+  "RUSTSEC-2026-0009",
 ]
 version = 2
 yanked = "deny"
 
 [licenses]
 allow = [
-    "Apache-2.0 WITH LLVM-exception",
-    "Apache-2.0",
-    "BSD-2-Clause",
-    "BSD-3-Clause",
-    "CC-BY-SA-4.0",
-    "CC0-1.0",
-    "ISC",
-    "MIT",
-    "Unicode-3.0",
-    "Unicode-DFS-2016",
-    "Zlib",
+  "Apache-2.0 WITH LLVM-exception",
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "CC-BY-SA-4.0",
+  "CC0-1.0",
+  "ISC",
+  "MIT",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "Zlib",
 ]
 confidence-threshold = 0.8
 version = 2

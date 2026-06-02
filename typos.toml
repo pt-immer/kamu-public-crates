@@ -1,0 +1,14 @@
+# Spell-check configuration for kamu-libs (typos).
+[files]
+extend-exclude = [
+  "crates/iso3166/vendor/**",
+  "target/**",
+  "node_modules/**",
+  ".tools/**",
+  "Cargo.lock",
+  "package-lock.json",
+]
+
+[default.extend-identifiers]
+# Project/brand tokens that are not typos.
+IMMER = "IMMER"
