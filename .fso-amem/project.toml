@@ -1,0 +1,6 @@
+[project]
+name = "kamu-public-crates"
+slug = "kamu-public-crates"
+
+[amem]
+server = "https://amem.flusci.org"
