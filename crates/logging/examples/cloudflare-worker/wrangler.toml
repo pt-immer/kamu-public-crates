@@ -1,0 +1,13 @@
+compatibility_date = "2026-05-27"
+main = "build/index.js"
+name = "kamu-logging-cloudflare-worker-example"
+
+[build]
+command = "cargo install worker-build@^0.8 && worker-build --release"
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[vars]
+RUST_LOG = "info,kamu_logging_cloudflare_worker_example=debug"

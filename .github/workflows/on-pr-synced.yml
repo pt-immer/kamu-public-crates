@@ -3,14 +3,83 @@ name: On PR Synced
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  # Also run post-merge on main so the CI badge reflects the integration branch
+  # and main keeps a green signal. On push, paths-filter diffs before..after, so
+  # the same per-crate gating applies. (ci-success on push is signal-only — the
+  # branch ruleset's required check applies to PR merges, not pushes.)
+  push:
+    branches: [main]
+
+# NOTE: no workflow-level `paths:` filter — that would prevent the check
+# contexts from being created on unrelated PRs, leaving any required status
+# check stuck "Expected" forever. Gating happens at the JOB level via `if:`
+# (a skipped required job is treated as success), and a single always-running
+# `ci-success` aggregate gate is the one context the branch ruleset requires.
 
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
 
+permissions:
+  contents: read
+
 jobs:
+  # Detect which parts of the workspace changed, so each crate's heavy jobs run
+  # only when relevant. Uses the PR base..head diff via the API — no checkout or
+  # submodule needed. The convenience outputs encode the "shared ⟹ everything"
+  # rule so downstream `if:` expressions stay short.
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      # Any workspace Rust/build job (iso3166, logging, or shared infra).
+      rust: ${{ steps.filter.outputs.iso3166 == 'true' || steps.filter.outputs.logging == 'true' || steps.filter.outputs.shared == 'true' }}
+      # iso3166-specific work (its sources, or shared infra).
+      iso: ${{ steps.filter.outputs.iso3166 == 'true' || steps.filter.outputs.shared == 'true' }}
+      # logging-specific work (its sources, or shared infra).
+      log: ${{ steps.filter.outputs.logging == 'true' || steps.filter.outputs.shared == 'true' }}
+      # Doc/lint job: any crate, shared infra, or pure docs.
+      lint: ${{ steps.filter.outputs.iso3166 == 'true' || steps.filter.outputs.logging == 'true' || steps.filter.outputs.shared == 'true' || steps.filter.outputs.docs == 'true' }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          # A crate's `*.md`-only change does NOT trip its heavy build (the `!`
+          # negation), so docs-only PRs fall through to `lint-docs` alone.
+          filters: |
+            iso3166:
+              - 'crates/iso3166/**'
+              - '!crates/iso3166/**/*.md'
+            logging:
+              - 'crates/logging/**'
+              - '!crates/logging/**/*.md'
+            shared:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'Justfile'
+              - 'deny.toml'
+              - 'clippy.toml'
+              - 'rustfmt.toml'
+              - 'taplo.toml'
+              - 'typos.toml'
+              - '.cargo/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/**'
+              - '.github/dependabot.yml'
+            docs:
+              - '**/*.md'
+              - '.markdownlint-cli2.jsonc'
+              - 'taplo.toml'
+              - 'typos.toml'
+
   fmt:
     name: rustfmt
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -21,10 +90,11 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all --check
 
-  clippy:
-    name: clippy
+  clippy-workspace:
+    name: clippy (workspace)
+    needs: [changes, fmt]
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
-    needs: fmt
     steps:
       - uses: actions/checkout@v6
         with:
@@ -37,13 +107,28 @@ jobs:
       # `systemd`/`wasm32` features are mutually exclusive, so `--all-features`
       # cannot be used across the whole workspace).
       - run: cargo clippy --workspace --all-targets -- -D warnings -D clippy::all
+
+  clippy-iso3166:
+    name: clippy (kamu-iso3166 pedantic)
+    needs: [changes, fmt]
+    if: ${{ needs.changes.outputs.iso == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
       # kamu-iso3166 additionally holds to clippy::pedantic.
       - run: cargo clippy -p kamu-iso3166 --all-features --all-targets -- -D clippy::pedantic
 
-  test:
+  test-workspace:
     name: test (${{ matrix.toolchain }})
+    needs: [changes, fmt, clippy-workspace]
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
-    needs: [fmt, clippy]
     strategy:
       fail-fast: false
       matrix:
@@ -57,11 +142,25 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
+
+  test-iso3166-features:
+    name: test (kamu-iso3166 feature permutations)
+    needs: [changes, fmt, clippy-iso3166]
+    if: ${{ needs.changes.outputs.iso == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - run: cargo test -p kamu-iso3166 --all-features
       - run: cargo test -p kamu-iso3166 --no-default-features --features serde
 
   no-std-build:
     name: no_std build (thumbv7em-none-eabi)
+    needs: changes
+    if: ${{ needs.changes.outputs.iso == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -73,8 +172,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build -p kamu-iso3166 --no-default-features --target thumbv7em-none-eabi
 
-  docs:
-    name: docs
+  build-wasm:
+    name: wasm build (wasm32-unknown-unknown)
+    needs: changes
+    if: ${{ needs.changes.outputs.log == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p kamu-logging --no-default-features --features wasm32 --target wasm32-unknown-unknown
+
+  docs-workspace:
+    name: docs (workspace)
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -84,12 +198,27 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - env:
           RUSTDOCFLAGS: -Dwarnings
-        run: |
-          cargo doc --workspace --no-deps
-          cargo doc -p kamu-iso3166 --no-deps --all-features
+        run: cargo doc --workspace --no-deps
+
+  docs-iso3166:
+    name: docs (kamu-iso3166 all-features)
+    needs: changes
+    if: ${{ needs.changes.outputs.iso == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - env:
+          RUSTDOCFLAGS: -Dwarnings
+        run: cargo doc -p kamu-iso3166 --no-deps --all-features
 
   deny:
     name: cargo-deny
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -99,6 +228,8 @@ jobs:
 
   lint-docs:
     name: lint docs (markdown / toml / spelling)
+    needs: changes
+    if: ${{ needs.changes.outputs.lint == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -114,22 +245,34 @@ jobs:
       - run: taplo lint
       - run: typos
 
-  publish-dry-run:
-    name: cargo publish --dry-run
+  publish-dry-run-iso3166:
+    name: cargo publish --dry-run (kamu-iso3166)
+    needs: changes
+    if: ${{ needs.changes.outputs.iso == 'true' }}
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        crate: [kamu-iso3166, kamu-logging]
     steps:
       - uses: actions/checkout@v6
         with:
           submodules: true
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo publish -p ${{ matrix.crate }} --dry-run
+      - run: cargo publish -p kamu-iso3166 --dry-run
 
-  coverage:
-    name: coverage (llvm-cov)
+  publish-dry-run-logging:
+    name: cargo publish --dry-run (kamu-logging)
+    needs: changes
+    if: ${{ needs.changes.outputs.log == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo publish -p kamu-logging --dry-run
+
+  coverage-iso3166:
+    name: coverage (kamu-iso3166 >= 98% lines)
+    needs: changes
+    if: ${{ needs.changes.outputs.iso == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -140,20 +283,82 @@ jobs:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
-      # The data-heavy crate carries the strict coverage gate; generated tables
-      # and the build script are excluded from the denominator.
-      - name: kamu-iso3166 coverage (>= 98% lines)
-        run: >
+      # Generated tables and the build script are excluded from the denominator.
+      - run: >
           cargo llvm-cov -p kamu-iso3166 --all-features
           --ignore-filename-regex 'generated|build/'
           --fail-under-lines 98
           --lcov --output-path lcov.info
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lcov-iso3166
+          path: lcov.info
+
+  coverage-logging:
+    name: coverage (kamu-logging >= 70% lines)
+    needs: changes
+    if: ${{ needs.changes.outputs.log == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
       # kamu-logging's global-subscriber + journald/tty branches are
       # environment-bound and can't be reached on a headless runner, so its gate
       # is lower. It can't use --all-features (systemd XOR wasm32).
-      - name: kamu-logging coverage (>= 70% lines)
-        run: cargo llvm-cov -p kamu-logging --fail-under-lines 70
-      - uses: actions/upload-artifact@v7
+      - run: cargo llvm-cov -p kamu-logging --fail-under-lines 70
+
+  # Single aggregate gate (scatter -> gather -> and-gate). This is the ONLY
+  # context the branch ruleset requires: it always runs (so the context is always
+  # created), and `re-actors/alls-green` passes when every needed job either
+  # succeeded or was a path-filtered skip, and fails if any job failed/cancelled.
+  # Adding/renaming/splitting jobs above never needs a ruleset edit again — only
+  # this `needs:` list (and `allowed-skips`) changes.
+  ci-success:
+    name: ci-success
+    needs:
+      - changes
+      - fmt
+      - clippy-workspace
+      - clippy-iso3166
+      - test-workspace
+      - test-iso3166-features
+      - no-std-build
+      - build-wasm
+      - docs-workspace
+      - docs-iso3166
+      - deny
+      - lint-docs
+      - publish-dry-run-iso3166
+      - publish-dry-run-logging
+      - coverage-iso3166
+      - coverage-logging
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      # Every path-filtered leaf is allowed to be `skipped`; `changes` is NOT in
+      # the list, so it must always run and succeed. A job that actually
+      # fails/cancels still fails the gate — and a cascade-skip can't hide a
+      # failure, because the failing job is itself one of these `needs`.
+      - uses: re-actors/alls-green@release/v1
         with:
-          name: lcov
-          path: lcov.info
+          jobs: ${{ toJSON(needs) }}
+          allowed-skips: >-
+            fmt,
+            clippy-workspace,
+            clippy-iso3166,
+            test-workspace,
+            test-iso3166-features,
+            no-std-build,
+            build-wasm,
+            docs-workspace,
+            docs-iso3166,
+            deny,
+            lint-docs,
+            publish-dry-run-iso3166,
+            publish-dry-run-logging,
+            coverage-iso3166,
+            coverage-logging

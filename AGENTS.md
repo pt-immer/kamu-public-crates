@@ -18,7 +18,8 @@ publishing small, focused Rust crates — libraries and CLI apps — to crates.i
   3166-2 country & subdivision primitives. Lookup tables are **generated at build
   time** from a vendored CSV dataset.
 - **`kamu-logging`** (`crates/logging`) — structured logging over the `tracing`
-  ecosystem (systemd / wasm / actix).
+  ecosystem: systemd/journald, Cloudflare-Worker `wasm32` (via `tracing-web`),
+  `actix-web` request spans, and OpenTelemetry/OTLP export (`with-otlp`).
 
 Each crate **versions and releases independently** — see its own `CHANGELOG.md`.
 
@@ -31,8 +32,8 @@ Each crate **versions and releases independently** — see its own `CHANGELOG.md
   `just setup` (or `git submodule update --init --recursive`) before building.
 - **Never use `--all-features` across the whole workspace.** `kamu-logging`'s
   `systemd` and `wasm32` features are **mutually exclusive** (enforced by
-  `compile_error!`) and `wasm32` is incompatible with `with-actix-web`. Select
-  features per crate, as the recipes and CI do.
+  `compile_error!`), and `wasm32` is incompatible with both `with-actix-web` and
+  `with-otlp`. Select features per crate, as the recipes and CI do.
 - **Lints are denials.** The workspace sets `rust.warnings = "deny"` and
   `clippy.all = "deny"`; `kamu-iso3166` additionally holds to `clippy::pedantic`.
   Keep code warning-clean.
@@ -71,6 +72,26 @@ Cadence expectations:
   ≥ 70%); land tests with new code. `kamu-logging`'s global subscriber is a
   process-global one-shot — test its error variants by constructing them in
   isolated unit tests, never by re-calling `init()`.
+
+## Continuous integration
+
+- **CI is path-filtered per crate** (`on-pr-synced.yml`, on `pull_request` **and**
+  `push: [main]`). A `changes` job (`dorny/paths-filter`) classifies the diff into
+  `iso3166` / `logging` / `shared` / `docs`; every heavy job carries an `if:` so a
+  logging-only change skips the iso3166 jobs (and vice versa), a `*.md`-only change
+  runs just `lint-docs`, and any shared/root/workflow change runs **everything**.
+  Job-level `if:` only — never a workflow-level `paths:` filter (that would strand
+  required checks as pending).
+- **One required check: `ci-success`** (scatter → gather → and-gate). It always
+  runs and uses `re-actors/alls-green` over `needs.*` — pass when every job
+  succeeded or was a path-filtered skip, fail on any `failure`/`cancelled` (a
+  cascade-skip can't hide a failure: the failing job is itself a `need`). The
+  `main` branch **ruleset requires only `ci-success`**, so jobs can be added,
+  renamed, or split without touching branch protection — just keep the gate's
+  `needs:` list and `allowed-skips` complete.
+- **Release CI** (`on-release-published.yml`) parses the `<crate>-vX.Y.Z` tag,
+  verifies the manifest version, **refuses to re-publish a version already on
+  crates.io**, and serializes per tag before publishing that single crate.
 
 ## Commits & releases
 

@@ -1,6 +1,7 @@
 # kamu-public-crates
 
-[![CI](https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-release-published.yml/badge.svg)](https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-release-published.yml)
+[![CI](https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-pr-synced.yml/badge.svg)](https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-pr-synced.yml)
+[![Release](https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-release-published.yml/badge.svg)](https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-release-published.yml)
 
 A Cargo workspace of small, focused Rust crates — libraries and CLI apps — published by PT IMMER.
 
@@ -9,7 +10,7 @@ A Cargo workspace of small, focused Rust crates — libraries and CLI apps — p
 | Crate                                | Description                                                                 | crates.io |
 | ------------------------------------ | --------------------------------------------------------------------------- | --------- |
 | [`kamu-iso3166`](crates/iso3166)     | Zero-allocation, `no_std` ISO 3166-1 / 3166-2 country & subdivision primitives | [![v](https://img.shields.io/crates/v/kamu-iso3166.svg)](https://crates.io/crates/kamu-iso3166) |
-| [`kamu-logging`](crates/logging)     | Structured logging helper over the `tracing` ecosystem (systemd / wasm / actix) | [![v](https://img.shields.io/crates/v/kamu-logging.svg)](https://crates.io/crates/kamu-logging) |
+| [`kamu-logging`](crates/logging)     | Structured logging over the `tracing` ecosystem: systemd/journald, Cloudflare-Worker `wasm32`, `actix-web` spans, OpenTelemetry/OTLP | [![v](https://img.shields.io/crates/v/kamu-logging.svg)](https://crates.io/crates/kamu-logging) |
 
 Each crate versions and releases independently — see its own `CHANGELOG.md`.
 

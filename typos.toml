@@ -9,6 +9,18 @@ extend-exclude = [
   "package-lock.json",
 ]
 
+[default]
+extend-ignore-re = [
+  # W3C `traceparent` header values: 00-<32 hex trace-id>-<16 hex span-id>-<2 hex
+  # flags>. The hex runs trip the dictionary (e.g. "...0ba902b7..." -> "ba").
+  "00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}",
+]
+
 [default.extend-identifiers]
 # Project/brand tokens that are not typos.
 IMMER = "IMMER"
+
+[default.extend-words]
+# Domain vocabulary from kamu-logging's OpenTelemetry / W3C trace-context support.
+otlp = "otlp"
+traceparent = "traceparent"
