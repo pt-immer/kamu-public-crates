@@ -157,6 +157,10 @@ build-nostd:
 build-wasm:
     cargo build -p kamu-logging --no-default-features --features wasm32 --target wasm32-unknown-unknown
 
+# Type-check the Cloudflare Worker example (a cdylib excluded from the workspace)
+check-worker-example:
+    cargo check --manifest-path crates/logging/examples/cloudflare-worker/Cargo.toml --target wasm32-unknown-unknown
+
 # ---------------------------------------------------------------------------
 # Publish / vendored data / housekeeping
 # ---------------------------------------------------------------------------

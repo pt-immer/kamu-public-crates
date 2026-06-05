@@ -1,63 +1,237 @@
 # kamu-logging
 
-[![CI](https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-release-published.yml/badge.svg)](https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-release-published.yml)
-[![crates.io](https://img.shields.io/crates/v/kamu-logging.svg)](https://crates.io/crates/kamu-logging)
-[![docs.rs](https://img.shields.io/docsrs/kamu-logging)](https://docs.rs/kamu-logging)
+[![Crates.io][badge-crates]][link-crates]
+[![docs.rs][badge-docs]][link-docs]
+[![CI][badge-ci]][link-ci]
 
-`kamu-logging` is a small helper crate to configure structured logging for
-services built by PT IMMER. It wraps the [`tracing`](https://docs.rs/tracing)
-ecosystem and selects an appropriate backend depending on your target platform.
+[![License][badge-license]][link-license]
+[![MSRV][badge-msrv]][link-msrv]
 
-It is part of the [`kamu-public-crates`](https://github.com/pt-immer/kamu-public-crates) workspace.
+Opinionated `tracing` setup for PT IMMER services. One-line init for the
+zero-config path; a builder for everything else (JSON output, custom env
+vars, OTLP export, correlation ids).
 
-## Supported targets
-
-- **Systemd (default)** — When the `systemd` feature is enabled, the crate
-  initializes a `tracing` subscriber that forwards logs from the `log` crate,
-  parses the `RUST_LOG` environment variable, and emits either colored console
-  output or forwards events to journald when not attached to a TTY.
-
-- **WASM (`wasm32` feature)** — On WebAssembly targets the crate installs
-  [`console_error_panic_hook`](https://docs.rs/console_error_panic_hook) to
-  improve panic messages and configures the
-  [`wasm-tracing`](https://github.com/dsgallups/wasm-tracing) subscriber.
-
-- **Actix Web (`with-actix-web` feature)** — Exposes a `get_actix_web_logger()`
-  function returning an Actix Web middleware logger.
-
-The `systemd` and `wasm32` features are mutually exclusive; at least one must be
-enabled. The `systemd` feature is enabled by default.
-
-## Usage
-
-Add the crate to your `Cargo.toml` and call `kamu_logging::init()` early in
-`main`:
+## Install
 
 ```toml
 [dependencies]
-kamu-logging = "0.1"
+kamu-logging = "1"
 ```
+
+MSRV: **Rust 1.85** (edition 2024).
+
+## Features
+
+| Feature          | Default | What it enables                                                       |
+|------------------|:-------:|-----------------------------------------------------------------------|
+| `systemd`        |   yes   | TTY-aware console + journald sink, `RUST_LOG`, `log` → `tracing` bridge |
+| `with-actix-web` |   yes   | Correlation-enriched Actix Web middleware                              |
+| `with-otlp`      |   no    | OpenTelemetry OTLP exporter (HTTP/protobuf)                           |
+| `wasm32`         |   no    | Cloudflare Worker / web console + panic hook (mutually exclusive)     |
+
+## Quickstart
 
 ```rust
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging: forwards `log` records into the `tracing`
-    // subscriber and picks the appropriate backend for the target.
     kamu_logging::init()?;
-
-    // Your application logic here.
+    kamu_logging::info!("hello");
     Ok(())
 }
 ```
 
-When building for `wasm32` targets, enable the `wasm32` feature and disable the
-default features:
+`init()` picks a sensible default for the target: pretty TTY output when
+stdout is a terminal, journald when not, and `RUST_LOG` for filtering.
+
+## Configuration
+
+For anything beyond the default path, build an `InitOptions`:
+
+```rust
+use kamu_logging::{Format, InitOptions, Sink, init_with};
+
+init_with(
+    InitOptions::default()
+        .with_service_name("my-service")
+        .with_default_filter("info,my_service=debug")
+        .with_env_var("MY_SERVICE_LOG")
+        .with_format(Format::Json)
+        .with_sink(Sink::Stdout),
+)?;
+```
+
+Builder methods (all consume `self`, all return `Self`):
+
+| Method                   | Purpose                                                            |
+|--------------------------|--------------------------------------------------------------------|
+| `with_service_name(n)`   | Attach `service.name` to the startup event + OTLP `Resource`       |
+| `with_default_filter(f)` | Filter directive used when the env var is unset                    |
+| `with_env_var(v)`        | Env var read for the filter (default `RUST_LOG`)                   |
+| `with_format(f)`         | `Auto` / `Compact` / `Pretty` / `Json`                             |
+| `with_sink(s)`           | `Auto` / `Stdout` / `Stderr` / `Journald`                          |
+| `idempotent(true)`       | Treat duplicate init as `Ok(())` (test harnesses, embedded runs)   |
+| `with_otlp(cfg)`         | (with-otlp) Add an OTLP exporter layer                             |
+
+### Env-var triggers (no code change)
+
+| Variable           | Values                                  | Effect                                  |
+|--------------------|-----------------------------------------|-----------------------------------------|
+| `RUST_LOG`         | tracing-subscriber directive            | Filter directive (overridable per init) |
+| `KAMU_LOG_FORMAT`  | `auto`, `compact`, `pretty`, `json`     | Sets `Format` when the option is `Auto` |
+| `KAMU_LOG_SINK`    | `auto`, `stdout`, `stderr`, `journald`  | Sets `Sink` when the option is `Auto`   |
+
+## JSON output for log aggregators
+
+```rust
+use kamu_logging::{Format, InitOptions, Sink, init_with};
+
+init_with(
+    InitOptions::default()
+        .with_format(Format::Json)
+        .with_sink(Sink::Stdout),
+)?;
+```
+
+Or set `KAMU_LOG_FORMAT=json KAMU_LOG_SINK=stdout` at the process level
+for zero-code adoption. Each event is one line of JSON suitable for
+Vector, Promtail, Fluent Bit, or the Datadog Agent.
+
+## Actix Web
+
+```rust
+use actix_web::{App, HttpServer};
+use kamu_logging::get_actix_web_logger;
+
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    kamu_logging::init().expect("init logging");
+    HttpServer::new(|| App::new().wrap(get_actix_web_logger()))
+        .bind(("127.0.0.1", 8080))?
+        .run()
+        .await
+}
+```
+
+`get_actix_web_logger()` uses an `EnrichedRootSpanBuilder` that adds a
+`correlation_id` field to the root span by extracting (in order):
+`X-Request-ID`, `X-Correlation-ID`, `traceparent`. For a custom builder,
+use `get_actix_web_logger_with::<MyBuilder>()`.
+
+## Correlation outside HTTP
+
+For queue consumers, scheduled tasks, or any non-HTTP entry point:
+
+```rust
+use kamu_logging::correlation::{with_id, extract_from_headers, DEFAULT_HEADER_CHAIN};
+
+with_id("job-42", || {
+    kamu_logging::info!("processing job");
+});
+```
+
+The header-chain extractor is reusable for any framework — pass a closure
+that fetches a header by name:
+
+```rust
+let id = extract_from_headers(&headers, DEFAULT_HEADER_CHAIN, |h, name| {
+    h.get(name).cloned()
+});
+```
+
+## OTLP export
+
+Enable the `with-otlp` feature and attach an `OtlpConfig`:
+
+```rust
+use kamu_logging::{InitOptions, init_with, otlp::OtlpConfig};
+
+init_with(
+    InitOptions::default()
+        .with_service_name("checkout-api")
+        .with_otlp(
+            OtlpConfig::new("https://otel-collector.example.com:4318")
+                .with_service_name("checkout-api")
+                .with_header("authorization", "Bearer …")
+                .with_resource_attribute("deployment.environment", "production"),
+        ),
+)?;
+```
+
+Uses a synchronous `SimpleSpanProcessor` so no async runtime is required.
+High-throughput services should replace the exporter with a batch
+processor configured against their runtime — open an issue if you want a
+built-in option.
+
+## WASM
 
 ```toml
 [dependencies]
-kamu-logging = { version = "0.1", default-features = false, features = ["wasm32"] }
+kamu-logging = { version = "1", default-features = false, features = ["wasm32"] }
 ```
+
+`init()` on wasm32 installs `console_error_panic_hook` and a
+`tracing-subscriber` console writer suitable for Cloudflare Workers Logs.
+`Format::Auto` resolves to JSON, while `Sink::Auto`, `Sink::Stdout`, and
+`Sink::Stderr` all write to the JavaScript console. The function is
+idempotent on this target by design; subsequent calls are no-ops.
+
+## Cloudflare Workers
+
+Use `workers-rs` as usual, disable default features, and enable `wasm32`:
+
+```toml
+[dependencies]
+kamu-logging = { version = "1", default-features = false, features = ["wasm32"] }
+worker = "0.8"
+```
+
+The repository includes a standalone Worker app in
+`examples/cloudflare-worker/`. For setup, Wrangler config, Workers Logs, and
+correlation-id examples, see [the Cloudflare Workers guide](docs/CLOUDFLARE_WORKERS.md).
+
+## Idempotence
+
+- `init()` returns `Err(Error::AlreadyInitialized)` on a second call.
+  Surfaces library double-init as a bug.
+- `init_or_skip()` returns `Ok(())` on a second call. Use from test
+  harnesses and embedded CLI runs.
+- `InitOptions::idempotent(true)` does the same thing via the builder.
+
+## Re-exported `tracing` items
+
+So you can avoid a separate `tracing` import for the basics:
+
+```rust
+use kamu_logging::{debug, info, warn, error, instrument, span, Level, Span};
+```
+
+## Troubleshooting
+
+| Symptom                                        | Fix                                                                    |
+|------------------------------------------------|------------------------------------------------------------------------|
+| No logs in container                           | Set `KAMU_LOG_SINK=stdout` — default routes non-TTY to journald        |
+| `Error::IO` at init in a container             | journald socket unavailable; use `KAMU_LOG_SINK=stdout`                |
+| Tests hang at `init()`                         | Use `init_or_skip()` per-test or `InitOptions::idempotent(true)`        |
+| OTLP exporter slow                             | `SimpleSpanProcessor` is synchronous; high-volume needs a batch processor |
+| `service.name` missing from fmt output         | Only attached to startup event + OTLP Resource; aggregators add it from infra metadata |
+
+## SemVer policy
+
+`1.x.y` — breaking changes only on major bumps. Additive changes ship as
+minor releases. Bug fixes ship as patches. The `Error` enum is
+`#[non_exhaustive]`; new variants are not breaking.
 
 ## License
 
-Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
-[MIT license](LICENSE-MIT) at your option.
+MIT — see [LICENSE](LICENSE).
+
+[badge-crates]: https://img.shields.io/crates/v/kamu-logging?style=flat-square&logo=rust
+[badge-docs]: https://img.shields.io/docsrs/kamu-logging?style=flat-square&logo=docs.rs&label=docs.rs
+[badge-ci]: https://img.shields.io/github/actions/workflow/status/pt-immer/kamu-public-crates/pr.yml?style=flat-square&label=CI
+[badge-license]: https://img.shields.io/crates/l/kamu-logging?style=flat-square
+[badge-msrv]: https://img.shields.io/badge/MSRV-1.85-blue?style=flat-square&logo=rust
+
+[link-crates]: https://crates.io/crates/kamu-logging
+[link-docs]: https://docs.rs/kamu-logging
+[link-ci]: https://github.com/pt-immer/kamu-public-crates/actions/workflows/pr.yml
+[link-license]: https://github.com/pt-immer/kamu-public-crates/blob/main/crates/logging
+[link-msrv]: https://github.com/pt-immer/kamu-public-crates/blob/main/Cargo.toml

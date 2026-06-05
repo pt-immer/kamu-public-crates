@@ -9,6 +9,13 @@ on:
   release:
     types: [published]
 
+# Serialize publishes for the same tag so a duplicated / re-fired release event
+# can't race itself into a double publish. Different tags (and different crates)
+# stay independent.
+concurrency:
+  group: publish-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
@@ -51,6 +58,20 @@ jobs:
             echo "::error::$CRATE Cargo.toml version ($MANIFEST_VER) != release tag version ($VERSION)"
             exit 1
           fi
+
+      - name: Ensure the version is not already on crates.io
+        env:
+          CRATE: ${{ steps.parse.outputs.crate }}
+          VERSION: ${{ steps.parse.outputs.version }}
+        run: |
+          code="$(curl -fsS -o /dev/null -w '%{http_code}' \
+            -H 'User-Agent: kamu-public-crates-release (https://github.com/pt-immer/kamu-public-crates)' \
+            "https://crates.io/api/v1/crates/${CRATE}/${VERSION}" || true)"
+          if [ "$code" = "200" ]; then
+            echo "::error::${CRATE} ${VERSION} is already published on crates.io — bump the crate version before tagging."
+            exit 1
+          fi
+          echo "crates.io pre-check: ${CRATE} ${VERSION} is not yet published (HTTP ${code}). Proceeding."
 
       - name: Publish (dry-run, then for real)
         env:

@@ -1,0 +1,17 @@
+[package]
+edition = "2024"
+name = "kamu-logging-cloudflare-worker-example"
+publish = false
+version = "0.1.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+kamu-logging = { path = "../..", default-features = false, features = ["wasm32"] }
+worker = "0.8"
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true
