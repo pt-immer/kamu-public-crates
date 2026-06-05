@@ -1,6 +1,6 @@
 # Agent guide — kamu-public-crates
 
-> **Current: v0.7.0.** 18 MCP tools (13 governance + 2 admin embedding + 3 project ops), 0 deferred; 13 `ReviewOutcome` variants (now web-exposed); schema v17; strict checklist v4. Authoritative version: [`CHANGELOG.md`](CHANGELOG.md) / [`ROADMAP.md`](ROADMAP.md).
+> **Current: v0.8.2.** 18 MCP tools (13 governance + 2 admin embedding + 3 project ops), 0 deferred; 13 `ReviewOutcome` variants (now web-exposed); schema v17; strict checklist v4. Authoritative version: [`CHANGELOG.md`](CHANGELOG.md) / [`ROADMAP.md`](ROADMAP.md).
 > Project slug: `kamu-public-crates` — shared via `.fso-amem/project.toml`; do not invent a different slug.
 
 Guidance for AI coding agents (Claude Code, GitHub Copilot, and others) working in
