@@ -75,16 +75,20 @@ Cadence expectations:
 
 ## Continuous integration
 
-- **PR CI is path-filtered per crate** (`on-pr-synced.yml`). A `changes` job
-  (`dorny/paths-filter`) classifies the diff into `iso3166` / `logging` / `shared`
-  / `docs`; every heavy job carries an `if:` so a logging-only PR skips the
-  iso3166 jobs (and vice versa), a `*.md`-only PR runs just `lint-docs`, and any
-  shared/root/workflow change runs **everything**. Job-level `if:` only — never a
-  workflow-level `paths:` filter (that would strand required checks as pending).
-- **One required check: `ci-success`.** It always runs, `needs:` every other job,
-  and fails if any concluded `failure`/`cancelled` (skipped is OK). The `main`
-  branch **ruleset requires only `ci-success`** — so jobs can be added, renamed, or
-  split without touching branch protection; just update the gate's `needs:` list.
+- **CI is path-filtered per crate** (`on-pr-synced.yml`, on `pull_request` **and**
+  `push: [main]`). A `changes` job (`dorny/paths-filter`) classifies the diff into
+  `iso3166` / `logging` / `shared` / `docs`; every heavy job carries an `if:` so a
+  logging-only change skips the iso3166 jobs (and vice versa), a `*.md`-only change
+  runs just `lint-docs`, and any shared/root/workflow change runs **everything**.
+  Job-level `if:` only — never a workflow-level `paths:` filter (that would strand
+  required checks as pending).
+- **One required check: `ci-success`** (scatter → gather → and-gate). It always
+  runs and uses `re-actors/alls-green` over `needs.*` — pass when every job
+  succeeded or was a path-filtered skip, fail on any `failure`/`cancelled` (a
+  cascade-skip can't hide a failure: the failing job is itself a `need`). The
+  `main` branch **ruleset requires only `ci-success`**, so jobs can be added,
+  renamed, or split without touching branch protection — just keep the gate's
+  `needs:` list and `allowed-skips` complete.
 - **Release CI** (`on-release-published.yml`) parses the `<crate>-vX.Y.Z` tag,
   verifies the manifest version, **refuses to re-publish a version already on
   crates.io**, and serializes per tag before publishing that single crate.

@@ -3,6 +3,12 @@ name: On PR Synced
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  # Also run post-merge on main so the CI badge reflects the integration branch
+  # and main keeps a green signal. On push, paths-filter diffs before..after, so
+  # the same per-crate gating applies. (ci-success on push is signal-only — the
+  # branch ruleset's required check applies to PR merges, not pushes.)
+  push:
+    branches: [main]
 
 # NOTE: no workflow-level `paths:` filter — that would prevent the check
 # contexts from being created on unrelated PRs, leaving any required status
@@ -305,11 +311,12 @@ jobs:
       # is lower. It can't use --all-features (systemd XOR wasm32).
       - run: cargo llvm-cov -p kamu-logging --fail-under-lines 70
 
-  # Single aggregate gate. This is the ONLY context the branch ruleset requires:
-  # it always runs (so the context is always created), passes when every needed
-  # job succeeded or was skipped, and fails if any failed or was cancelled.
+  # Single aggregate gate (scatter -> gather -> and-gate). This is the ONLY
+  # context the branch ruleset requires: it always runs (so the context is always
+  # created), and `re-actors/alls-green` passes when every needed job either
+  # succeeded or was a path-filtered skip, and fails if any job failed/cancelled.
   # Adding/renaming/splitting jobs above never needs a ruleset edit again — only
-  # this `needs:` list changes.
+  # this `needs:` list (and `allowed-skips`) changes.
   ci-success:
     name: ci-success
     needs:
@@ -332,15 +339,26 @@ jobs:
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
-      - name: Verify no needed job failed or was cancelled
-        env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
-        run: |
-          echo "needed job results: $RESULTS"
-          for r in $RESULTS; do
-            if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
-              echo "::error::a required job concluded '$r' — failing the aggregate gate."
-              exit 1
-            fi
-          done
-          echo "all needed jobs succeeded or were skipped — ci-success passes."
+      # Every path-filtered leaf is allowed to be `skipped`; `changes` is NOT in
+      # the list, so it must always run and succeed. A job that actually
+      # fails/cancels still fails the gate — and a cascade-skip can't hide a
+      # failure, because the failing job is itself one of these `needs`.
+      - uses: re-actors/alls-green@release/v1
+        with:
+          jobs: ${{ toJSON(needs) }}
+          allowed-skips: >-
+            fmt,
+            clippy-workspace,
+            clippy-iso3166,
+            test-workspace,
+            test-iso3166-features,
+            no-std-build,
+            build-wasm,
+            docs-workspace,
+            docs-iso3166,
+            deny,
+            lint-docs,
+            publish-dry-run-iso3166,
+            publish-dry-run-logging,
+            coverage-iso3166,
+            coverage-logging
