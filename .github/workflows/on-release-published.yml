@@ -79,6 +79,24 @@ jobs:
           # crates.io token is an org-level secret (PT IMMER convention: SECRET_*);
           # cargo reads it from the CARGO_REGISTRY_TOKEN env var.
           CARGO_REGISTRY_TOKEN: ${{ secrets.SECRET_DEPLOY_CRATEIO }}
+          # Hosted runners intermittently fail crates.io downloads with
+          # "[16] Error in the HTTP2 framing layer"; force HTTP/1.1 to avoid it.
+          CARGO_HTTP_MULTIPLEXING: "false"
         run: |
-          cargo publish -p "$CRATE" --dry-run
+          set -euo pipefail
+          # Retry the dry-run: this is where transient dependency-download flakes
+          # happen. It populates the registry cache, so the real publish below
+          # reuses it (one upload, no re-download — avoids any double-publish risk).
+          retry() {
+            local n=1 max=3
+            until "$@"; do
+              local code=$?
+              if [ "$n" -ge "$max" ]; then
+                echo "::error::'$*' failed after $max attempts (exit $code)"; return "$code"
+              fi
+              echo "::warning::attempt $n of '$*' failed (exit $code); retrying in $((n * 15))s…"
+              sleep $((n * 15)); n=$((n + 1))
+            done
+          }
+          retry cargo publish -p "$CRATE" --dry-run
           cargo publish -p "$CRATE"
