@@ -44,6 +44,12 @@ jobs:
       # Doc/lint job: any crate, shared infra, or pure docs.
       lint: ${{ steps.filter.outputs.iso3166 == 'true' || steps.filter.outputs.logging == 'true' || steps.filter.outputs.shared == 'true' || steps.filter.outputs.docs == 'true' }}
     steps:
+      # `push` events diff before..after against the local git repo, so a
+      # checkout is required there (pull_request events use the API and need
+      # none). fetch-depth: 0 guarantees the base commit is present for the diff.
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - uses: dorny/paths-filter@v3
         id: filter
         with:
