@@ -1,6 +1,7 @@
 # kamu-iso3166
 
-[![CI](https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-release-published.yml/badge.svg)](https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-release-published.yml)
+[![CI](https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-pr-synced.yml/badge.svg?branch=main)](https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-pr-synced.yml)
+[![Release](https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-release-published.yml/badge.svg)](https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-release-published.yml)
 [![crates.io](https://img.shields.io/crates/v/kamu-iso3166.svg)](https://crates.io/crates/kamu-iso3166)
 [![docs.rs](https://img.shields.io/docsrs/kamu-iso3166)](https://docs.rs/kamu-iso3166)
 

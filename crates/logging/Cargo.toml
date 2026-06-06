@@ -1,6 +1,6 @@
 [package]
 name = "kamu-logging"
-version = "1.2.0"
+version = "1.2.1"
 description = "Small helper crate to configure structured logging for IMMER's services using the tracing ecosystem."
 documentation = "https://docs.rs/kamu-logging"
 categories = ["asynchronous", "development-tools::debugging", "wasm"]
