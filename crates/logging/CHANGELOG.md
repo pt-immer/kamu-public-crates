@@ -4,6 +4,17 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows
 [SemVer](https://semver.org/) from `1.0.0` onwards.
 
+## [1.2.1] — 2026-06-06
+
+Docs/metadata only. No library code or public API changes.
+
+### Fixed
+
+- README CI badge pointed at the old standalone repo's `pr.yml` workflow (404);
+  now targets `on-pr-synced.yml`.
+- README license section said "MIT" and linked a non-existent `LICENSE` file;
+  corrected to the dual `MIT OR Apache-2.0` with `LICENSE-MIT` / `LICENSE-APACHE`.
+
 ## [1.2.0] — 2026-06-06
 
 Workspace migration release. No library code or public API changes.
