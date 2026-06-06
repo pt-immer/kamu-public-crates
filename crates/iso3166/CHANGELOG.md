@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.1]
+
+Docs/metadata only. No code or public API changes.
+
+### Fixed
+
+- README CI badge pointed at the release workflow (mislabeled); split into a CI
+  badge (`on-pr-synced.yml`) and a Release badge (`on-release-published.yml`).
+
 ## [0.2.0]
 
 Moved into the [`kamu-public-crates`](https://github.com/pt-immer/kamu-public-crates) workspace.
