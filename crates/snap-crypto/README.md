@@ -1,6 +1,15 @@
 # `kamu-snap-crypto`
 
+[![Crates.io][badge-crates]][link-crates]
+[![docs.rs][badge-docs]][link-docs]
+[![CI][badge-ci]][link-ci]
+
+[![License][badge-license]][link-license]
+[![MSRV][badge-msrv]][link-msrv]
+
 Framework-agnostic cryptography for Bank Indonesia SNAP BI integrations.
+
+Part of the [`kamu-public-crates`](https://github.com/pt-immer/kamu-public-crates) workspace.
 
 ## What this crate is
 
@@ -121,3 +130,15 @@ Inbound-verify glue per framework lives in adjacent crates:
 
 Dual-licensed under either [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at
 your option (`MIT OR Apache-2.0`). Previously MIT-only in `pt-immer/lib-snap`.
+
+[badge-crates]: https://img.shields.io/crates/v/kamu-snap-crypto?style=flat-square&logo=rust
+[badge-docs]: https://img.shields.io/docsrs/kamu-snap-crypto?style=flat-square&logo=docs.rs&label=docs.rs
+[badge-ci]: https://img.shields.io/github/actions/workflow/status/pt-immer/kamu-public-crates/on-pr-synced.yml?branch=main&style=flat-square&label=CI
+[badge-license]: https://img.shields.io/crates/l/kamu-snap-crypto?style=flat-square
+[badge-msrv]: https://img.shields.io/badge/MSRV-1.85-blue?style=flat-square&logo=rust
+
+[link-crates]: https://crates.io/crates/kamu-snap-crypto
+[link-docs]: https://docs.rs/kamu-snap-crypto
+[link-ci]: https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-pr-synced.yml
+[link-license]: https://github.com/pt-immer/kamu-public-crates/blob/main/crates/snap-crypto
+[link-msrv]: https://github.com/pt-immer/kamu-public-crates/blob/main/Cargo.toml
