@@ -1131,7 +1131,7 @@ dependencies = [
 
 [[package]]
 name = "kamu-iso3166"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "csv",
  "phf",
@@ -1146,7 +1146,7 @@ dependencies = [
 
 [[package]]
 name = "kamu-logging"
-version = "1.2.1"
+version = "1.2.2"
 dependencies = [
  "actix-web",
  "console",
@@ -1167,7 +1167,7 @@ dependencies = [
 
 [[package]]
 name = "kamu-snap-crypto"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "base64",
  "chrono",
@@ -1184,7 +1184,7 @@ dependencies = [
 
 [[package]]
 name = "kamu-snap-crypto-actix"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "actix-web",
  "http 1.4.1",
@@ -1193,7 +1193,7 @@ dependencies = [
 
 [[package]]
 name = "kamu-snap-crypto-axum"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "http 1.4.1",
  "kamu-snap-crypto",
@@ -1201,7 +1201,7 @@ dependencies = [
 
 [[package]]
 name = "kamu-snap-response"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "http 1.4.1",
  "kamu-snap-crypto",
@@ -1212,7 +1212,7 @@ dependencies = [
 
 [[package]]
 name = "kamu-snap-response-actix"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "actix-web",
  "http 1.4.1",
@@ -1222,7 +1222,7 @@ dependencies = [
 
 [[package]]
 name = "kamu-snap-response-axum"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "axum",
  "http 1.4.1",

@@ -6,6 +6,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.2]
+
+Docs/metadata only. No code or public API changes.
+
+### Changed
+
+- README badges converted to the workspace-standard reference style (Crates.io /
+  docs.rs / CI / License / MSRV), dropping the separate Release badge.
+
 ## [0.2.1]
 
 Docs/metadata only. No code or public API changes.
