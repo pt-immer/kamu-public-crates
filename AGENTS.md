@@ -94,8 +94,12 @@ Cadence expectations:
   `push: [main]`). A `changes` job (`dorny/paths-filter`) classifies the diff into
   `iso3166` / `logging` / `snap` / `shared` / `docs`; every heavy job carries an
   `if:` so a logging-only change skips the iso3166 jobs (and vice versa), a
-  `*.md`-only change runs just `lint-docs`, and any shared/root/workflow change
-  runs **everything**. `snap` is one umbrella flag for all 6 snap crates (they
+  root-level `*.md`-only change runs just `lint-docs` (a crate's own `*.md` change
+  also runs that crate's jobs — its README is packaged on publish), and any
+  shared/root/workflow change runs **everything**. The filters use **no `!`
+  negation rules** — under paths-filter's default `predicate-quantifier: some` a
+  negated rule matches every non-excluded file, which silently makes a filter
+  `true` for unrelated changes. `snap` is one umbrella flag for all 6 snap crates (they
   inter-depend, so a base-crate change must re-test dependents); per-crate signal
   comes from the separate coverage / publish-dry-run jobs, not the filter.
   Job-level `if:` only — never a workflow-level `paths:` filter (that would strand

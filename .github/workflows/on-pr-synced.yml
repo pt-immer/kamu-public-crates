@@ -58,18 +58,22 @@ jobs:
       - uses: dorny/paths-filter@v4
         id: filter
         with:
-          # A crate's `*.md`-only change does NOT trip its heavy build (the `!`
-          # negation), so docs-only PRs fall through to `lint-docs` alone.
+          # Per-crate source filters trip that crate's heavy jobs; any `*.md`
+          # change trips `docs` -> lint-docs. Do NOT add `!**/*.md` negation
+          # rules here: under dorny/paths-filter's default
+          # `predicate-quantifier: some`, a negated rule matches every file that
+          # ISN'T the excluded one, so the filter goes `true` for unrelated
+          # changes (a root README edit would then run every crate's jobs). The
+          # cost of omitting them is that a crate's own README change also runs
+          # that crate's jobs (correct anyway — the README is packaged on
+          # `cargo publish`). A root-level `*.md`-only change runs `lint-docs` alone.
           filters: |
             iso3166:
               - 'crates/iso3166/**'
-              - '!crates/iso3166/**/*.md'
             logging:
               - 'crates/logging/**'
-              - '!crates/logging/**/*.md'
             snap:
               - 'crates/snap-*/**'
-              - '!crates/snap-*/**/*.md'
             shared:
               - 'Cargo.toml'
               - 'Cargo.lock'
