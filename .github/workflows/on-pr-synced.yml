@@ -35,14 +35,19 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      # Any workspace Rust/build job (iso3166, logging, or shared infra).
-      rust: ${{ steps.filter.outputs.iso3166 == 'true' || steps.filter.outputs.logging == 'true' || steps.filter.outputs.shared == 'true' }}
+      # Any workspace Rust/build job (iso3166, logging, snap, or shared infra).
+      rust: ${{ steps.filter.outputs.iso3166 == 'true' || steps.filter.outputs.logging == 'true' || steps.filter.outputs.snap == 'true' || steps.filter.outputs.shared == 'true' }}
       # iso3166-specific work (its sources, or shared infra).
       iso: ${{ steps.filter.outputs.iso3166 == 'true' || steps.filter.outputs.shared == 'true' }}
       # logging-specific work (its sources, or shared infra).
       log: ${{ steps.filter.outputs.logging == 'true' || steps.filter.outputs.shared == 'true' }}
+      # snap-specific work (any kamu-snap-* crate, or shared infra). Umbrella on
+      # purpose: the 6 snap crates inter-depend, so a base-crate change must
+      # re-run the dependents' jobs. Release independence is preserved by the
+      # per-crate dry-run/coverage jobs + per-crate release tags, not the trigger.
+      snap: ${{ steps.filter.outputs.snap == 'true' || steps.filter.outputs.shared == 'true' }}
       # Doc/lint job: any crate, shared infra, or pure docs.
-      lint: ${{ steps.filter.outputs.iso3166 == 'true' || steps.filter.outputs.logging == 'true' || steps.filter.outputs.shared == 'true' || steps.filter.outputs.docs == 'true' }}
+      lint: ${{ steps.filter.outputs.iso3166 == 'true' || steps.filter.outputs.logging == 'true' || steps.filter.outputs.snap == 'true' || steps.filter.outputs.shared == 'true' || steps.filter.outputs.docs == 'true' }}
     steps:
       # `push` events diff before..after against the local git repo, so a
       # checkout is required there (pull_request events use the API and need
@@ -62,6 +67,9 @@ jobs:
             logging:
               - 'crates/logging/**'
               - '!crates/logging/**/*.md'
+            snap:
+              - 'crates/snap-*/**'
+              - '!crates/snap-*/**/*.md'
             shared:
               - 'Cargo.toml'
               - 'Cargo.lock'
@@ -317,6 +325,70 @@ jobs:
       # is lower. It can't use --all-features (systemd XOR wasm32).
       - run: cargo llvm-cov -p kamu-logging --fail-under-lines 70
 
+  build-wasm-snap:
+    name: wasm build (kamu-snap-response)
+    needs: changes
+    if: ${{ needs.changes.outputs.snap == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      # kamu-snap-response is wasm-clean; kamu-snap-crypto is NOT (rsa -> getrandom
+      # needs the consumer's `js` feature), so only response is built for wasm32.
+      - run: cargo check -p kamu-snap-response --no-default-features --target wasm32-unknown-unknown
+
+  coverage-snap-crypto:
+    name: coverage (kamu-snap-crypto >= 70% lines)
+    needs: changes
+    if: ${{ needs.changes.outputs.snap == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+      # Floor is the measured ~74% rounded down; the default-on `webhook`
+      # providers ship without tests upstream (raising this is future work).
+      - run: cargo llvm-cov -p kamu-snap-crypto --all-features --fail-under-lines 70
+
+  coverage-snap-response:
+    name: coverage (kamu-snap-response >= 70% lines)
+    needs: changes
+    if: ${{ needs.changes.outputs.snap == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+      # The 4 thin actix/axum adapter crates have no tests (framework glue);
+      # they are compile-only via the workspace jobs, not coverage-gated.
+      - run: cargo llvm-cov -p kamu-snap-response --all-features --fail-under-lines 70
+
+  publish-dry-run-snap-crypto:
+    name: cargo publish --dry-run (kamu-snap-crypto)
+    needs: changes
+    if: ${{ needs.changes.outputs.snap == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Only the leaf crate can be dry-run pre-publish. kamu-snap-response and the
+      # 4 adapter crates declare an in-workspace dependency (kamu-snap-crypto /
+      # kamu-snap-response) that cargo's package step requires to already exist on
+      # crates.io — even when it is optional, and even with --no-verify. They are
+      # validated by the workspace clippy/test/docs jobs and published in
+      # dependency order (see on-release-published.yml), so they get no dry-run job.
+      - run: cargo publish -p kamu-snap-crypto --dry-run
+
   # Single aggregate gate (scatter -> gather -> and-gate). This is the ONLY
   # context the branch ruleset requires: it always runs (so the context is always
   # created), and `re-actors/alls-green` passes when every needed job either
@@ -342,6 +414,10 @@ jobs:
       - publish-dry-run-logging
       - coverage-iso3166
       - coverage-logging
+      - build-wasm-snap
+      - coverage-snap-crypto
+      - coverage-snap-response
+      - publish-dry-run-snap-crypto
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -367,4 +443,8 @@ jobs:
             publish-dry-run-iso3166,
             publish-dry-run-logging,
             coverage-iso3166,
-            coverage-logging
+            coverage-logging,
+            build-wasm-snap,
+            coverage-snap-crypto,
+            coverage-snap-response,
+            publish-dry-run-snap-crypto

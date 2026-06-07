@@ -194,19 +194,19 @@ check-worker-example:
 publish-dry crate:
     cargo publish -p {{ crate }} --dry-run
 
-# Dry-run publish every crate. The snap leaf crates verify standalone; the 4
-# adapter crates depend on an unpublished base crate, so their dry-run uses
-# --no-verify (packaging only) until the base is on crates.io. Real publishes
-# go in dependency order: crypto -> response -> adapters (see on-release-published).
+# Dry-run publish the crates that can be packaged standalone: iso3166, logging,
+# and kamu-snap-crypto are leaves (every dep is already on crates.io).
+# kamu-snap-response and the 4 snap adapter crates CANNOT be dry-run until their
+# in-workspace base crate is published — cargo's package step requires every
+# declared dependency (even an OPTIONAL one) to resolve on crates.io, and
+# --no-verify does NOT skip that check ("no matching package named
+# kamu-snap-crypto found"). They are covered by `just check-all`
+# (workspace build/clippy/test/doc) and published in dependency order
+# (crypto -> response -> adapters) via on-release-published.yml.
 publish-all:
     cargo publish -p kamu-iso3166 --dry-run
     cargo publish -p kamu-logging --dry-run
     cargo publish -p kamu-snap-crypto --dry-run
-    cargo publish -p kamu-snap-response --dry-run
-    cargo publish -p kamu-snap-crypto-actix --dry-run --no-verify
-    cargo publish -p kamu-snap-crypto-axum --dry-run --no-verify
-    cargo publish -p kamu-snap-response-actix --dry-run --no-verify
-    cargo publish -p kamu-snap-response-axum --dry-run --no-verify
 
 # Initialize the vendored ISO 3166 data submodule
 submodules:
