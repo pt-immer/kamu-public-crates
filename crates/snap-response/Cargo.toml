@@ -1,6 +1,6 @@
 [package]
 name = "kamu-snap-response"
-version = "2.0.0"
+version = "2.0.1"
 description = "Framework-agnostic response envelope + error taxonomy for Bank Indonesia SNAP BI integrations"
 documentation = "https://docs.rs/kamu-snap-response"
 categories = ["api-bindings", "encoding", "web-programming"]

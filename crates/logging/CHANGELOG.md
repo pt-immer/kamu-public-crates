@@ -4,6 +4,15 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows
 [SemVer](https://semver.org/) from `1.0.0` onwards.
 
+## [1.2.2] — 2026-06-08
+
+Docs only. No library code or public API changes.
+
+### Changed
+
+- README: added a "Part of the `kamu-public-crates` workspace" line (badge block
+  unchanged).
+
 ## [1.2.1] — 2026-06-06
 
 Docs/metadata only. No library code or public API changes.

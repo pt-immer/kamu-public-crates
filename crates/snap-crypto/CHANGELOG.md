@@ -1,5 +1,14 @@
 # Changelog — `kamu-snap-crypto`
 
+## 2.0.1 — 2026-06-08
+
+Docs only. No code or public API changes.
+
+### Changed
+
+- Standardized the README badge block (Crates.io / docs.rs / CI / License / MSRV)
+  and added a workspace link.
+
 ## 2.0.0 — 2026-05-28
 
 ### Breaking

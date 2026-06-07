@@ -1,6 +1,6 @@
 [package]
 name = "kamu-snap-crypto"
-version = "2.0.0"
+version = "2.0.1"
 description = "Framework-agnostic cryptography for Bank Indonesia SNAP BI integrations (HMAC, RSA, recipe helpers, webhook verifier)"
 documentation = "https://docs.rs/kamu-snap-crypto"
 categories = ["cryptography", "authentication", "api-bindings"]
