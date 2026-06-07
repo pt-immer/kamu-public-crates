@@ -1,9 +1,11 @@
 # kamu-iso3166
 
-[![CI](https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-pr-synced.yml/badge.svg?branch=main)](https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-pr-synced.yml)
-[![Release](https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-release-published.yml/badge.svg)](https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-release-published.yml)
-[![crates.io](https://img.shields.io/crates/v/kamu-iso3166.svg)](https://crates.io/crates/kamu-iso3166)
-[![docs.rs](https://img.shields.io/docsrs/kamu-iso3166)](https://docs.rs/kamu-iso3166)
+[![Crates.io][badge-crates]][link-crates]
+[![docs.rs][badge-docs]][link-docs]
+[![CI][badge-ci]][link-ci]
+
+[![License][badge-license]][link-license]
+[![MSRV][badge-msrv]][link-msrv]
 
 Zero-allocation, `no_std`-compatible ISO 3166-1 and ISO 3166-2 primitives for
 the Rust ecosystem.
@@ -96,3 +98,15 @@ building from `crates.io` do **not** need submodule access.
 
 [`country`]: https://docs.rs/kamu-iso3166/latest/kamu_iso3166/country/
 [`subdivision`]: https://docs.rs/kamu-iso3166/latest/kamu_iso3166/subdivision/
+
+[badge-crates]: https://img.shields.io/crates/v/kamu-iso3166?style=flat-square&logo=rust
+[badge-docs]: https://img.shields.io/docsrs/kamu-iso3166?style=flat-square&logo=docs.rs&label=docs.rs
+[badge-ci]: https://img.shields.io/github/actions/workflow/status/pt-immer/kamu-public-crates/on-pr-synced.yml?branch=main&style=flat-square&label=CI
+[badge-license]: https://img.shields.io/crates/l/kamu-iso3166?style=flat-square
+[badge-msrv]: https://img.shields.io/badge/MSRV-1.85-blue?style=flat-square&logo=rust
+
+[link-crates]: https://crates.io/crates/kamu-iso3166
+[link-docs]: https://docs.rs/kamu-iso3166
+[link-ci]: https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-pr-synced.yml
+[link-license]: https://github.com/pt-immer/kamu-public-crates/blob/main/crates/iso3166
+[link-msrv]: https://github.com/pt-immer/kamu-public-crates/blob/main/Cargo.toml

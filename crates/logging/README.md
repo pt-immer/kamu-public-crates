@@ -11,6 +11,8 @@ Opinionated `tracing` setup for PT IMMER services. One-line init for the
 zero-config path; a builder for everything else (JSON output, custom env
 vars, OTLP export, correlation ids).
 
+Part of the [`kamu-public-crates`](https://github.com/pt-immer/kamu-public-crates) workspace.
+
 ## Install
 
 ```toml
