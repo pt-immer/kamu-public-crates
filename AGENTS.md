@@ -1,6 +1,6 @@
 # Agent guide — kamu-public-crates
 
-> **Current: v0.11.1.** 18 MCP tools (13 governance + 2 admin embedding + 3 project ops), 0 deferred; 13 `ReviewOutcome` variants (now web-exposed); schema v18; strict checklist v4. Authoritative version: [`CHANGELOG.md`](CHANGELOG.md) / [`ROADMAP.md`](ROADMAP.md).
+> **A Cargo workspace of 8 independently-versioned public crates** — `kamu-iso3166`, `kamu-logging`, and the 6-crate `kamu-snap-*` Bank Indonesia SNAP BI family. Edition 2024, MSRV 1.85, dual-licensed `MIT OR Apache-2.0`. Each crate's authoritative version lives in its `Cargo.toml` / [`CHANGELOG.md`](CHANGELOG.md); releases are per-crate (see [Commits & releases](#commits--releases)).
 > Project slug: `kamu-public-crates` — shared via `.fso-amem/project.toml`; do not invent a different slug.
 
 Guidance for AI coding agents (Claude Code, GitHub Copilot, and others) working in
@@ -94,8 +94,12 @@ Cadence expectations:
   `push: [main]`). A `changes` job (`dorny/paths-filter`) classifies the diff into
   `iso3166` / `logging` / `snap` / `shared` / `docs`; every heavy job carries an
   `if:` so a logging-only change skips the iso3166 jobs (and vice versa), a
-  `*.md`-only change runs just `lint-docs`, and any shared/root/workflow change
-  runs **everything**. `snap` is one umbrella flag for all 6 snap crates (they
+  root-level `*.md`-only change runs just `lint-docs` (a crate's own `*.md` change
+  also runs that crate's jobs — its README is packaged on publish), and any
+  shared/root/workflow change runs **everything**. The filters use **no `!`
+  negation rules** — under paths-filter's default `predicate-quantifier: some` a
+  negated rule matches every non-excluded file, which silently makes a filter
+  `true` for unrelated changes. `snap` is one umbrella flag for all 6 snap crates (they
   inter-depend, so a base-crate change must re-test dependents); per-crate signal
   comes from the separate coverage / publish-dry-run jobs, not the filter.
   Job-level `if:` only — never a workflow-level `paths:` filter (that would strand
