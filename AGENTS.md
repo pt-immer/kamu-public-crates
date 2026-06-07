@@ -20,6 +20,13 @@ publishing small, focused Rust crates — libraries and CLI apps — to crates.i
 - **`kamu-logging`** (`crates/logging`) — structured logging over the `tracing`
   ecosystem: systemd/journald, Cloudflare-Worker `wasm32` (via `tracing-web`),
   `actix-web` request spans, and OpenTelemetry/OTLP export (`with-otlp`).
+- **`kamu-snap-*`** (`crates/snap-*`) — Bank Indonesia **SNAP BI** plumbing, a
+  family of 6 independently-versioned crates. `kamu-snap-crypto` (HMAC/RSA
+  primitives, SNAP BI recipes, webhook verifier) and `kamu-snap-response`
+  (response envelope + 61-variant error taxonomy) are framework-free leaves; the
+  4 adapters `kamu-snap-{crypto,response}-{actix,axum}` bridge them to actix-web
+  / axum. `kamu-snap-response` is wasm32-clean; `kamu-snap-crypto` is **not**
+  (`rsa` pulls `getrandom`, which needs the consumer's `js` feature on wasm32).
 
 Each crate **versions and releases independently** — see its own `CHANGELOG.md`.
 
@@ -41,7 +48,12 @@ Each crate **versions and releases independently** — see its own `CHANGELOG.md
   build scripts under `crates/iso3166/build/` or the vendored CSV instead. If the
   dataset's cardinality changes, update the pinned counts in
   `crates/iso3166/tests/codegen_invariants.rs`.
-- **`forbid(unsafe_code)`** in `kamu-iso3166` — no `unsafe`.
+- **`forbid(unsafe_code)`** in `kamu-iso3166` and every `kamu-snap-*` crate — no `unsafe`.
+- **`kamu-snap-crypto` depends on `rsa`** (RUSTSEC-2023-0071, the "Marvin"
+  timing side-channel). No patched release exists, so it is ignored in
+  `deny.toml` with a rationale (SNAP BI uses RSA for signature
+  generation/verification, not attacker-ciphertext decryption). Keep the ignore
+  until a constant-time `rsa` ships, then drop it.
 
 ## Workflow (use `just`)
 
@@ -50,8 +62,8 @@ just            # list recipes
 just setup      # submodules + cross targets + install missing tools
 just doctor     # verify toolchain & tooling are present
 just lint-all   # rustfmt + clippy + Markdown + TOML + spelling
-just test-all   # workspace + kamu-iso3166 feature permutations
-just cov-all    # coverage gates for both crates
+just test-all   # workspace + kamu-iso3166 / kamu-snap-* feature permutations
+just cov-all    # coverage gates for every gated crate
 just check-all  # lint-all + test-all + cov-all + doc + cross builds + deny
 just ci         # check-all + publish dry-run (the full pipeline)
 ```
@@ -69,17 +81,23 @@ Cadence expectations:
   keep Markdown tables lint-clean, and let `taplo` own TOML formatting
   (`just fmt` / `just fmt-check`) — don't hand-align.
 - **Coverage gates are enforced** (`kamu-iso3166` ≥ 98% lines, `kamu-logging`
-  ≥ 70%); land tests with new code. `kamu-logging`'s global subscriber is a
-  process-global one-shot — test its error variants by constructing them in
-  isolated unit tests, never by re-calling `init()`.
+  ≥ 70%, `kamu-snap-crypto` ≥ 70%, `kamu-snap-response` ≥ 70%); land tests with
+  new code. The 4 thin `kamu-snap-*-{actix,axum}` adapter crates are
+  compile-only (framework glue, no tests) and intentionally not coverage-gated.
+  `kamu-logging`'s global subscriber is a process-global one-shot — test its
+  error variants by constructing them in isolated unit tests, never by re-calling
+  `init()`.
 
 ## Continuous integration
 
 - **CI is path-filtered per crate** (`on-pr-synced.yml`, on `pull_request` **and**
   `push: [main]`). A `changes` job (`dorny/paths-filter`) classifies the diff into
-  `iso3166` / `logging` / `shared` / `docs`; every heavy job carries an `if:` so a
-  logging-only change skips the iso3166 jobs (and vice versa), a `*.md`-only change
-  runs just `lint-docs`, and any shared/root/workflow change runs **everything**.
+  `iso3166` / `logging` / `snap` / `shared` / `docs`; every heavy job carries an
+  `if:` so a logging-only change skips the iso3166 jobs (and vice versa), a
+  `*.md`-only change runs just `lint-docs`, and any shared/root/workflow change
+  runs **everything**. `snap` is one umbrella flag for all 6 snap crates (they
+  inter-depend, so a base-crate change must re-test dependents); per-crate signal
+  comes from the separate coverage / publish-dry-run jobs, not the filter.
   Job-level `if:` only — never a workflow-level `paths:` filter (that would strand
   required checks as pending).
 - **One required check: `ci-success`** (scatter → gather → and-gate). It always
@@ -105,7 +123,18 @@ Cadence expectations:
 - **Releases are per crate**: bump the crate's `version` + `CHANGELOG.md`, merge
   to `main`, then tag a GitHub Release `<crate>-vX.Y.Z` (e.g.
   `kamu-iso3166-v0.2.0`). `on-release-published.yml` verifies the manifest
-  version matches the tag and publishes that single crate.
+  version matches the tag and publishes that single crate. Valid crate prefixes:
+  `kamu-iso3166`, `kamu-logging`, and the 6 `kamu-snap-*`.
+- **Snap crates publish in dependency order.** `cargo` refuses to package a crate
+  whose in-workspace deps (even optional ones) are not yet on crates.io, so
+  release them as: `kamu-snap-crypto` → `kamu-snap-response` →
+  `kamu-snap-{crypto,response}-{actix,axum}`, waiting for the crates.io index
+  between tiers (the release workflow guards this with a dep-present check).
+- **First publish of a brand-new crate** makes the token's user (Ujang360) the
+  sole owner; run `cargo owner --add github:pt-immer:rust-devs <crate>` afterward
+  to match the `Ujang360 + rust-devs` owner cadence. The crates.io token
+  (`SECRET_DEPLOY_CRATEIO`) is scoped to the `kamu*` glob, so new `kamu-snap-*`
+  names publish without a token change.
 
 ## Keeping this guide current
 
@@ -126,7 +155,9 @@ the guide so the next agent inherits what you learned.
 
 Source is dual-licensed `MIT OR Apache-2.0`. `kamu-iso3166` additionally embeds ISO
 3166 data under **CC BY-SA 4.0** — see `crates/iso3166/NOTICE` and
-`crates/iso3166/VENDORED.md`. New contributions are accepted under `MIT OR Apache-2.0`.
+`crates/iso3166/VENDORED.md`. The `kamu-snap-*` crates were relicensed from MIT
+(upstream `pt-immer/lib-snap`) to `MIT OR Apache-2.0` on import. New contributions
+are accepted under `MIT OR Apache-2.0`.
 
 ## AMem (fso-amem MCP)
 
