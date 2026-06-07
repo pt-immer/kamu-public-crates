@@ -1,0 +1,14 @@
+# Changelog — `kamu-snap-response-axum`
+
+## 2.0.0 — 2026-05-28
+
+### Added
+
+- Initial release: `AxumResponder<T>` newtype + `SnapResponderExt::into_axum`,
+  giving `axum::response::IntoResponse` (axum 0.7+) for
+  `kamu_snap_response::SnapResponse<T>`.
+- Defensive fallback to `500 INTERNAL_SERVER_ERROR` on malformed `responseCode`.
+- `#![forbid(unsafe_code)]`.
+
+First version published from the `pt-immer/kamu-public-crates` workspace
+(relicensed `MIT OR Apache-2.0`; previously MIT-only in `pt-immer/lib-snap`).

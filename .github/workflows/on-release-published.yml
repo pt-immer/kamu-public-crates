@@ -38,11 +38,11 @@ jobs:
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
-          if [[ "$TAG" =~ ^(kamu-iso3166|kamu-logging)-v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.+-]+)?)$ ]]; then
+          if [[ "$TAG" =~ ^(kamu-iso3166|kamu-logging|kamu-snap-crypto|kamu-snap-crypto-actix|kamu-snap-crypto-axum|kamu-snap-response|kamu-snap-response-actix|kamu-snap-response-axum)-v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.+-]+)?)$ ]]; then
             echo "crate=${BASH_REMATCH[1]}"  >> "$GITHUB_OUTPUT"
             echo "version=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
           else
-            echo "::error::Release tag '$TAG' must match '<crate>-vX.Y.Z' (crate ∈ {kamu-iso3166, kamu-logging})"
+            echo "::error::Release tag '$TAG' must match '<crate>-vX.Y.Z' (crate ∈ {kamu-iso3166, kamu-logging, kamu-snap-crypto, kamu-snap-crypto-actix, kamu-snap-crypto-axum, kamu-snap-response, kamu-snap-response-actix, kamu-snap-response-axum})"
             exit 1
           fi
 
@@ -72,6 +72,28 @@ jobs:
             exit 1
           fi
           echo "crates.io pre-check: ${CRATE} ${VERSION} is not yet published (HTTP ${code}). Proceeding."
+
+      - name: Verify in-workspace kamu-snap-* deps are already published
+        env:
+          CRATE: ${{ steps.parse.outputs.crate }}
+        run: |
+          # The snap crates inter-depend (crypto <- response/adapters). cargo's
+          # package step refuses to publish a crate whose declared deps — even
+          # optional ones — are not yet on crates.io. Fail fast with a clear
+          # message instead of cargo's opaque "no matching package" error.
+          deps="$(cargo metadata --no-deps --format-version 1 \
+            | python3 -c "import json,sys,os; m=json.load(sys.stdin); p=next(x for x in m['packages'] if x['name']==os.environ['CRATE']); print('\n'.join(sorted({d['name'] for d in p['dependencies'] if d['name'].startswith('kamu-snap-')})))")"
+          if [ -z "$deps" ]; then echo "no in-workspace kamu-snap-* deps."; exit 0; fi
+          for d in $deps; do
+            code="$(curl -fsS -o /dev/null -w '%{http_code}' \
+              -H 'User-Agent: kamu-public-crates-release (https://github.com/pt-immer/kamu-public-crates)' \
+              "https://crates.io/api/v1/crates/${d}" || true)"
+            if [ "$code" != "200" ]; then
+              echo "::error::dependency '${d}' is not on crates.io yet (HTTP ${code}) — publish it before ${CRATE}. Order: kamu-snap-crypto -> kamu-snap-response -> adapters."
+              exit 1
+            fi
+            echo "dep present: ${d}"
+          done
 
       - name: Publish (dry-run, then for real)
         env:

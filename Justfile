@@ -110,16 +110,24 @@ lint-all: fmt-check lint-rust lint-md lint-toml lint-spell
 # Tests / docs / supply chain
 # ---------------------------------------------------------------------------
 
-# Test the workspace plus kamu-iso3166 feature permutations
+# Test the workspace plus kamu-iso3166 / kamu-snap-* feature permutations
 test-all:
     cargo test --workspace
     cargo test -p kamu-iso3166 --all-features
     cargo test -p kamu-iso3166 --no-default-features --features serde
+    cargo test -p kamu-snap-crypto --all-features
+    cargo test -p kamu-snap-response --all-features
+    # Leaf lib must also compile with default features off (HMAC/RSA-only crypto,
+    # no snap-bi/webhook). Tests pull snap-bi, so this is a lib check, not a test.
+    cargo check -p kamu-snap-crypto --no-default-features
 
 # Build docs the way docs.rs does
 doc:
     RUSTDOCFLAGS=-Dwarnings cargo doc --workspace --no-deps
     RUSTDOCFLAGS=-Dwarnings cargo doc -p kamu-iso3166 --no-deps --all-features
+    # kamu-snap-response gains the `crypto` feature under all-features (docs.rs
+    # parity). The other snap crates' all-features == default, already covered.
+    RUSTDOCFLAGS=-Dwarnings cargo doc -p kamu-snap-response --no-deps --all-features
 
 # Supply-chain audit
 deny:
@@ -137,8 +145,19 @@ cov:
 cov-logging:
     cargo llvm-cov -p kamu-logging --fail-under-lines 70
 
-# Coverage gates for both crates
-cov-all: cov cov-logging
+# Coverage gate for kamu-snap-crypto. Floor 70 (measured ~74%): the default-on
+# `webhook` providers ship without tests upstream; raising this is future work.
+cov-snap-crypto:
+    cargo llvm-cov -p kamu-snap-crypto --all-features --fail-under-lines 70
+
+# Coverage gate for kamu-snap-response. Floor 70 (measured ~74%); `category.rs`
+# is currently untested upstream. The 4 thin actix/axum adapter crates have no
+# tests (framework-bound glue) and are intentionally compile-only, not gated.
+cov-snap-response:
+    cargo llvm-cov -p kamu-snap-response --all-features --fail-under-lines 70
+
+# Coverage gates for every gated crate
+cov-all: cov cov-logging cov-snap-crypto cov-snap-response
 
 # HTML coverage report for the whole workspace; prints the output path
 cov-html:
@@ -157,6 +176,12 @@ build-nostd:
 build-wasm:
     cargo build -p kamu-logging --no-default-features --features wasm32 --target wasm32-unknown-unknown
 
+# Compile kamu-snap-response for wasm32 (it is wasm-clean). kamu-snap-crypto is
+# NOT wasm-clean: rsa -> getrandom needs the consumer's `js` feature, so it is
+# deliberately not built here.
+build-wasm-snap:
+    cargo check -p kamu-snap-response --no-default-features --target wasm32-unknown-unknown
+
 # Type-check the Cloudflare Worker example (a cdylib excluded from the workspace)
 check-worker-example:
     cargo check --manifest-path crates/logging/examples/cloudflare-worker/Cargo.toml --target wasm32-unknown-unknown
@@ -169,10 +194,19 @@ check-worker-example:
 publish-dry crate:
     cargo publish -p {{ crate }} --dry-run
 
-# Dry-run publish every crate
+# Dry-run publish the crates that can be packaged standalone: iso3166, logging,
+# and kamu-snap-crypto are leaves (every dep is already on crates.io).
+# kamu-snap-response and the 4 snap adapter crates CANNOT be dry-run until their
+# in-workspace base crate is published — cargo's package step requires every
+# declared dependency (even an OPTIONAL one) to resolve on crates.io, and
+# --no-verify does NOT skip that check ("no matching package named
+# kamu-snap-crypto found"). They are covered by `just check-all`
+# (workspace build/clippy/test/doc) and published in dependency order
+# (crypto -> response -> adapters) via on-release-published.yml.
 publish-all:
     cargo publish -p kamu-iso3166 --dry-run
     cargo publish -p kamu-logging --dry-run
+    cargo publish -p kamu-snap-crypto --dry-run
 
 # Initialize the vendored ISO 3166 data submodule
 submodules:
@@ -187,7 +221,7 @@ clean:
 # ---------------------------------------------------------------------------
 
 # Everything read-only: lint + tests + coverage + docs + cross builds + deny
-check-all: lint-all test-all cov-all doc build-nostd build-wasm deny
+check-all: lint-all test-all cov-all doc build-nostd build-wasm build-wasm-snap deny
 
 # The full pipeline: everything check-all runs, plus a publish dry-run
 ci: check-all publish-all

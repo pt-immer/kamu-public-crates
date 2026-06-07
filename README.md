@@ -11,6 +11,12 @@ A Cargo workspace of small, focused Rust crates — libraries and CLI apps — p
 | ------------------------------------ | --------------------------------------------------------------------------- | --------- |
 | [`kamu-iso3166`](crates/iso3166)     | Zero-allocation, `no_std` ISO 3166-1 / 3166-2 country & subdivision primitives | [![v](https://img.shields.io/crates/v/kamu-iso3166.svg)](https://crates.io/crates/kamu-iso3166) |
 | [`kamu-logging`](crates/logging)     | Structured logging over the `tracing` ecosystem: systemd/journald, Cloudflare-Worker `wasm32`, `actix-web` spans, OpenTelemetry/OTLP | [![v](https://img.shields.io/crates/v/kamu-logging.svg)](https://crates.io/crates/kamu-logging) |
+| [`kamu-snap-crypto`](crates/snap-crypto) | Bank Indonesia SNAP BI cryptography: HMAC/RSA primitives, signing recipes, webhook verifier (framework-free leaf) | [![v](https://img.shields.io/crates/v/kamu-snap-crypto.svg)](https://crates.io/crates/kamu-snap-crypto) |
+| [`kamu-snap-response`](crates/snap-response) | SNAP BI response envelope + 61-variant error taxonomy (framework-free leaf) | [![v](https://img.shields.io/crates/v/kamu-snap-response.svg)](https://crates.io/crates/kamu-snap-response) |
+| [`kamu-snap-crypto-actix`](crates/snap-crypto-actix) | actix-web inbound-verify helper for `kamu-snap-crypto` | [![v](https://img.shields.io/crates/v/kamu-snap-crypto-actix.svg)](https://crates.io/crates/kamu-snap-crypto-actix) |
+| [`kamu-snap-crypto-axum`](crates/snap-crypto-axum) | axum/`http` inbound-verify helper for `kamu-snap-crypto` | [![v](https://img.shields.io/crates/v/kamu-snap-crypto-axum.svg)](https://crates.io/crates/kamu-snap-crypto-axum) |
+| [`kamu-snap-response-actix`](crates/snap-response-actix) | actix-web `Responder` adapter for `kamu-snap-response` | [![v](https://img.shields.io/crates/v/kamu-snap-response-actix.svg)](https://crates.io/crates/kamu-snap-response-actix) |
+| [`kamu-snap-response-axum`](crates/snap-response-axum) | axum `IntoResponse` adapter for `kamu-snap-response` | [![v](https://img.shields.io/crates/v/kamu-snap-response-axum.svg)](https://crates.io/crates/kamu-snap-response-axum) |
 
 Each crate versions and releases independently — see its own `CHANGELOG.md`.
 
@@ -21,7 +27,13 @@ kamu-public-crates/
 ├── Cargo.toml            # workspace: shared package metadata, deps, lints
 ├── crates/
 │   ├── iso3166/          # kamu-iso3166 (vendors ISO data as a git submodule)
-│   └── logging/          # kamu-logging
+│   ├── logging/          # kamu-logging
+│   ├── snap-crypto/      # kamu-snap-crypto (SNAP BI crypto, leaf)
+│   ├── snap-response/    # kamu-snap-response (SNAP BI envelope/errors, leaf)
+│   ├── snap-crypto-actix/    # actix-web verify adapter
+│   ├── snap-crypto-axum/     # axum/http verify adapter
+│   ├── snap-response-actix/  # actix-web Responder adapter
+│   └── snap-response-axum/   # axum IntoResponse adapter
 └── .github/workflows/    # on-pr-synced.yml, on-release-published.yml
 ```
 
