@@ -19,8 +19,15 @@ extend-ignore-re = [
 [default.extend-identifiers]
 # Project/brand tokens that are not typos.
 IMMER = "IMMER"
+# kamu-snap-response migration docs reference the OLD v1.x enum variant name
+# `Unathorized` (the historical typo) when documenting its rename to
+# `Error::Unauthorized`. Keep the deliberate historical reference verbatim.
+Unathorized = "Unathorized"
 
 [default.extend-words]
 # Domain vocabulary from kamu-logging's OpenTelemetry / W3C trace-context support.
 otlp = "otlp"
 traceparent = "traceparent"
+# See the extend-identifiers note above — the historical `Unathorized` typo is
+# referenced on purpose in kamu-snap-response's CHANGELOG/README migration table.
+Unathorized = "Unathorized"

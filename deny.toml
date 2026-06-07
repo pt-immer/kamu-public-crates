@@ -11,6 +11,19 @@ all-features = true
 
 [advisories]
 ignore = [
+  # RUSTSEC-2023-0071: "Marvin Attack" timing side-channel in the `rsa` crate.
+  # `rsa` enters via the kamu-snap-* SNAP BI crates (kamu-snap-crypto and the
+  # crates that depend on it). There is NO patched release — RustCrypto/RSA#626
+  # is still open and cargo-deny reports "No safe upgrade is available"; `rsa`
+  # is also the only maintained pure-Rust PKCS#8 RSA implementation, so there is
+  # no drop-in alternative. SNAP BI's default signing path is HMAC-SHA512; RSA
+  # is used only where Bank Indonesia's spec mandates RSASSA signature
+  # generation/verification (the private key operates on the signer's own
+  # message hash, not on attacker-chosen ciphertext, so the classic decryption
+  # oracle does not apply). The residual signing-timing risk should be mitigated
+  # at deployment (keep signing keys off network-observable hot paths). Revisit
+  # and drop this ignore the moment a constant-time `rsa` release ships.
+  "RUSTSEC-2023-0071",
   # RUSTSEC-2026-0009: stack-exhaustion DoS in `time`'s RFC 2822 *parsing* of
   # untrusted input. `time` enters via actix-web -> cookie (Date-header
   # *formatting*) and as a direct kamu-logging dep used only for wasm32 log

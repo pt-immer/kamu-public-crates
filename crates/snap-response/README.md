@@ -15,7 +15,7 @@ Framework-agnostic response envelope + error taxonomy for Bank Indonesia SNAP BI
 
 ## The `responseCode` formula
 
-```
+```text
 7 digits: HHH SS CC
          │   │  │
          │   │  └── case code (00..=99) — per-variant per-spec
