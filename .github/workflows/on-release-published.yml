@@ -122,3 +122,23 @@ jobs:
           }
           retry cargo publish -p "$CRATE" --dry-run
           cargo publish -p "$CRATE"
+
+      - name: Ensure github:pt-immer:rust-devs co-owns the crate
+        env:
+          CRATE: ${{ steps.parse.outputs.crate }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.SECRET_DEPLOY_CRATEIO }}
+        # First publish makes the token's user (Ujang360) the sole owner; the repo
+        # cadence is `Ujang360 + github:pt-immer:rust-devs`. Tolerant on purpose:
+        # already-owner is fine, and a token lacking the `change-owners` scope only
+        # warns (never fails an otherwise-successful publish). Backfill older crates
+        # with the `Add Crate Owner` workflow once the token has the scope.
+        run: |
+          set -uo pipefail
+          if out="$(cargo owner --add github:pt-immer:rust-devs "$CRATE" 2>&1)"; then
+            echo "$out"; echo "added github:pt-immer:rust-devs to $CRATE"
+          elif echo "$out" | grep -qiE 'already (an )?owner|already invited'; then
+            echo "$out"; echo "github:pt-immer:rust-devs already owns $CRATE"
+          else
+            echo "$out"
+            echo "::warning::could not add github:pt-immer:rust-devs to $CRATE (token may lack the crates.io change-owners scope); add it manually or via the Add Crate Owner workflow"
+          fi

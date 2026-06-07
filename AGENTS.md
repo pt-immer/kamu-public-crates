@@ -135,10 +135,13 @@ Cadence expectations:
   `kamu-snap-{crypto,response}-{actix,axum}`, waiting for the crates.io index
   between tiers (the release workflow guards this with a dep-present check).
 - **First publish of a brand-new crate** makes the token's user (Ujang360) the
-  sole owner; run `cargo owner --add github:pt-immer:rust-devs <crate>` afterward
-  to match the `Ujang360 + rust-devs` owner cadence. The crates.io token
-  (`SECRET_DEPLOY_CRATEIO`) is scoped to the `kamu*` glob, so new `kamu-snap-*`
-  names publish without a token change.
+  sole owner. `on-release-published.yml` then adds `github:pt-immer:rust-devs`
+  automatically to match the `Ujang360 + rust-devs` owner cadence (tolerant: it
+  only warns if the token lacks the crates.io `change-owners` scope). Backfill
+  crates published before that step — or add the team by hand — with the manual
+  **Add Crate Owner** (`add-crate-owner.yml`) `workflow_dispatch`. The crates.io
+  token (`SECRET_DEPLOY_CRATEIO`) is scoped to the `kamu*` glob, so new
+  `kamu-snap-*` names publish without a token change.
 
 ## Keeping this guide current
 
