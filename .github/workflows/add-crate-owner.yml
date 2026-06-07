@@ -1,0 +1,57 @@
+name: Add Crate Owner
+
+# Manually add the `github:pt-immer:rust-devs` team as a crates.io owner.
+#
+# First publish of a brand-new crate makes the token's user (Ujang360) the sole
+# owner; the repo cadence is `Ujang360 + github:pt-immer:rust-devs`. The release
+# workflow now adds the team automatically on publish, but this dispatch exists
+# to backfill crates published before that step (and as a manual fallback).
+#
+# Requires the org token `SECRET_DEPLOY_CRATEIO` to carry the crates.io
+# `change-owners` endpoint scope. If it does not, the run fails with a 403 and
+# the token must be broadened.
+
+on:
+  workflow_dispatch:
+    inputs:
+      crate:
+        description: "Crate to add the team to (blank = all 6 kamu-snap-* crates)"
+        required: false
+        default: ""
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  add-owner:
+    name: cargo owner --add rust-devs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Add github:pt-immer:rust-devs as owner
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.SECRET_DEPLOY_CRATEIO }}
+          ONE: ${{ github.event.inputs.crate }}
+        run: |
+          set -uo pipefail
+          if [ -n "$ONE" ]; then
+            crates="$ONE"
+          else
+            crates="kamu-snap-crypto kamu-snap-response kamu-snap-crypto-actix kamu-snap-crypto-axum kamu-snap-response-actix kamu-snap-response-axum"
+          fi
+          rc=0
+          for c in $crates; do
+            echo "::group::$c"
+            if out="$(cargo owner --add github:pt-immer:rust-devs "$c" 2>&1)"; then
+              echo "$out"; echo "added: $c"
+            elif echo "$out" | grep -qiE 'already (an )?owner|already invited'; then
+              echo "$out"; echo "already present: $c"
+            else
+              echo "$out"; echo "::error::failed to add team to $c"; rc=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$rc"
