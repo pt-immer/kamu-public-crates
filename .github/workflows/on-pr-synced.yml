@@ -158,8 +158,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.toolchain }}
+      - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace
+      # cargo-nextest: compact summary + failures-only output (terser CI logs,
+      # parity with `just test-fast`). nextest skips doctests, so run those too.
+      - run: cargo nextest run --workspace --status-level fail
+      - run: cargo test --workspace --doc
 
   test-iso3166-features:
     name: test (kamu-iso3166 feature permutations)
