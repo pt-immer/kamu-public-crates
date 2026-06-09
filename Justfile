@@ -73,10 +73,16 @@ fmt:
     cargo fmt --all
     taplo fmt
 
-# Check formatting of every file type (Rust + TOML)
-fmt-check:
+# Check Rust formatting (the CI `rustfmt` job)
+fmt-rust-check:
     cargo fmt --all --check
+
+# Check TOML formatting
+fmt-toml-check:
     taplo fmt --check
+
+# Check formatting of every file type (Rust + TOML)
+fmt-check: fmt-rust-check fmt-toml-check
 
 # Auto-fix what tooling can (Markdown + spelling)
 fix:
@@ -87,10 +93,17 @@ fix:
 # Lint (read-only), per file type + aggregate
 # ---------------------------------------------------------------------------
 
-# Lint Rust: workspace clippy::all + kamu-iso3166 pedantic
-lint-rust:
+# Lint Rust workspace: deny warnings + clippy::all (default features; logging's
+# systemd/wasm32 are mutually exclusive so --all-features can't span the workspace)
+clippy-workspace:
     cargo clippy --workspace --all-targets -- -D warnings -D clippy::all
+
+# Lint kamu-iso3166 with clippy::pedantic (it alone holds to pedantic)
+clippy-iso3166:
     cargo clippy -p kamu-iso3166 --all-features --all-targets -- -D clippy::pedantic
+
+# Lint Rust: workspace clippy::all + kamu-iso3166 pedantic
+lint-rust: clippy-workspace clippy-iso3166
 
 # Lint Markdown
 lint-md:
@@ -104,12 +117,23 @@ lint-toml:
 lint-spell:
     typos
 
+# Lint docs the way the CI `lint docs` job does: TOML fmt-check + Markdown +
+# TOML lint + spelling (no Rust). lint-all is the superset that adds Rust.
+lint-docs: fmt-toml-check lint-md lint-toml lint-spell
+
 # Lint every file type (formatting + Rust + Markdown + TOML + spelling)
 lint-all: fmt-check lint-rust lint-md lint-toml lint-spell
 
 # ---------------------------------------------------------------------------
 # Tests / docs / supply chain
 # ---------------------------------------------------------------------------
+
+# Test kamu-iso3166 feature permutations (the CI `test (kamu-iso3166 feature
+# permutations)` job): all-features + serde-only, plus all-features doctests.
+test-iso3166:
+    cargo nextest run -p kamu-iso3166 --all-features
+    cargo nextest run -p kamu-iso3166 --no-default-features --features serde
+    cargo test -p kamu-iso3166 --all-features --doc
 
 # Test the workspace plus kamu-iso3166 / kamu-snap-* feature permutations
 test-all:
@@ -122,13 +146,21 @@ test-all:
     # no snap-bi/webhook). Tests pull snap-bi, so this is a lib check, not a test.
     cargo check -p kamu-snap-crypto --no-default-features
 
-# Build docs the way docs.rs does
-doc:
+# Build workspace docs the way docs.rs does (CI `docs (workspace)` job)
+doc-workspace:
     RUSTDOCFLAGS=-Dwarnings cargo doc --workspace --no-deps
+
+# Build kamu-iso3166 docs with all features (CI `docs (kamu-iso3166)` job)
+doc-iso3166:
     RUSTDOCFLAGS=-Dwarnings cargo doc -p kamu-iso3166 --no-deps --all-features
-    # kamu-snap-response gains the `crypto` feature under all-features (docs.rs
-    # parity). The other snap crates' all-features == default, already covered.
+
+# Build kamu-snap-response docs with all features — gains the `crypto` feature
+# (docs.rs parity). Other snap crates' all-features == default, already covered.
+doc-snap-response:
     RUSTDOCFLAGS=-Dwarnings cargo doc -p kamu-snap-response --no-deps --all-features
+
+# Build docs the way docs.rs does
+doc: doc-workspace doc-iso3166 doc-snap-response
 
 # Supply-chain audit
 deny:
@@ -138,9 +170,9 @@ deny:
 # Coverage
 # ---------------------------------------------------------------------------
 
-# Coverage gate for kamu-iso3166
+# Coverage gate for kamu-iso3166 (also emits target/lcov.info for the CI artifact)
 cov:
-    cargo llvm-cov -p kamu-iso3166 --all-features --ignore-filename-regex 'generated|build/' --fail-under-lines 98
+    cargo llvm-cov -p kamu-iso3166 --all-features --ignore-filename-regex 'generated|build/' --fail-under-lines 98 --lcov --output-path target/lcov.info
 
 # Coverage gate for kamu-logging (no --all-features: systemd XOR wasm32)
 cov-logging:

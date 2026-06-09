@@ -122,6 +122,11 @@ Cadence expectations:
   `main` branch **ruleset requires only `ci-success`**, so jobs can be added,
   renamed, or split without touching branch protection — just keep the gate's
   `needs:` list and `allowed-skips` complete.
+- **CI calls `just`** — every job runs `just <recipe>` (the granular recipes the
+  aggregates compose), so the Justfile is the single source of truth for
+  build/lint/test/coverage commands and `just <recipe>` reproduces any CI job
+  locally. Job **names** are unchanged, so the `ci-success` gate is unaffected.
+  Only `cargo-deny` keeps its dedicated action (advisory-DB caching).
 - **Release CI** (`on-release-published.yml`) parses the `<crate>-vX.Y.Z` tag,
   verifies the manifest version, **refuses to re-publish a version already on
   crates.io**, and serializes per tag before publishing that single crate.

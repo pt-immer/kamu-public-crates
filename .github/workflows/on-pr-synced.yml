@@ -16,6 +16,12 @@ on:
 # (a skipped required job is treated as success), and a single always-running
 # `ci-success` aggregate gate is the one context the branch ruleset requires.
 
+# Every job runs its command through `just <recipe>` so the Justfile is the
+# single source of truth for build/lint/test/coverage commands and `just <recipe>`
+# reproduces any CI job locally. The job-level fan-out (per crate, path-filtered)
+# is a CI concern; the recipes it calls are the granular ones the aggregates
+# compose. Only `cargo-deny` keeps its dedicated action (better caching).
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
@@ -106,7 +112,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - run: cargo fmt --all --check
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: just fmt-rust-check
 
   clippy-workspace:
     name: clippy (workspace)
@@ -120,11 +129,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - uses: Swatinem/rust-cache@v2
-      # Workspace-wide: deny warnings + clippy::all (default features — logging's
-      # `systemd`/`wasm32` features are mutually exclusive, so `--all-features`
-      # cannot be used across the whole workspace).
-      - run: cargo clippy --workspace --all-targets -- -D warnings -D clippy::all
+      - run: just clippy-workspace
 
   clippy-iso3166:
     name: clippy (kamu-iso3166 pedantic)
@@ -138,9 +147,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - uses: Swatinem/rust-cache@v2
-      # kamu-iso3166 additionally holds to clippy::pedantic.
-      - run: cargo clippy -p kamu-iso3166 --all-features --all-targets -- -D clippy::pedantic
+      - run: just clippy-iso3166
 
   test-workspace:
     name: test (${{ matrix.toolchain }})
@@ -158,12 +169,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.toolchain }}
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-nextest
       - uses: Swatinem/rust-cache@v2
-      # cargo-nextest: compact summary + failures-only output (terser CI logs,
-      # parity with `just test-fast`). nextest skips doctests, so run those too.
-      - run: cargo nextest run --workspace --status-level fail
-      - run: cargo test --workspace --doc
+      # `just test-fast` = cargo-nextest (failures-only) + doctests.
+      - run: just test-fast
 
   test-iso3166-features:
     name: test (kamu-iso3166 feature permutations)
@@ -175,9 +186,11 @@ jobs:
         with:
           submodules: true
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-nextest
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p kamu-iso3166 --all-features
-      - run: cargo test -p kamu-iso3166 --no-default-features --features serde
+      - run: just test-iso3166
 
   no-std-build:
     name: no_std build (thumbv7em-none-eabi)
@@ -191,8 +204,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: thumbv7em-none-eabi
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build -p kamu-iso3166 --no-default-features --target thumbv7em-none-eabi
+      - run: just build-nostd
 
   build-wasm:
     name: wasm build (wasm32-unknown-unknown)
@@ -204,8 +220,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build -p kamu-logging --no-default-features --features wasm32 --target wasm32-unknown-unknown
+      - run: just build-wasm
 
   docs-workspace:
     name: docs (workspace)
@@ -217,10 +236,11 @@ jobs:
         with:
           submodules: true
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - uses: Swatinem/rust-cache@v2
-      - env:
-          RUSTDOCFLAGS: -Dwarnings
-        run: cargo doc --workspace --no-deps
+      - run: just doc-workspace
 
   docs-iso3166:
     name: docs (kamu-iso3166 all-features)
@@ -232,10 +252,11 @@ jobs:
         with:
           submodules: true
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - uses: Swatinem/rust-cache@v2
-      - env:
-          RUSTDOCFLAGS: -Dwarnings
-        run: cargo doc -p kamu-iso3166 --no-deps --all-features
+      - run: just doc-iso3166
 
   deny:
     name: cargo-deny
@@ -243,6 +264,9 @@ jobs:
     if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
     steps:
+      # Exception to the `just`-everywhere rule: the dedicated action caches the
+      # advisory DB and is faster than `cargo deny check` from scratch. The
+      # `just deny` recipe runs the equivalent locally.
       - uses: actions/checkout@v6
         with:
           submodules: true
@@ -260,12 +284,10 @@ jobs:
           node-version: lts/*
       - uses: taiki-e/install-action@v2
         with:
-          tool: taplo-cli,typos-cli
+          tool: just,taplo-cli,typos-cli
+      # markdownlint-cli2 -> node_modules/.bin, which the Justfile prepends to PATH.
       - run: npm install --no-fund --no-audit
-      - run: npx markdownlint-cli2 "**/*.md"
-      - run: taplo fmt --check
-      - run: taplo lint
-      - run: typos
+      - run: just lint-docs
 
   publish-dry-run-iso3166:
     name: cargo publish --dry-run (kamu-iso3166)
@@ -277,8 +299,11 @@ jobs:
         with:
           submodules: true
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - uses: Swatinem/rust-cache@v2
-      - run: cargo publish -p kamu-iso3166 --dry-run
+      - run: just publish-dry kamu-iso3166
 
   publish-dry-run-logging:
     name: cargo publish --dry-run (kamu-logging)
@@ -288,8 +313,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - uses: Swatinem/rust-cache@v2
-      - run: cargo publish -p kamu-logging --dry-run
+      - run: just publish-dry kamu-logging
 
   coverage-iso3166:
     name: coverage (kamu-iso3166 >= 98% lines)
@@ -303,18 +331,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
-      # Generated tables and the build script are excluded from the denominator.
-      - run: >
-          cargo llvm-cov -p kamu-iso3166 --all-features
-          --ignore-filename-regex 'generated|build/'
-          --fail-under-lines 98
-          --lcov --output-path lcov.info
+      # `just cov` enforces the 98% floor and writes target/lcov.info.
+      - run: just cov
       - uses: actions/upload-artifact@v7
         with:
           name: lcov-iso3166
-          path: lcov.info
+          path: target/lcov.info
 
   coverage-logging:
     name: coverage (kamu-logging >= 70% lines)
@@ -326,12 +352,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
-      # kamu-logging's global-subscriber + journald/tty branches are
-      # environment-bound and can't be reached on a headless runner, so its gate
-      # is lower. It can't use --all-features (systemd XOR wasm32).
-      - run: cargo llvm-cov -p kamu-logging --fail-under-lines 70
+      - run: just cov-logging
 
   build-wasm-snap:
     name: wasm build (kamu-snap-response)
@@ -343,10 +368,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - uses: Swatinem/rust-cache@v2
-      # kamu-snap-response is wasm-clean; kamu-snap-crypto is NOT (rsa -> getrandom
-      # needs the consumer's `js` feature), so only response is built for wasm32.
-      - run: cargo check -p kamu-snap-response --no-default-features --target wasm32-unknown-unknown
+      - run: just build-wasm-snap
 
   coverage-snap-crypto:
     name: coverage (kamu-snap-crypto >= 70% lines)
@@ -358,11 +384,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
-      # Floor is the measured ~74% rounded down; the default-on `webhook`
-      # providers ship without tests upstream (raising this is future work).
-      - run: cargo llvm-cov -p kamu-snap-crypto --all-features --fail-under-lines 70
+      - run: just cov-snap-crypto
 
   coverage-snap-response:
     name: coverage (kamu-snap-response >= 70% lines)
@@ -374,11 +400,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-llvm-cov
       - uses: Swatinem/rust-cache@v2
-      # The 4 thin actix/axum adapter crates have no tests (framework glue);
-      # they are compile-only via the workspace jobs, not coverage-gated.
-      - run: cargo llvm-cov -p kamu-snap-response --all-features --fail-under-lines 70
+      - run: just cov-snap-response
 
   publish-dry-run-snap-crypto:
     name: cargo publish --dry-run (kamu-snap-crypto)
@@ -388,14 +414,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - uses: Swatinem/rust-cache@v2
-      # Only the leaf crate can be dry-run pre-publish. kamu-snap-response and the
-      # 4 adapter crates declare an in-workspace dependency (kamu-snap-crypto /
-      # kamu-snap-response) that cargo's package step requires to already exist on
-      # crates.io — even when it is optional, and even with --no-verify. They are
-      # validated by the workspace clippy/test/docs jobs and published in
-      # dependency order (see on-release-published.yml), so they get no dry-run job.
-      - run: cargo publish -p kamu-snap-crypto --dry-run
+      # Only the leaf crate can be dry-run pre-publish (see Justfile `publish-all`).
+      - run: just publish-dry kamu-snap-crypto
 
   # Single aggregate gate (scatter -> gather -> and-gate). This is the ONLY
   # context the branch ruleset requires: it always runs (so the context is always
