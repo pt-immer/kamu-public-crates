@@ -73,6 +73,17 @@ is the source of truth for "green". Doc-lint tools (`taplo`, `typos`,
 `markdownlint-cli2`) install repo-locally under `.tools/` and `node_modules/`
 via `just setup` when not already on `PATH`.
 
+For **token-thrifty agent loops**, prefer the terse recipes — compact PASS/FAIL,
+full output only behind `VERBOSE=1`. They are additive, not a replacement: CI
+still runs the explicit recipes above and their full logs stay the source of
+truth.
+
+```sh
+just gate            # fmt + clippy (short) + test (+ deny) → PASS/FAIL summary
+just check <crate>   # scoped clippy + test for one crate (skips the workspace)
+just test-fast       # cargo-nextest (failures-only) + doctests
+```
+
 Cadence expectations:
 
 - **New recipes** follow the uniform `<area>-<verb>` + `*-all` scheme

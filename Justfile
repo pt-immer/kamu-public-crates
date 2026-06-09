@@ -17,7 +17,7 @@ setup:
     git submodule update --init --recursive
     rustup target add thumbv7em-none-eabi wasm32-unknown-unknown || true
     # Rust doc/ops tools -> repo-local .tools/ when not already on PATH.
-    for spec in taplo:taplo-cli typos:typos-cli cargo-llvm-cov:cargo-llvm-cov cargo-deny:cargo-deny; do \
+    for spec in taplo:taplo-cli typos:typos-cli cargo-llvm-cov:cargo-llvm-cov cargo-deny:cargo-deny cargo-nextest:cargo-nextest; do \
       bin="${spec%%:*}"; crate="${spec##*:}"; \
       if command -v "$bin" >/dev/null 2>&1; then echo "✓ $bin already installed"; \
       else echo "installing $crate -> .tools/"; cargo install --root .tools "$crate"; fi; \
@@ -54,6 +54,7 @@ doctor:
     check markdownlint-cli2 1 markdownlint-cli2 --version
     check cargo-llvm-cov 1 cargo-llvm-cov --version
     check cargo-deny 1 cargo-deny --version
+    check cargo-nextest 0 cargo nextest --version
     echo "cross targets:"
     for tgt in thumbv7em-none-eabi wasm32-unknown-unknown; do
       if rustup target list --installed 2>/dev/null | grep -qx "$tgt"; then printf '  ✓ %-26s installed\n' "$tgt"; else printf '  · %-26s missing (run: just setup)\n' "$tgt"; fi
@@ -225,3 +226,60 @@ check-all: lint-all test-all cov-all doc build-nostd build-wasm build-wasm-snap 
 
 # The full pipeline: everything check-all runs, plus a publish dry-run
 ci: check-all publish-all
+
+# ---------------------------------------------------------------------------
+# Agentic (token-thrifty): compact signal for AI agents; firehose behind VERBOSE=1
+#
+# These recipes are for AI coding agents (and humans who want a terse loop).
+# They print the minimum signal needed to pick the next action and keep the full
+# output behind VERBOSE=1, so a green run costs a handful of lines instead of a
+# few thousand. CI does NOT use them — CI runs the explicit lint-all / test-all /
+# cov-all recipes above, whose full logs are the source of truth.
+# ---------------------------------------------------------------------------
+
+# Fast pre-PR gate with a compact PASS/FAIL summary. On failure prints ONLY the
+# failing step's output; `VERBOSE=1 just gate` prints everything. Code-focused
+# (fmt + clippy + test); run `just lint-all` for the Markdown/TOML/spelling gates.
+gate:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    names=("fmt" "clippy" "test")
+    cmds=("cargo fmt --all --check"
+          "cargo clippy --workspace --all-targets --message-format=short -- -D warnings -D clippy::all"
+          "cargo test --workspace --quiet")
+    if command -v cargo-deny >/dev/null 2>&1; then names+=("deny"); cmds+=("cargo deny check --hide-inclusion-graph"); fi
+    declare -a rcs outs
+    fail=0
+    for i in "${!names[@]}"; do
+      outs[$i]=$(eval "${cmds[$i]}" 2>&1); rcs[$i]=$?
+      if [ "${rcs[$i]}" -eq 0 ]; then printf '  PASS  %s\n' "${names[$i]}"; else printf '  FAIL  %s\n' "${names[$i]}"; fail=1; fi
+    done
+    if [ "${VERBOSE:-0}" = "1" ]; then
+      for i in "${!names[@]}"; do printf '\n=== %s ===\n%s\n' "${names[$i]}" "${outs[$i]}"; done
+    elif [ "$fail" -ne 0 ]; then
+      for i in "${!names[@]}"; do [ "${rcs[$i]}" -ne 0 ] && printf '\n=== %s (FAILED) ===\n%s\n' "${names[$i]}" "${outs[$i]}"; done
+    fi
+    exit "$fail"
+
+# Skips the rest of the workspace so an agent only reads relevant output.
+# Scoped check for ONE crate (clippy short + tests), e.g. `just check kamu-iso3166`.
+check crate:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    fail=0
+    cargo clippy -p '{{ crate }}' --all-targets --message-format=short -- -D warnings -D clippy::all || fail=1
+    cargo test -p '{{ crate }}' --quiet || fail=1
+    exit "$fail"
+
+# Falls back to `cargo test` when cargo-nextest is absent (run: just setup).
+# Terse test run via cargo-nextest (summary + failures-only) + doctests.
+test-fast:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    if command -v cargo-nextest >/dev/null 2>&1; then
+      cargo nextest run --workspace --status-level fail
+      cargo test --workspace --doc --quiet
+    else
+      echo "cargo-nextest missing (run: just setup) — falling back to cargo test"
+      cargo test --workspace --quiet
+    fi
