@@ -16,6 +16,8 @@
     "target/**",
     "node_modules/**",
     ".tools/**",
+    // Git-ignored agent session buffers (remember-hook runtime files).
+    ".remember/**",
     "crates/iso3166/vendor/**"
   ]
 }
