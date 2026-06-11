@@ -24,15 +24,6 @@ ignore = [
   # at deployment (keep signing keys off network-observable hot paths). Revisit
   # and drop this ignore the moment a constant-time `rsa` release ships.
   "RUSTSEC-2023-0071",
-  # RUSTSEC-2026-0009: stack-exhaustion DoS in `time`'s RFC 2822 *parsing* of
-  # untrusted input. `time` enters via actix-web -> cookie (Date-header
-  # *formatting*) and as a direct kamu-logging dep used only for wasm32 log
-  # *timestamp formatting* (`wasm-bindgen`) — no untrusted RFC 2822 parsing
-  # occurs on either path. The fix (time >= 0.3.46) requires Rust 1.88, which
-  # would break the workspace MSRV (1.85), so `time` is pinned to `=0.3.45` in
-  # the workspace deps. Revisit when actix-web relaxes its `time` requirement or
-  # the workspace MSRV is raised.
-  "RUSTSEC-2026-0009",
 ]
 version = 2
 yanked = "deny"

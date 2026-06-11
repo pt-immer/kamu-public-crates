@@ -26,7 +26,7 @@ just ci          # check-all + publish dry-run (the full pipeline)
 or the raw commands — see the [`Justfile`](Justfile). The PR pipeline
 (`on-pr-synced.yml`) runs rustfmt, clippy (`-D warnings -D clippy::all`
 workspace-wide, plus `-D clippy::pedantic` for `kamu-iso3166`), tests on
-`stable` and the `1.85` MSRV, a `no_std` cross-compile, docs, `cargo-deny`,
+`stable` and the `1.88` MSRV, a `no_std` cross-compile, docs, `cargo-deny`,
 per-crate `publish --dry-run`, a `wasm32` build, Markdown/TOML/spelling lint,
 and coverage (`kamu-iso3166` ≥ 98% lines, `kamu-logging` ≥ 70%,
 `kamu-snap-crypto` ≥ 70%, `kamu-snap-response` ≥ 70%).

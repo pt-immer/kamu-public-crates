@@ -1,5 +1,15 @@
 # Changelog — `kamu-snap-response-axum`
 
+## 2.1.0 — 2026-06-11
+
+Toolchain/metadata only. No code or public API changes.
+
+### Changed
+
+- MSRV raised from 1.85 to 1.88 (workspace-wide, driven by the workspace
+  `time` >= 0.3.47 floor for RUSTSEC-2026-0009). This crate has no `time`
+  dependency itself.
+
 ## 2.0.1 — 2026-06-08
 
 Docs only. No code or public API changes.

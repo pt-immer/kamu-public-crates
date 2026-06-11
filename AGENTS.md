@@ -1,6 +1,6 @@
 # Agent guide — kamu-public-crates
 
-> **A Cargo workspace of 8 independently-versioned public crates** — `kamu-iso3166`, `kamu-logging`, and the 6-crate `kamu-snap-*` Bank Indonesia SNAP BI family. Edition 2024, MSRV 1.85, dual-licensed `MIT OR Apache-2.0`. Each crate's authoritative version lives in its `Cargo.toml` / [`CHANGELOG.md`](CHANGELOG.md); releases are per-crate (see [Commits & releases](#commits--releases)).
+> **A Cargo workspace of 8 independently-versioned public crates** — `kamu-iso3166`, `kamu-logging`, and the 6-crate `kamu-snap-*` Bank Indonesia SNAP BI family. Edition 2024, MSRV 1.88, dual-licensed `MIT OR Apache-2.0`. Each crate's authoritative version lives in its `Cargo.toml` / [`CHANGELOG.md`](CHANGELOG.md); releases are per-crate (see [Commits & releases](#commits--releases)).
 > Project slug: `kamu-public-crates` — shared via `.fso-amem/project.toml`; do not invent a different slug.
 
 Guidance for AI coding agents (Claude Code, GitHub Copilot, and others) working in
@@ -32,8 +32,8 @@ Each crate **versions and releases independently** — see its own `CHANGELOG.md
 
 ## Ground rules
 
-- **Edition 2024, MSRV `1.85`.** Don't use APIs newer than 1.85; CI tests both
-  `stable` and `1.85`.
+- **Edition 2024, MSRV `1.88`.** Don't use APIs newer than 1.88; CI tests both
+  `stable` and `1.88`.
 - **`kamu-iso3166` needs the git submodule.** It reads its vendored ISO 3166 CSVs
   (a submodule at `crates/iso3166/vendor/iso3166-csv`) at build time. Run
   `just setup` (or `git submodule update --init --recursive`) before building.

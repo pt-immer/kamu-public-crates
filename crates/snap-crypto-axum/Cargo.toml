@@ -1,6 +1,6 @@
 [package]
 name = "kamu-snap-crypto-axum"
-version = "2.0.1"
+version = "2.1.0"
 description = "axum/tower inbound-verify layer for kamu-snap-crypto SNAP BI signatures"
 documentation = "https://docs.rs/kamu-snap-crypto-axum"
 categories = ["web-programming::http-server", "authentication", "api-bindings"]

@@ -4,6 +4,18 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows
 [SemVer](https://semver.org/) from `1.0.0` onwards.
 
+## [1.3.0] — 2026-06-11
+
+Dependency/toolchain release. No library code or public API changes.
+
+### Changed
+
+- MSRV raised from 1.85 to 1.88.
+- The workspace `time` dependency is now floored at `0.3.47` (was pinned
+  exactly `=0.3.45`), picking up the RUSTSEC-2026-0009 / CVE-2026-25727 fix
+  (RFC 2822 stack-exhaustion DoS). The published manifest no longer hard-pins
+  consumers of the `wasm32` feature to `time =0.3.45`.
+
 ## [1.2.2] — 2026-06-08
 
 Docs only. No library code or public API changes.

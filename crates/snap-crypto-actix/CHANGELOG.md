@@ -1,5 +1,15 @@
 # Changelog — `kamu-snap-crypto-actix`
 
+## 2.1.0 — 2026-06-11
+
+Dependency/toolchain release. No code or public API changes.
+
+### Changed
+
+- MSRV raised from 1.85 to 1.88.
+- Transitive `time` (via `actix-web` -> `cookie`) now resolves to >= 0.3.47,
+  the RUSTSEC-2026-0009 / CVE-2026-25727 fix (RFC 2822 stack-exhaustion DoS).
+
 ## 2.0.1 — 2026-06-08
 
 Docs only. No code or public API changes.

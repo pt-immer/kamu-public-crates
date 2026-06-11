@@ -74,10 +74,10 @@ fn init_systemd(options: InitOptions) -> Result<(), Error> {
         return if options.idempotent { Ok(()) } else { Err(Error::AlreadyInitialized) };
     }
 
-    if let Err(err) = tracing_log::LogTracer::init() {
-        if !options.idempotent {
-            return Err(Error::from(err));
-        }
+    if let Err(err) = tracing_log::LogTracer::init()
+        && !options.idempotent
+    {
+        return Err(Error::from(err));
     }
 
     let env_var = options.resolved_env_var().to_owned();
@@ -118,10 +118,10 @@ fn resolve_format(format: crate::Format, sink: crate::Sink, is_tty: bool) -> cra
     use crate::{Format, Sink};
 
     let mut effective = format;
-    if effective == Format::Auto {
-        if let Ok(value) = std::env::var("KAMU_LOG_FORMAT") {
-            effective = Format::from_env_value(&value);
-        }
+    if effective == Format::Auto
+        && let Ok(value) = std::env::var("KAMU_LOG_FORMAT")
+    {
+        effective = Format::from_env_value(&value);
     }
     if effective != Format::Auto {
         return effective;
@@ -139,10 +139,10 @@ fn resolve_sink(sink: crate::Sink, is_tty: bool) -> crate::Sink {
     use crate::Sink;
 
     let mut effective = sink;
-    if effective == Sink::Auto {
-        if let Ok(value) = std::env::var("KAMU_LOG_SINK") {
-            effective = Sink::from_env_value(&value);
-        }
+    if effective == Sink::Auto
+        && let Ok(value) = std::env::var("KAMU_LOG_SINK")
+    {
+        effective = Sink::from_env_value(&value);
     }
     if effective != Sink::Auto {
         return effective;
