@@ -41,7 +41,7 @@ your option (`MIT OR Apache-2.0`). Previously MIT-only in `pt-immer/lib-snap`.
 [badge-docs]: https://img.shields.io/docsrs/kamu-snap-response-axum?style=flat-square&logo=docs.rs&label=docs.rs
 [badge-ci]: https://img.shields.io/github/actions/workflow/status/pt-immer/kamu-public-crates/on-pr-synced.yml?branch=main&style=flat-square&label=CI
 [badge-license]: https://img.shields.io/crates/l/kamu-snap-response-axum?style=flat-square
-[badge-msrv]: https://img.shields.io/badge/MSRV-1.85-blue?style=flat-square&logo=rust
+[badge-msrv]: https://img.shields.io/badge/MSRV-1.88-blue?style=flat-square&logo=rust
 
 [link-crates]: https://crates.io/crates/kamu-snap-response-axum
 [link-docs]: https://docs.rs/kamu-snap-response-axum

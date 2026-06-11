@@ -80,7 +80,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## MSRV
 
-Rust **1.85** (workspace-wide), exercised in CI alongside `stable`.
+Rust **1.88** (workspace-wide), exercised in CI alongside `stable`.
 
 ## License
 

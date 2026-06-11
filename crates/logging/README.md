@@ -20,7 +20,7 @@ Part of the [`kamu-public-crates`](https://github.com/pt-immer/kamu-public-crate
 kamu-logging = "1"
 ```
 
-MSRV: **Rust 1.85** (edition 2024).
+MSRV: **Rust 1.88** (edition 2024).
 
 ## Features
 
@@ -231,7 +231,7 @@ your option (`MIT OR Apache-2.0`). Previously MIT-only through 1.1.1.
 [badge-docs]: https://img.shields.io/docsrs/kamu-logging?style=flat-square&logo=docs.rs&label=docs.rs
 [badge-ci]: https://img.shields.io/github/actions/workflow/status/pt-immer/kamu-public-crates/on-pr-synced.yml?branch=main&style=flat-square&label=CI
 [badge-license]: https://img.shields.io/crates/l/kamu-logging?style=flat-square
-[badge-msrv]: https://img.shields.io/badge/MSRV-1.85-blue?style=flat-square&logo=rust
+[badge-msrv]: https://img.shields.io/badge/MSRV-1.88-blue?style=flat-square&logo=rust
 
 [link-crates]: https://crates.io/crates/kamu-logging
 [link-docs]: https://docs.rs/kamu-logging
