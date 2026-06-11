@@ -263,7 +263,7 @@ dependencies = [
  "axum-core",
  "bytes",
  "futures-util",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body",
  "http-body-util",
  "itoa",
@@ -291,7 +291,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "futures-util",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body",
  "http-body-util",
  "mime",
@@ -850,9 +850,9 @@ dependencies = [
 
 [[package]]
 name = "http"
-version = "1.4.1"
+version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8be7462df143984c4598a256ef469b251d7d7f9e271135073e78fc535414f3d0"
+checksum = "6970f50e31d6fc17d3fa27329444bfa74e196cf62e95052a3f6fee181dba6425"
 dependencies = [
  "bytes",
  "itoa",
@@ -865,7 +865,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1efedce1fb8e6913f23e0c92de8e62cd5b772a67e7b3946df930a62566c93184"
 dependencies = [
  "bytes",
- "http 1.4.1",
+ "http 1.4.2",
 ]
 
 [[package]]
@@ -876,7 +876,7 @@ checksum = "b021d93e26becf5dc7e1b75b1bed1fd93124b374ceb73f43d4d4eafec896a64a"
 dependencies = [
  "bytes",
  "futures-core",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body",
  "pin-project-lite",
 ]
@@ -903,7 +903,7 @@ dependencies = [
  "bytes",
  "futures-channel",
  "futures-core",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body",
  "httparse",
  "itoa",
@@ -923,7 +923,7 @@ dependencies = [
  "bytes",
  "futures-channel",
  "futures-util",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body",
  "hyper",
  "ipnet",
@@ -1173,7 +1173,7 @@ dependencies = [
  "chrono",
  "hex",
  "hmac",
- "http 1.4.1",
+ "http 1.4.2",
  "proptest",
  "rand_core 0.6.4",
  "rsa",
@@ -1187,7 +1187,7 @@ name = "kamu-snap-crypto-actix"
 version = "2.1.0"
 dependencies = [
  "actix-web",
- "http 1.4.1",
+ "http 1.4.2",
  "kamu-snap-crypto",
 ]
 
@@ -1195,7 +1195,7 @@ dependencies = [
 name = "kamu-snap-crypto-axum"
 version = "2.1.0"
 dependencies = [
- "http 1.4.1",
+ "http 1.4.2",
  "kamu-snap-crypto",
 ]
 
@@ -1203,7 +1203,7 @@ dependencies = [
 name = "kamu-snap-response"
 version = "2.1.0"
 dependencies = [
- "http 1.4.1",
+ "http 1.4.2",
  "kamu-snap-crypto",
  "serde",
  "serde_json",
@@ -1215,7 +1215,7 @@ name = "kamu-snap-response-actix"
 version = "2.1.0"
 dependencies = [
  "actix-web",
- "http 1.4.1",
+ "http 1.4.2",
  "kamu-snap-response",
  "serde",
 ]
@@ -1225,7 +1225,7 @@ name = "kamu-snap-response-axum"
 version = "2.1.0"
 dependencies = [
  "axum",
- "http 1.4.1",
+ "http 1.4.2",
  "kamu-snap-response",
  "serde",
 ]
@@ -1450,7 +1450,7 @@ checksum = "5683015d09e2df236ef005b17f6f196f0d5f6313c4fa43a7b6a53b52776e4331"
 dependencies = [
  "async-trait",
  "bytes",
- "http 1.4.1",
+ "http 1.4.2",
  "opentelemetry",
  "reqwest",
 ]
@@ -1461,7 +1461,7 @@ version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9966929966d17620d7c316c643ba62631826e10021409357772d5eea84f62c35"
 dependencies = [
- "http 1.4.1",
+ "http 1.4.2",
  "opentelemetry",
  "opentelemetry-http",
  "opentelemetry-proto",
@@ -1868,7 +1868,7 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "futures-util",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body",
  "http-body-util",
  "hyper",
@@ -2341,7 +2341,7 @@ dependencies = [
  "bitflags",
  "bytes",
  "futures-util",
- "http 1.4.1",
+ "http 1.4.2",
  "http-body",
  "pin-project-lite",
  "tower",
