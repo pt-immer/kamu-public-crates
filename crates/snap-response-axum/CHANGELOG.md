@@ -1,5 +1,14 @@
 # Changelog — `kamu-snap-response-axum`
 
+## 3.0.0 — 2026-06-11
+
+### Changed
+
+- **Breaking:** axum bumped from 0.7 to 0.8. axum is a public dependency
+  (`IntoResponse` / `Json` appear in this crate's API), so consumers must be on
+  axum 0.8 to use this release. No source changes were required — the
+  `AxumResponder<T>` / `SnapResponderExt` API is identical.
+
 ## 2.1.0 — 2026-06-11
 
 Toolchain/metadata only. No code or public API changes.

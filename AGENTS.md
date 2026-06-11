@@ -37,6 +37,10 @@ Each crate **versions and releases independently** — see its own `CHANGELOG.md
 - **`kamu-iso3166` needs the git submodule.** It reads its vendored ISO 3166 CSVs
   (a submodule at `crates/iso3166/vendor/iso3166-csv`) at build time. Run
   `just setup` (or `git submodule update --init --recursive`) before building.
+  Dependabot bumps the pin monthly (`gitsubmodule` ecosystem in
+  `.github/dependabot.yml`); the build consumes only `countries.csv` and
+  `subdivisions.csv`, and when a bump touches those, re-check the pinned counts
+  in `crates/iso3166/tests/codegen_invariants.rs`.
 - **Never use `--all-features` across the whole workspace.** `kamu-logging`'s
   `systemd` and `wasm32` features are **mutually exclusive** (enforced by
   `compile_error!`), and `wasm32` is incompatible with both `with-actix-web` and

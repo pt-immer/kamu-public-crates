@@ -14,7 +14,7 @@ Part of the [`kamu-public-crates`](https://github.com/pt-immer/kamu-public-crate
 
 ## What this crate is
 
-Enables returning a `SnapResponse<T>` directly from an axum 0.7+ handler. The
+Enables returning a `SnapResponse<T>` directly from an axum 0.8 handler. The
 orphan-rule shim is the `AxumResponder<T>` newtype plus a `.into_axum()` extension
 method. Like the actix adapter, it falls back to `500 INTERNAL_SERVER_ERROR` when
 the `responseCode` cannot be parsed back into an HTTP status — no `.unwrap()` on
