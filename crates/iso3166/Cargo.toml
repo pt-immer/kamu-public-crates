@@ -1,6 +1,6 @@
 [package]
 name = "kamu-iso3166"
-version = "0.2.2"
+version = "0.3.0"
 description = "Zero-allocation, no_std-compatible ISO 3166-1 and ISO 3166-2 primitives"
 documentation = "https://docs.rs/kamu-iso3166"
 categories = ["internationalization", "no-std", "parser-implementations"]
