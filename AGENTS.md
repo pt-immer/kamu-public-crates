@@ -1,5 +1,7 @@
 # Agent guide — kamu-public-crates
 
+> **Current: v0.12.3.** 22 MCP tools (15 governance + 2 admin embedding + 5 project ops), 0 deferred; 13 `ReviewOutcome` variants (now web-exposed); schema v20; strict checklist v4. Authoritative version: [`CHANGELOG.md`](CHANGELOG.md) / [`ROADMAP.md`](ROADMAP.md).
+>
 > **A Cargo workspace of 8 independently-versioned public crates** — `kamu-iso3166`, `kamu-logging`, and the 6-crate `kamu-snap-*` Bank Indonesia SNAP BI family. Edition 2024, MSRV 1.88, dual-licensed `MIT OR Apache-2.0`. Each crate's authoritative version lives in its `Cargo.toml` / [`CHANGELOG.md`](CHANGELOG.md); releases are per-crate (see [Commits & releases](#commits--releases)).
 > Project slug: `kamu-public-crates` — shared via `.fso-amem/project.toml`; do not invent a different slug.
 
