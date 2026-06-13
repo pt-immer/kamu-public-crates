@@ -12,5 +12,11 @@ target/
 # Coverage output.
 /lcov.info
 
+# graphify knowledge-graph artifacts (machine-local interpreter paths + cost tracker).
+/graphify-out/
+
+# Regenerated lockfile for the standalone (workspace-excluded) Cloudflare Worker example.
+/crates/logging/examples/cloudflare-worker/Cargo.lock
+
 # Cargo.lock IS committed at the workspace root for reproducible CI.
 # package-lock.json IS committed so doc-lint tooling is reproducible.
