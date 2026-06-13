@@ -127,12 +127,12 @@ mod tests {
         );
         // W3C-invalid: reserved version `ff` is rejected.
         assert_eq!(
-            parse_traceparent_trace_id("ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+            parse_traceparent_trace_id("ff-4bf92f3577b34da6a3ce929d0e0e4736-0123456789abcdef-01"),
             None
         );
         // Malformed version (not two hex digits) is rejected.
         assert_eq!(
-            parse_traceparent_trace_id("0-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+            parse_traceparent_trace_id("0-4bf92f3577b34da6a3ce929d0e0e4736-0123456789abcdef-01"),
             None
         );
     }
