@@ -25,10 +25,13 @@ impl ResponseCode {
     }
 
     /// Construct from validated `(http, service, case)` parts. Panics if `http`
-    /// is outside `100..=999`; use [`ResponseCode::parse`] when you cannot
-    /// guarantee the inputs.
+    /// is outside `100..=999` or `case` is outside `0..=99` — either would widen
+    /// the canonical 7-digit `HHHSSCC` wire form (e.g. `case = 100` formats as
+    /// three digits, yielding an 8-char code that every reader then rejects).
+    /// Use [`ResponseCode::parse`] when you cannot guarantee the inputs.
     pub fn from_parts(http: u16, service: ServiceCode, case: u8) -> Self {
         assert!((100..=999).contains(&http), "http status out of range");
+        assert!(case <= 99, "case code out of range (must be 0..=99)");
         Self(format!("{http:03}{:02}{case:02}", service.get()))
     }
 
@@ -124,5 +127,36 @@ impl<'de> serde::Deserialize<'de> for ServiceCode {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let n = u8::deserialize(deserializer)?;
         ServiceCode::new(n).ok_or_else(|| serde::de::Error::custom("service code must be 0..=99"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_parts_builds_canonical_seven_digit_code() {
+        let sc = ServiceCode::new(5).unwrap();
+        let rc = ResponseCode::from_parts(404, sc, 11);
+        assert_eq!(rc.raw(), "4040511");
+        assert_eq!(rc.raw().len(), 7);
+        assert_eq!(rc.http().unwrap().as_u16(), 404);
+        assert_eq!(rc.service().unwrap().get(), 5);
+        assert_eq!(rc.case(), Some(11));
+    }
+
+    #[test]
+    #[should_panic(expected = "case code out of range")]
+    fn from_parts_panics_on_case_over_99() {
+        let sc = ServiceCode::new(5).unwrap();
+        // Would format as "100" and widen the wire code to 8 chars — rejected.
+        let _ = ResponseCode::from_parts(404, sc, 100);
+    }
+
+    #[test]
+    #[should_panic(expected = "case code out of range")]
+    fn success_panics_on_sub_over_99() {
+        let sc = ServiceCode::new(0).unwrap();
+        let _ = ResponseCode::success(sc, 200);
     }
 }

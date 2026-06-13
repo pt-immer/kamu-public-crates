@@ -1,5 +1,18 @@
 # Changelog — `kamu-snap-response`
 
+## 2.2.0 — 2026-06-14
+
+`responseCode` construction hardening surfaced by a knowledge-graph audit.
+
+### Fixed
+
+- `ResponseCode::from_parts` (and `success`, which forwards to it) now panic if
+  `case > 99`, mirroring the existing `http` range assertion. Previously a
+  `case` of `100..=255` formatted to three digits and produced a malformed
+  8-digit `responseCode` that every reader (`http` / `service` / `case` /
+  `classify`) then rejected. Added unit tests for the canonical 7-digit build
+  and the new bound.
+
 ## 2.1.0 — 2026-06-11
 
 Toolchain/metadata only. No code or public API changes.

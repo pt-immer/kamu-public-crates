@@ -15,3 +15,9 @@ worker = "0.8"
 codegen-units = 1
 lto = true
 strip = true
+
+# Standalone package: excluded from the root workspace (see root Cargo.toml
+# `workspace.exclude`). The empty table makes `cargo` treat this manifest as its
+# own workspace root when invoked directly (e.g. `just check-worker-example`),
+# instead of erroring that it sits inside — but is excluded from — the parent.
+[workspace]

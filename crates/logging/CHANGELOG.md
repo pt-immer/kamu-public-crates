@@ -4,6 +4,32 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows
 [SemVer](https://semver.org/) from `1.0.0` onwards.
 
+## [1.4.0] — 2026-06-14
+
+Correctness + wasm32 consistency fixes surfaced by a knowledge-graph audit of
+the correlation / init bridges.
+
+### Fixed
+
+- `correlation::parse_traceparent_trace_id` now rejects the W3C-invalid
+  all-zero (null) trace-id and the reserved version `ff`, and requires a
+  two-hex-digit version — instead of echoing back a meaningless
+  `00000000000000000000000000000000` correlation id.
+- On the `wasm32` build, `init_with` now honors the `idempotent` flag on a
+  repeat init: a second init with `idempotent(false)` returns
+  `Error::AlreadyInitialized`, matching the systemd path, instead of silently
+  returning `Ok` and swallowing the double-init error.
+
+### Changed
+
+- Documented that `extract_from_headers`'s `get` closure must return a single
+  header value (the first occurrence when a header repeats); the
+  Cloudflare-Worker example now takes the first comma-separated segment so its
+  correlation id matches single-value backends like the actix adapter.
+- Clarified the `init_with` rustdoc: the `KAMU_LOG_*` / `with_env_var` env
+  sources apply on the systemd build only; the `wasm32` build takes its filter
+  solely from `default_filter`.
+
 ## [1.3.0] — 2026-06-11
 
 Dependency/toolchain release. No library code or public API changes.
