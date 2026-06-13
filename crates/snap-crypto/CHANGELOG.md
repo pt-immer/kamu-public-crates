@@ -1,5 +1,28 @@
 # Changelog — `kamu-snap-crypto`
 
+## 2.2.0 — 2026-06-14
+
+Webhook-verifier hardening + doc fix surfaced by a knowledge-graph audit.
+
+### Fixed
+
+- `BriVaPaidVerifier::canonical_payload` now returns an error instead of
+  silently HMAC-ing the raw request body. BRI VA signs the full SNAP BI service
+  `stringToSign` (`method:path:accessToken:lowercaseHex(SHA256(body)):timestamp`),
+  not the body, so the previous body-only stub would reject every legitimate
+  callback — or pass only against a same-shaped test signature and then fail in
+  production. Use `kamu-snap-crypto-actix` / `kamu-snap-crypto-axum`
+  `verify_request`, or implement `WebhookVerifier` with the request context and
+  override `canonical_payload`. Added webhook-provider tests (Inacash
+  round-trip + tamper rejection, missing-header, and the BriVa fail-loud path).
+
+### Changed
+
+- `ServiceHeaders::into_pairs` doc corrected: the emitted header names are the
+  canonical SNAP BI **uppercase** forms — build the `HeaderName` with
+  `HeaderName::from_bytes` / `TryFrom<&str>`, not `from_static` (which panics on
+  non-lowercase input).
+
 ## 2.1.0 — 2026-06-11
 
 Toolchain/metadata only. No code or public API changes.

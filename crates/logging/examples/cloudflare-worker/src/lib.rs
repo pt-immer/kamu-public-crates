@@ -13,7 +13,13 @@ async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     let path = req.path();
     let headers = req.headers();
     let correlation_id = extract_from_headers(&headers, DEFAULT_HEADER_CHAIN, |headers, name| {
-        headers.get(name).ok().flatten()
+        // Fetch `Headers.get` comma-joins repeated headers; take the first value
+        // so the id matches single-value backends (e.g. the actix adapter).
+        headers
+            .get(name)
+            .ok()
+            .flatten()
+            .map(|v| v.split(',').next().unwrap_or_default().trim().to_owned())
     });
 
     if let Some(correlation_id) = correlation_id.as_deref() {

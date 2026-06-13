@@ -1207,7 +1207,7 @@ dependencies = [
 
 [[package]]
 name = "kamu-logging"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "actix-web",
  "console",
@@ -1228,7 +1228,7 @@ dependencies = [
 
 [[package]]
 name = "kamu-snap-crypto"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "base64",
  "chrono",
@@ -1262,7 +1262,7 @@ dependencies = [
 
 [[package]]
 name = "kamu-snap-response"
-version = "2.1.0"
+version = "2.2.0"
 dependencies = [
  "http 1.4.2",
  "kamu-snap-crypto",

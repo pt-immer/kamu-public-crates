@@ -43,6 +43,14 @@ pub fn init_or_skip() -> Result<(), Error> {
 /// - `KAMU_LOG_FORMAT` — `auto`, `compact`, `pretty`, `json`
 /// - `KAMU_LOG_SINK` — `auto`, `stdout`, `stderr`, `journald`
 ///
+/// **Build-specific behavior.** The `KAMU_LOG_*` overrides above, and the
+/// `RUST_LOG` / [`InitOptions::with_env_var`] filter, apply on the **systemd**
+/// build. The `wasm32` build has no process environment: the filter is taken
+/// solely from `default_filter` (plumb your platform's env in yourself, e.g.
+/// via [`InitOptions::with_default_filter`]), and the `KAMU_LOG_*` /
+/// `with_env_var` env sources are not consulted. The first-init-wins
+/// idempotence and the `AlreadyInitialized` error below apply to both builds.
+///
 /// # Errors
 ///
 /// - [`Error::AlreadyInitialized`] if `idempotent` is `false` and a
@@ -220,7 +228,11 @@ fn init_wasm32(options: InitOptions) -> Result<(), Error> {
     use tracing_subscriber::layer::SubscriberExt;
 
     if WASM32_LOG_INIT.get().is_some() {
-        return Ok(());
+        // Honor `idempotent` exactly like the systemd path: a repeat init is a
+        // hard error unless the caller opted into idempotence. (Previously this
+        // returned Ok unconditionally, silently swallowing the double-init error
+        // that `init()` / `idempotent(false)` exist to surface.)
+        return if options.idempotent { Ok(()) } else { Err(Error::AlreadyInitialized) };
     }
 
     if options.sink == Sink::Journald {

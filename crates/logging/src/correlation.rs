@@ -15,6 +15,13 @@ pub const DEFAULT_HEADER_CHAIN: &[&str] = &["x-request-id", "x-correlation-id", 
 /// ordered list of header names to try. The first header that yields a
 /// non-empty value wins.
 ///
+/// `get` must return a **single** header value — the first occurrence when a
+/// header repeats. Backends that join repeated headers (e.g. the Fetch
+/// `Headers.get`, which comma-joins) would otherwise yield a comma-joined
+/// correlation id, diverging from single-value backends like
+/// `actix_web::http::HeaderMap::get`; take the first comma-separated segment in
+/// `get` if your header type joins.
+///
 /// `traceparent` values are reduced to their trace-id segment per W3C
 /// Trace Context (`<version>-<trace-id>-<span-id>-<flags>`).
 pub fn extract_from_headers<H, F>(headers: &H, chain: &[&str], get: F) -> Option<String>
@@ -42,13 +49,27 @@ where
 /// Parse the trace-id segment from a W3C `traceparent` header.
 ///
 /// Format: `<version>-<trace-id>-<parent-id>-<trace-flags>`. Returns the
-/// trace-id segment if present and well-formed-enough to use as an id.
+/// trace-id segment only when it is usable as an id per W3C Trace Context:
+/// the version must be two hex digits and not the reserved `ff`, and the
+/// trace-id must be 32 hex digits and not the all-zero (null) trace-id — both
+/// of which the spec defines as invalid. Rejecting them avoids propagating a
+/// confident-looking but meaningless `00000000000000000000000000000000`
+/// correlation id downstream.
 #[must_use]
 pub fn parse_traceparent_trace_id(traceparent: &str) -> Option<&str> {
     let mut parts = traceparent.split('-');
-    let _version = parts.next()?;
+    let version = parts.next()?;
     let trace_id = parts.next()?;
-    if trace_id.len() != 32 || !trace_id.chars().all(|c| c.is_ascii_hexdigit()) {
+    if version.len() != 2
+        || !version.bytes().all(|b| b.is_ascii_hexdigit())
+        || version.eq_ignore_ascii_case("ff")
+    {
+        return None;
+    }
+    if trace_id.len() != 32
+        || !trace_id.bytes().all(|b| b.is_ascii_hexdigit())
+        || trace_id.bytes().all(|b| b == b'0')
+    {
         return None;
     }
     Some(trace_id)
@@ -98,6 +119,21 @@ mod tests {
         assert_eq!(
             parse_traceparent_trace_id("00-zzzz2f3577b34da6a3ce929d0e0e4736-x-01"),
             None // right length, non-hex
+        );
+        // W3C-invalid: the all-zero (null) trace-id is rejected, not echoed back.
+        assert_eq!(
+            parse_traceparent_trace_id("00-00000000000000000000000000000000-00f067aa0ba902b7-01"),
+            None
+        );
+        // W3C-invalid: reserved version `ff` is rejected.
+        assert_eq!(
+            parse_traceparent_trace_id("ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+            None
+        );
+        // Malformed version (not two hex digits) is rejected.
+        assert_eq!(
+            parse_traceparent_trace_id("0-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+            None
         );
     }
 

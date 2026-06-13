@@ -29,9 +29,14 @@ impl ServiceHeaders {
         ServiceHeadersBuilder::default()
     }
 
-    /// Render as `(name, value)` pairs for direct insertion into any HTTP
-    /// header map. Names are lowercase to satisfy `reqwest::HeaderName`'s
-    /// validation when reused.
+    /// Render as `(name, value)` pairs for insertion into any HTTP header map.
+    ///
+    /// Names are the canonical SNAP BI **uppercase** forms (`X-PARTNER-ID`,
+    /// `X-SIGNATURE`, …). HTTP header names are case-insensitive, so build the
+    /// `HeaderName` with the case-tolerant parser — `HeaderName::from_bytes` or
+    /// `TryFrom<&str>` (what `reqwest`/`http` use for `&str` keys). Do **not**
+    /// use [`http::HeaderName::from_static`]: it panics on any non-lowercase
+    /// input and would reject these names.
     pub fn into_pairs(self) -> Vec<(&'static str, String)> {
         vec![
             ("X-PARTNER-ID", self.partner_id),
