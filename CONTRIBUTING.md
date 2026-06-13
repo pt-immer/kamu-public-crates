@@ -19,9 +19,12 @@ so the submodule must be initialized before building it.
 Run the same checks CI does:
 
 ```sh
-just check-all   # lint-all + test-all + cov-all + doc + cross builds + deny
-just ci          # check-all + publish dry-run (the full pipeline)
+just gate        # complete CI-equivalent barrier — a green gate means CI passes
+just ci          # gate + publish dry-run (the full pipeline)
 ```
+
+`just check-all` is the fast inner-loop check (fmt + clippy + test only) — handy
+while iterating, but run `just gate` before you push.
 
 or the raw commands — see the [`Justfile`](Justfile). The PR pipeline
 (`on-pr-synced.yml`) runs rustfmt, clippy (`-D warnings -D clippy::all`

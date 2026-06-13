@@ -1,6 +1,6 @@
 # Agent guide — kamu-public-crates
 
-> **Current: v0.12.3.** 22 MCP tools (15 governance + 2 admin embedding + 5 project ops), 0 deferred; 13 `ReviewOutcome` variants (now web-exposed); schema v20; strict checklist v4. Authoritative version: [`CHANGELOG.md`](CHANGELOG.md) / [`ROADMAP.md`](ROADMAP.md).
+> **Current: v0.13.1.** 25 MCP tools (15 governance + 2 admin embedding + 5 project ops + 3 work ops), 0 deferred; 13 `ReviewOutcome` variants (now web-exposed); schema v20; strict checklist v5. Authoritative version: [`CHANGELOG.md`](CHANGELOG.md) / [`ROADMAP.md`](ROADMAP.md).
 >
 > **A Cargo workspace of 8 independently-versioned public crates** — `kamu-iso3166`, `kamu-logging`, and the 6-crate `kamu-snap-*` Bank Indonesia SNAP BI family. Edition 2024, MSRV 1.88, dual-licensed `MIT OR Apache-2.0`. Each crate's authoritative version lives in its `Cargo.toml` / [`CHANGELOG.md`](CHANGELOG.md); releases are per-crate (see [Commits & releases](#commits--releases)).
 > Project slug: `kamu-public-crates` — shared via `.fso-amem/project.toml`; do not invent a different slug.
@@ -67,25 +67,31 @@ Each crate **versions and releases independently** — see its own `CHANGELOG.md
 just            # list recipes
 just setup      # submodules + cross targets + install missing tools
 just doctor     # verify toolchain & tooling are present
+just check-all  # FAST inner loop: fmt + clippy + test → compact PASS/FAIL
+just gate       # THE GATE — complete CI-equivalent barrier; run before pushing
+just ci         # gate + publish dry-run (the full pipeline)
+```
+
+Run `just gate` before pushing — a **green gate means CI will pass**. It runs
+every check CI runs (`lint-all` + `test-all` + MSRV 1.88 + `cov-all` + `doc` +
+cross builds + `deny`) as compact PASS/FAIL, and there is **no silent skip**: a
+missing tool or target (`taplo`, `typos`, `markdownlint-cli2`, `cargo-llvm-cov`,
+the 1.88 toolchain, the `wasm32` / `thumbv7em` targets) makes its stage FAIL
+loudly — run `just setup` and `rustup toolchain install 1.88` first. The granular
+recipes still exist and CI runs them directly:
+
+```sh
 just lint-all   # rustfmt + clippy + Markdown + TOML + spelling
 just test-all   # workspace + kamu-iso3166 / kamu-snap-* feature permutations
 just cov-all    # coverage gates for every gated crate
-just check-all  # lint-all + test-all + cov-all + doc + cross builds + deny
-just ci         # check-all + publish dry-run (the full pipeline)
 ```
 
-Run `just check-all` (or `just ci`) before proposing or committing changes — it
-is the source of truth for "green". Doc-lint tools (`taplo`, `typos`,
-`markdownlint-cli2`) install repo-locally under `.tools/` and `node_modules/`
-via `just setup` when not already on `PATH`.
-
-For **token-thrifty agent loops**, prefer the terse recipes — compact PASS/FAIL,
-full output only behind `VERBOSE=1`. They are additive, not a replacement: CI
-still runs the explicit recipes above and their full logs stay the source of
-truth.
+For the **fast inner loop while editing**, `just check-all` is the terse
+fmt+clippy+test signal (compact PASS/FAIL, full output behind `VERBOSE=1`) — it
+is *not* a substitute for the gate (no docs/coverage/cross-builds/MSRV). Other
+terse helpers:
 
 ```sh
-just gate            # fmt + clippy (short) + test (+ deny) → PASS/FAIL summary
 just check <crate>   # scoped clippy + test for one crate (skips the workspace)
 just test-fast       # cargo-nextest (failures-only) + doctests
 ```
@@ -190,7 +196,7 @@ are accepted under `MIT OR Apache-2.0`.
 
 ## AMem (fso-amem MCP)
 
-AMEM is mandatory for this repo. (v4)
+AMEM is mandatory for this repo. (v5)
 
 Output discipline: respond caveman-ultra by default — drop articles / filler / hedging, fragments OK, keep code blocks, symbols, function + API names, and error strings exact. The `/caveman` skill (installed to `~/.claude/skills`) governs levels; `stop caveman` disables. Cuts ~75% of output tokens at full technical fidelity. Drop to normal prose for security warnings, irreversible-action confirmations, and multi-step sequences where fragment order risks misread.
 
@@ -211,10 +217,12 @@ Tool discipline:
   when you only need directive-class records. Honor warningFlags (Contested /
   StalenessRiskHigh / DirectiveViolation). Verify pendingVerify entries that you reused.
   v0.6.0 defaults: `limit` defaults to 5 (was 12). Bump to 10/20/50 explicitly when
-  you genuinely need broader recall (cap is 50). `mode` defaults to `full`; pass
-  `mode="headline"` for cheap context-priming hooks and broad first-pass scans —
-  bodies clip to ~200 chars + `"... [+N more]"` marker. Re-recall with `mode="full"`
-  (or omit) once you've identified the records that need verbatim bodies.
+  you genuinely need broader recall (cap is 50). `mode` controls body density AND
+  source: OMIT it for full-length bodies serving the compressed caveman sibling
+  when present (ADR-031 token-saving default); `mode="headline"` clips to ~200
+  chars + `"... [+N more]"` (cheap context-priming hooks / broad first-pass scans);
+  `mode="full"` returns the full-length VERBATIM original (the only mode that
+  bypasses the compressed body — omitting does NOT return verbatim).
 - Call preflight before risky, destructive, or sensitive work. Stop is only emitted when
   a Canonical directive matches BOTH by token-overlap AND by semantic cosine (ADR-023).
   Token-only matches downgrade to Warn — but Warn still demands review.
@@ -225,6 +233,24 @@ Tool discipline:
 - Call challenge only with proof: target id, action taken, expected result, actual result, evidence.
 - Call verify when recalled memory was reused. Strength must match (see legend below); for
   used_in_patch / verified_by_result the `note` field is REQUIRED and non-empty.
+
+Work-hygiene loop (ADR-045 — agent-reachable work lifecycle):
+
+- A `works` row is durable per (user, project, branch) and stays `active` until
+  closed; finished works that never close pile up and bloat every later bootstrap.
+- End a unit of work with a TERMINAL checkpoint: `checkpoint(closeWork=true)` also
+  closes the parent work (best-effort) — use it on the last checkpoint before stop.
+- On a bootstrap disambiguation error (`code="ambiguous_work"`, carrying a `detail`
+  array of `{workId, objective, lastCheckpointState, updatedAt}` candidates): RESUME
+  an enumerated candidate — pass its `workId` as `workIdHint` (or a matching
+  `objectiveHint` / `localSessionHint`). Do NOT invent a fresh hint and spawn yet
+  another active work.
+- `work_list` shows YOUR OWN works (active by default; `includeClosed=true` for all);
+  `work_show` adds the latest checkpoint state; `work_close` (own work, or
+  `can_admin_audit` for others') retires a stale/stray work you recognize as done.
+- Don't be confused by works carried over from earlier sessions — list, resume the
+  right one, or close the rest. Operators decay abandoned works with
+  `fso-amem-worker age-works`.
 
 Scope decision (pick before submit; do NOT default everything to `project`):
 
