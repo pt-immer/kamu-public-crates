@@ -52,8 +52,9 @@ Common tasks are wrapped in a [`Justfile`](Justfile):
 
 ```sh
 just            # list recipes
-just check-all  # lint-all + test-all + cov-all + doc + cross builds + deny
-just ci         # check-all + publish dry-run (the full pipeline)
+just gate       # complete CI-equivalent barrier — run before pushing
+just check-all  # fast inner loop: fmt + clippy + test
+just ci         # gate + publish dry-run (the full pipeline)
 just test-all   # workspace tests + kamu-iso3166 feature permutations
 just cov-all    # coverage gates for both crates
 just lint-all   # rustfmt + clippy + Markdown + TOML + spelling

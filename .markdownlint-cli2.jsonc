@@ -18,6 +18,8 @@
     ".tools/**",
     // Git-ignored agent session buffers (remember-hook runtime files).
     ".remember/**",
+    // Git-ignored graphify knowledge-graph output (wiki/report markdown).
+    "graphify-out/**",
     "crates/iso3166/vendor/**"
   ]
 }

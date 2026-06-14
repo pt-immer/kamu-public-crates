@@ -253,11 +253,42 @@ clean:
 # Aggregates
 # ---------------------------------------------------------------------------
 
-# Everything read-only: lint + tests + coverage + docs + cross builds + deny
-check-all: lint-all test-all cov-all doc build-nostd build-wasm build-wasm-snap deny
+# THE GATE — the complete, CI-equivalent barrier: a green gate means CI passes.
+# Runs every check CI runs (lint-all + test-all + MSRV 1.88 + cov-all + doc +
+# cross builds + deny) as compact PASS/FAIL lines; full output for failed stages,
+# or everything with `VERBOSE=1 just gate`. There is NO silent skip: a missing
+# tool or target (taplo, typos, markdownlint, cargo-llvm-cov, the 1.88 toolchain,
+# the wasm32 / thumbv7em targets) makes its stage FAIL loudly — run `just setup`
+# (and `rustup toolchain install 1.88`) first. `just check-all` is the fast loop.
+# Complete CI-equivalent barrier — a green gate means CI passes; run before push.
+gate:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    names=("lint-all" "test-all" "msrv(1.88)" "cov-all" "doc" "build-nostd" "build-wasm" "build-wasm-snap" "deny")
+    cmds=("just lint-all"
+          "just test-all"
+          "cargo +1.88 test --workspace --quiet"
+          "just cov-all"
+          "just doc"
+          "just build-nostd"
+          "just build-wasm"
+          "just build-wasm-snap"
+          "just deny")
+    declare -a rcs outs
+    fail=0
+    for i in "${!names[@]}"; do
+      outs[$i]=$(eval "${cmds[$i]}" 2>&1); rcs[$i]=$?
+      if [ "${rcs[$i]}" -eq 0 ]; then printf '  PASS  %s\n' "${names[$i]}"; else printf '  FAIL  %s\n' "${names[$i]}"; fail=1; fi
+    done
+    if [ "${VERBOSE:-0}" = "1" ]; then
+      for i in "${!names[@]}"; do printf '\n=== %s ===\n%s\n' "${names[$i]}" "${outs[$i]}"; done
+    elif [ "$fail" -ne 0 ]; then
+      for i in "${!names[@]}"; do [ "${rcs[$i]}" -ne 0 ] && printf '\n=== %s (FAILED) ===\n%s\n' "${names[$i]}" "${outs[$i]}"; done
+    fi
+    exit "$fail"
 
-# The full pipeline: everything check-all runs, plus a publish dry-run
-ci: check-all publish-all
+# The full pipeline: everything the gate runs, plus a publish dry-run.
+ci: gate publish-all
 
 # ---------------------------------------------------------------------------
 # Agentic (token-thrifty): compact signal for AI agents; firehose behind VERBOSE=1
@@ -269,17 +300,18 @@ ci: check-all publish-all
 # cov-all recipes above, whose full logs are the source of truth.
 # ---------------------------------------------------------------------------
 
-# Fast pre-PR gate with a compact PASS/FAIL summary. On failure prints ONLY the
-# failing step's output; `VERBOSE=1 just gate` prints everything. Code-focused
-# (fmt + clippy + test); run `just lint-all` for the Markdown/TOML/spelling gates.
-gate:
+# Fast inner-loop check with a compact PASS/FAIL summary: fmt + clippy + test on
+# the active toolchain. On failure prints ONLY the failing step's output;
+# `VERBOSE=1 just check-all` prints everything. This is NOT the pre-push barrier
+# (no docs/coverage/cross-builds/MSRV).
+# Fast inner loop: fmt + clippy + test — run `just gate` before pushing.
+check-all:
     #!/usr/bin/env bash
     set -uo pipefail
     names=("fmt" "clippy" "test")
     cmds=("cargo fmt --all --check"
           "cargo clippy --workspace --all-targets --message-format=short -- -D warnings -D clippy::all"
           "cargo test --workspace --quiet")
-    if command -v cargo-deny >/dev/null 2>&1; then names+=("deny"); cmds+=("cargo deny check --hide-inclusion-graph"); fi
     declare -a rcs outs
     fail=0
     for i in "${!names[@]}"; do
