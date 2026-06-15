@@ -4,3 +4,6 @@ slug = "kamu-public-crates"
 
 [amem]
 server = "https://amem.flusci.org"
+
+[client]
+manifest_version = 8

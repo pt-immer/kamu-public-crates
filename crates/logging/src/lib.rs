@@ -42,6 +42,9 @@ pub use crate::options::{Format, InitOptions, Sink};
 #[cfg(feature = "with-actix-web")]
 pub use crate::actix::{EnrichedRootSpanBuilder, get_actix_web_logger, get_actix_web_logger_with};
 
+#[cfg(feature = "with-otlp")]
+pub use crate::otlp::{SpanProcessorMode, flush_otlp, shutdown_otlp};
+
 /// Re-exports of the common `tracing` vocabulary so consumers can
 /// `use kamu_logging::{info, instrument, ...}` without a separate import.
 pub use tracing::{Level, Span, debug, enabled, error, event, info, instrument, span, trace, warn};

@@ -158,10 +158,25 @@ init_with(
 )?;
 ```
 
-Uses a synchronous `SimpleSpanProcessor` so no async runtime is required.
-High-throughput services should replace the exporter with a batch
-processor configured against their runtime — open an issue if you want a
-built-in option.
+Export uses an in-process `BatchSpanProcessor` by default: spans are buffered
+and flushed from a dedicated background OS thread, so export never blocks the
+thread that closed the span and **no async runtime is required**. Tune the
+buffer with `with_max_queue_size`, `with_scheduled_delay`, and
+`with_max_export_batch_size`.
+
+The batch buffer drains on a periodic timer (~5 s by default), so a process
+that exits abruptly can lose the last, unflushed batch. Call `shutdown_otlp()`
+(or `flush_otlp()`) before exit — e.g. from your `SIGTERM` handler — to drain
+it:
+
+```rust
+// after the server stops accepting work, before the process exits:
+kamu_logging::shutdown_otlp()?;
+```
+
+For deterministic synchronous export (handy in tests or short-lived CLIs), opt
+back into the inline processor with
+`.with_processor(SpanProcessorMode::Simple)`.
 
 ## WASM
 

@@ -138,6 +138,9 @@ test-iso3166:
 # Test the workspace plus kamu-iso3166 / kamu-snap-* feature permutations
 test-all:
     cargo test --workspace
+    # kamu-logging OTLP path (default `cargo test` runs systemd+actix, not OTLP):
+    # exercises BatchSpanProcessor + the drain helpers + the runtime test.
+    cargo test -p kamu-logging --features with-otlp
     cargo test -p kamu-iso3166 --all-features
     cargo test -p kamu-iso3166 --no-default-features --features serde
     cargo test -p kamu-snap-crypto --all-features
