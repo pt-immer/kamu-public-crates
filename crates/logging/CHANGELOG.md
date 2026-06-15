@@ -4,6 +4,39 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows
 [SemVer](https://semver.org/) from `1.0.0` onwards.
 
+## [1.5.0] — 2026-06-15
+
+Move OTLP span export off the request path so it no longer blocks the thread
+that closes a span.
+
+### Added
+
+- The OTLP exporter now uses an in-process `BatchSpanProcessor` that flushes
+  from a dedicated background OS thread — export no longer runs inline on the
+  calling thread, and **no async runtime is required**.
+- `SpanProcessorMode` (`Batch` / `Simple`) and `OtlpConfig::with_processor` to
+  pick the export strategy; `Batch` is the default.
+- Batch tuning on `OtlpConfig`: `with_max_queue_size`, `with_scheduled_delay`,
+  and `with_max_export_batch_size` (each falls back to the SDK default /
+  `OTEL_BSP_*` env var when unset; ignored under `SpanProcessorMode::Simple`).
+- `flush_otlp()` and `shutdown_otlp()` to drain the batch buffer — call
+  `shutdown_otlp()` before process exit (e.g. from a `SIGTERM` handler) so the
+  final batch is not lost. Both are no-ops when OTLP is not configured, and
+  `shutdown_otlp()` is idempotent.
+- First runtime test of the OTLP path: it initializes the exporter inside an
+  actix/tokio runtime (asserting the `reqwest-blocking` client builds without a
+  nested-runtime panic) and confirms a span is exported off-thread to a local
+  collector after `flush_otlp()`.
+
+### Changed
+
+- OTLP export is now **batched and off-thread by default** (previously a
+  synchronous `SimpleSpanProcessor` that exported every span inline). Spans are
+  still delivered, but on a ~5 s timer rather than immediately. Short-lived
+  processes should call `shutdown_otlp()` before exit, or select
+  `SpanProcessorMode::Simple`, to guarantee delivery. No public function
+  signatures changed (additive release).
+
 ## [1.4.0] — 2026-06-14
 
 Correctness + wasm32 consistency fixes surfaced by a knowledge-graph audit of

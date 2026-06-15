@@ -102,8 +102,20 @@ clippy-workspace:
 clippy-iso3166:
     cargo clippy -p kamu-iso3166 --all-features --all-targets -- -D clippy::pedantic
 
-# Lint Rust: workspace clippy::all + kamu-iso3166 pedantic
-lint-rust: clippy-workspace clippy-iso3166
+# Clippy kamu-logging's non-default feature paths (with-otlp + wasm32, both
+# cfg-gated off by default so clippy-workspace never sees them)
+clippy-logging:
+    cargo clippy -p kamu-logging --all-targets --features with-otlp -- -D warnings -D clippy::all
+    cargo clippy -p kamu-logging --no-default-features --features wasm32 --target wasm32-unknown-unknown -- -D warnings -D clippy::all
+
+# Clippy kamu-snap-* non-default feature paths (all-features + no-default crypto lib)
+clippy-snap:
+    cargo clippy -p kamu-snap-crypto --all-features --all-targets -- -D warnings -D clippy::all
+    cargo clippy -p kamu-snap-crypto --no-default-features -- -D warnings -D clippy::all
+    cargo clippy -p kamu-snap-response --all-features --all-targets -- -D warnings -D clippy::all
+
+# Lint Rust: workspace clippy::all + iso3166 pedantic + ALL non-default feature perms
+lint-rust: clippy-workspace clippy-iso3166 clippy-logging clippy-snap
 
 # Lint Markdown
 lint-md:
@@ -138,6 +150,9 @@ test-iso3166:
 # Test the workspace plus kamu-iso3166 / kamu-snap-* feature permutations
 test-all:
     cargo test --workspace
+    # kamu-logging OTLP path (default `cargo test` runs systemd+actix, not OTLP):
+    # exercises BatchSpanProcessor + the drain helpers + the runtime test.
+    cargo test -p kamu-logging --features with-otlp
     cargo test -p kamu-iso3166 --all-features
     cargo test -p kamu-iso3166 --no-default-features --features serde
     cargo test -p kamu-snap-crypto --all-features

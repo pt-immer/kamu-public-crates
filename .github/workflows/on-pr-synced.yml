@@ -153,6 +153,43 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: just clippy-iso3166
 
+  clippy-logging:
+    name: clippy (kamu-logging features)
+    needs: [changes, fmt]
+    if: ${{ needs.changes.outputs.log == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - uses: Swatinem/rust-cache@v2
+      - run: just clippy-logging
+
+  clippy-snap:
+    name: clippy (kamu-snap-* features)
+    needs: [changes, fmt]
+    if: ${{ needs.changes.outputs.snap == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - uses: Swatinem/rust-cache@v2
+      - run: just clippy-snap
+
   test-workspace:
     name: test (${{ matrix.toolchain }})
     needs: [changes, fmt, clippy-workspace]
@@ -434,6 +471,8 @@ jobs:
       - fmt
       - clippy-workspace
       - clippy-iso3166
+      - clippy-logging
+      - clippy-snap
       - test-workspace
       - test-iso3166-features
       - no-std-build
@@ -464,6 +503,8 @@ jobs:
             fmt,
             clippy-workspace,
             clippy-iso3166,
+            clippy-logging,
+            clippy-snap,
             test-workspace,
             test-iso3166-features,
             no-std-build,

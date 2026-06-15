@@ -101,7 +101,13 @@ fn init_systemd(options: InitOptions) -> Result<(), Error> {
 
     #[cfg(feature = "with-otlp")]
     let otlp_layer = match options.otlp.as_ref() {
-        Some(cfg) => Some(crate::otlp::build_layer(cfg)?),
+        Some(cfg) => {
+            // Retain the provider so `shutdown_otlp` / `flush_otlp` can drain the
+            // batch later; the layer's tracer keeps its own `Arc` to the inner.
+            let (layer, provider) = crate::otlp::build_layer(cfg)?;
+            crate::otlp::store_provider(provider);
+            Some(layer)
+        }
         None => None,
     };
 

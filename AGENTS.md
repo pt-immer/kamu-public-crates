@@ -1,6 +1,6 @@
 # Agent guide — kamu-public-crates
 
-> **Current: v0.13.1.** 25 MCP tools (15 governance + 2 admin embedding + 5 project ops + 3 work ops), 0 deferred; 13 `ReviewOutcome` variants (now web-exposed); schema v20; strict checklist v5. Authoritative version: [`CHANGELOG.md`](CHANGELOG.md) / [`ROADMAP.md`](ROADMAP.md).
+> **Current: v0.17.6.** 25 MCP tools (15 governance + 2 admin embedding + 5 project ops + 3 work ops), 0 deferred; 13 `ReviewOutcome` variants (now web-exposed); schema v20; strict checklist v5. Authoritative version: [`CHANGELOG.md`](CHANGELOG.md) / [`ROADMAP.md`](ROADMAP.md).
 >
 > **A Cargo workspace of 8 independently-versioned public crates** — `kamu-iso3166`, `kamu-logging`, and the 6-crate `kamu-snap-*` Bank Indonesia SNAP BI family. Edition 2024, MSRV 1.88, dual-licensed `MIT OR Apache-2.0`. Each crate's authoritative version lives in its `Cargo.toml` / [`CHANGELOG.md`](CHANGELOG.md); releases are per-crate (see [Commits & releases](#commits--releases)).
 > Project slug: `kamu-public-crates` — shared via `.fso-amem/project.toml`; do not invent a different slug.
@@ -82,7 +82,7 @@ recipes still exist and CI runs them directly:
 
 ```sh
 just lint-all   # rustfmt + clippy + Markdown + TOML + spelling
-just test-all   # workspace + kamu-iso3166 / kamu-snap-* feature permutations
+just test-all   # workspace + kamu-iso3166 / kamu-logging / kamu-snap-* feature permutations
 just cov-all    # coverage gates for every gated crate
 ```
 
