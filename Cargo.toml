@@ -28,8 +28,8 @@ rust-version = "1.88"
 [workspace.dependencies]
 # --- kamu-iso3166 ---
 csv = "1.4.0"
-phf = { version = "0.13.1", default-features = false }
-phf_codegen = "0.13.1"
+phf = { version = "0.14.0", default-features = false }
+phf_codegen = "0.14.0"
 proc-macro2 = "1.0.106"
 proptest = "1.11.0"
 quote = "1.0.45"

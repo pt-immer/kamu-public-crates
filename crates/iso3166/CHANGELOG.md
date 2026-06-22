@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.1]
+
+Dependency maintenance only. No code or public API changes (the `phf` lookup
+tables are `pub(crate)`, so the bump is an internal implementation detail).
+
+### Changed
+
+- Bumped `phf` and `phf_codegen` from 0.13 to 0.14 (build-time codegen +
+  runtime lookup). Codegen invariant counts (249 countries / 5046 subdivisions)
+  unchanged.
+
 ## [0.3.0]
 
 Toolchain/metadata only. No code or public API changes.
