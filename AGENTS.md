@@ -155,6 +155,20 @@ Cadence expectations:
   `kamu-iso3166-v0.2.0`). `on-release-published.yml` verifies the manifest
   version matches the tag and publishes that single crate. Valid crate prefixes:
   `kamu-iso3166`, `kamu-logging`, and the 6 `kamu-snap-*`.
+- **What actually needs a release.** Only a change to a crate's own manifest or
+  source warrants a version bump — a changed dependency requirement, or code. A
+  workspace-wide `cargo update` lockfile refresh alone needs **no** per-crate
+  bump: the refreshed `Cargo.lock` (cargo bundles it on publish) rides into each
+  crate's next release. A dependency bump invisible to the public API (e.g. one
+  used only behind a `pub(crate)` item) is a **patch**. To find what is pending,
+  compare each crate's `Cargo.toml` `version` against its crates.io
+  `max_stable_version` and tag only the crates that differ.
+- **Tagging mechanics.** Tag from `main` once the version + `CHANGELOG.md` have
+  landed: `gh release create <crate>-vX.Y.Z --target main`. `--target` rejects a
+  short SHA (`Release.target_commitish is invalid`) — pass `main` or a full SHA.
+  `on-release-published.yml` runs **once per tag**, so each crate publishes the
+  moment its tag lands (not in a later batch), and crates.io refuses to
+  re-publish an existing version — the tagged version must be new.
 - **Snap crates publish in dependency order.** `cargo` refuses to package a crate
   whose in-workspace deps (even optional ones) are not yet on crates.io, so
   release them as: `kamu-snap-crypto` → `kamu-snap-response` →
