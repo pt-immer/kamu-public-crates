@@ -136,7 +136,13 @@ Cadence expectations:
   aggregates compose), so the Justfile is the single source of truth for
   build/lint/test/coverage commands and `just <recipe>` reproduces any CI job
   locally. Job **names** are unchanged, so the `ci-success` gate is unaffected.
-  Only `cargo-deny` keeps its dedicated action (advisory-DB caching).
+  This includes `cargo-deny`: the deny job installs cargo-deny via
+  `taiki-e/install-action` and runs `just deny` (`cargo deny --all-features
+  check`), so CI and local run the byte-identical invocation. It replaced
+  `EmbarkStudios/cargo-deny-action`, whose floating `@v2` tag drifted to a
+  cargo-deny release its entrypoint invokes incorrectly (`error: unrecognized
+  subcommand 'warn'`) — and since `github-actions` is a Dependabot ecosystem, any
+  pin would just be bumped back to the broken tag.
 - **Release CI** (`on-release-published.yml`) parses the `<crate>-vX.Y.Z` tag,
   verifies the manifest version, **refuses to re-publish a version already on
   crates.io**, and serializes per tag before publishing that single crate.
