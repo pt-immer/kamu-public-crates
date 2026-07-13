@@ -20,7 +20,8 @@ on:
 # single source of truth for build/lint/test/coverage commands and `just <recipe>`
 # reproduces any CI job locally. The job-level fan-out (per crate, path-filtered)
 # is a CI concern; the recipes it calls are the granular ones the aggregates
-# compose. Only `cargo-deny` keeps its dedicated action (better caching).
+# compose. Even the cargo-deny job runs `just deny` (cargo-deny installed via
+# taiki-e/install-action) — no dedicated action, so CI == local invocation.
 
 env:
   CARGO_TERM_COLOR: always
@@ -301,13 +302,22 @@ jobs:
     if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      # Exception to the `just`-everywhere rule: the dedicated action caches the
-      # advisory DB and is faster than `cargo deny check` from scratch. The
-      # `just deny` recipe runs the equivalent locally.
+      # Runs the same `just deny` (`cargo deny --all-features check`) as the local
+      # gate, with the latest cargo-deny from taiki-e/install-action — so the CI
+      # and local invocations are byte-identical (no version/flag drift). This
+      # replaces EmbarkStudios/cargo-deny-action@v2: its floating tag began
+      # bundling a cargo-deny whose CLI the action's entrypoint orders wrongly
+      # (`error: unrecognized subcommand 'warn'`), and dependabot would re-bump any
+      # pin straight back to the broken version.
       - uses: actions/checkout@v6
         with:
           submodules: true
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-deny
+      - uses: Swatinem/rust-cache@v2
+      - run: just deny
 
   lint-docs:
     name: lint docs (markdown / toml / spelling)

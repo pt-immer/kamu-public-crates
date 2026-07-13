@@ -177,9 +177,12 @@ doc-snap-response:
 # Build docs the way docs.rs does
 doc: doc-workspace doc-iso3166 doc-snap-response
 
-# Supply-chain audit
+# Supply-chain audit. `--all-features` is a GLOBAL flag (before the subcommand)
+# — it widens the audited dependency graph to every optional dep, matching what
+# CI audits. This recipe IS the CI deny job (no dedicated action), so the local
+# and CI cargo-deny invocations are identical — no version/flag drift.
 deny:
-    cargo deny check
+    cargo deny --all-features check
 
 # ---------------------------------------------------------------------------
 # Coverage
