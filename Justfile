@@ -336,8 +336,8 @@ ci: gate publish-all
 # Test verbosity is NOT one of the things these recipes vary: every nextest run
 # in this file, agentic or not, reports through .config/nextest.toml. A green
 # run is a summary line everywhere, and CI's completeness comes from the run
-# counts, the `ci` profile's immediate-final failure output, and the JUnit
-# artifact — not from listing every passing test in the log.
+# counts ("Starting N tests across M binaries") plus the `ci` profile's
+# immediate-final failure output — not from listing every passing test.
 # ---------------------------------------------------------------------------
 
 # Fast inner-loop check with a compact PASS/FAIL summary: fmt + clippy + test on

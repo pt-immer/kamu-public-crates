@@ -44,7 +44,13 @@ fail-fast = false
 # scrolling back through the run.
 failure-output = "immediate-final"
 
-# Machine-readable results, uploaded as a build artifact by the `test` job.
-# Written to target/nextest/ci/junit.xml.
-[profile.ci.junit]
-path = "junit.xml"
+# No JUnit output, deliberately. The junit path is a per-PROFILE setting, and
+# `just test-all` invokes nextest seven times (one per feature permutation), so
+# every run would overwrite target/nextest/ci/junit.xml and the file would end up
+# holding only the last invocation — 24 kamu-snap-response tests out of 142,
+# while looking like a complete report. Measured, not theorised: an earlier
+# revision shipped exactly that artifact. nextest has no per-run junit path
+# (`--config` overrides *Cargo* config, not nextest's), and nothing here consumes
+# JUnit anyway — `failure-output = "immediate-final"` already repeats every
+# failure at the end of the log, which beats downloading an artifact. Revisit
+# only if a consumer appears, and give each invocation its own path if so.

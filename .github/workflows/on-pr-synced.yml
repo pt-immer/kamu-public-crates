@@ -28,7 +28,8 @@ env:
   RUSTFLAGS: -Dwarnings
   # Select the `ci` profile in .config/nextest.toml for every cargo-nextest run
   # in this workflow (tests and coverage alike): no fail-fast, so one push
-  # surfaces every broken test rather than one per round-trip, plus JUnit output.
+  # surfaces every broken test rather than one per round-trip, and failure
+  # output repeated at the end of the log.
   NEXTEST_PROFILE: ci
 
 permissions:
@@ -226,12 +227,6 @@ jobs:
       # kamu-snap-* all-features), each under cargo-nextest, then the doctests
       # nextest cannot run.
       - run: just test-all
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: junit-${{ matrix.toolchain }}
-          path: target/nextest/ci/junit.xml
-          if-no-files-found: ignore
 
   test-iso3166-features:
     name: test (kamu-iso3166 feature permutations)
