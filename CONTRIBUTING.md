@@ -44,6 +44,20 @@ Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`,
 `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, optionally scoped, e.g.
 `feat(iso3166): add Alpha2::iter()`.
 
+Work is tracked in JIRA under the `kec-` prefix. Name branches
+`<type>/kec-<n>-<slug>`, and end every commit message with the lowercase ticket
+on its own line — above any `Co-Authored-By:` trailer, which git only reads
+from the final paragraph:
+
+```text
+chore(deps): refresh workspace dependencies
+
+Bump every workspace requirement to the latest version the MSRV-1.88
+resolver allows.
+
+kec-1
+```
+
 ## Releasing a crate
 
 Releases are **per crate**, with independent versions.

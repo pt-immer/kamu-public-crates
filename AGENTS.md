@@ -152,6 +152,24 @@ Cadence expectations:
 - **Conventional Commits**, optionally scoped: `feat:`, `fix:`, `chore:`,
   `docs:`, `refactor:`, `test:` (e.g. `feat(iso3166): add Alpha2::iter()`). Keep
   the subject imperative and lowercase.
+- **Every commit carries its JIRA ticket.** Work is tracked in JIRA under the
+  `kec-` prefix; name branches `<type>/kec-<n>-<slug>`. The lowercase ticket is
+  its own paragraph, placed **before** the trailer block:
+
+  ```text
+  chore(deps): refresh workspace dependencies
+
+  Bump every workspace requirement to the latest version the MSRV-1.88
+  resolver allows.
+
+  kec-1
+
+  Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+  ```
+
+  Before, not after: git reads only the **last** paragraph as the trailer block,
+  so a bare `kec-1` below `Co-Authored-By:` makes `git interpret-trailers
+  --parse` return nothing and GitHub drop the co-author.
 - **Every commit is GPG-signed** (`commit.gpgsign = true`); don't create unsigned
   commits — `git log --show-signature` should stay clean across the history.
 - **Agent attribution**: end agent-authored commits with a `Co-Authored-By:`
