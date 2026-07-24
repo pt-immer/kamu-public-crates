@@ -17,6 +17,18 @@ updates:
     commit-message:
       prefix: "chore(ci)"
 
+  # npm: the repo-local docs-linting toolchain (markdownlint-cli2). Not
+  # published, but its transitive tree is what `just lint-docs` executes, and
+  # markdownlint-cli2 pins several deps to exact versions — so a patched
+  # transitive only arrives via a direct bump or a package.json `overrides`
+  # entry, never via `npm update`.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+
   # Git submodules: the vendored ISO 3166 CSV dataset (ipregistry/iso3166)
   # receives automatic upstream data updates roughly monthly. A bump only
   # changes generated tables when countries.csv / subdivisions.csv move —
