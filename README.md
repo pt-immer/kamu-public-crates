@@ -55,16 +55,21 @@ just            # list recipes
 just gate       # complete CI-equivalent barrier — run before pushing
 just check-all  # fast inner loop: fmt + clippy + test
 just ci         # gate + publish dry-run (the full pipeline)
-just test-all   # workspace tests + kamu-iso3166 feature permutations
-just cov-all    # coverage gates for both crates
+just test-all   # workspace tests + every crate's feature permutations
+just cov-all    # coverage gates for every gated crate
 just lint-all   # rustfmt + clippy + Markdown + TOML + spelling
 ```
+
+Tests run under [cargo-nextest](https://nexte.st/) (installed by `just setup`,
+configured in `.config/nextest.toml`). It runs each test in its own process and
+does not run doctests, so doctests are always a separate pass.
 
 Without `just`:
 
 ```sh
-cargo test --workspace
-cargo test -p kamu-iso3166 --all-features
+cargo nextest run --workspace
+cargo test --workspace --doc
+cargo nextest run -p kamu-iso3166 --all-features
 cargo clippy --workspace --all-targets -- -D warnings -D clippy::all
 ```
 

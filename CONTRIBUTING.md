@@ -38,6 +38,12 @@ and coverage (`kamu-iso3166` ≥ 98% lines, `kamu-logging` ≥ 70%,
 > `systemd` and `wasm32` features are mutually exclusive. Select features
 > per crate.
 
+Tests run under [cargo-nextest](https://nexte.st/) — locally, in `just gate`, in
+coverage, and in CI — configured in `.config/nextest.toml`. `just setup`
+installs it. nextest runs each test in its own process, and it does **not** run
+doctests, so every recipe pairs a nextest run with an explicit
+`cargo test --doc`; keep that pair when adding one.
+
 ## Commits
 
 Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`,

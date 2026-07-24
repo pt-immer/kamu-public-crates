@@ -1,0 +1,50 @@
+# cargo-nextest configuration — the test runner for every Justfile test recipe.
+#
+# Why nextest is the runner here, not a convenience:
+#
+#   * It runs each test in its OWN PROCESS. `kamu-logging`'s global tracing
+#     subscriber is a process-global one-shot, so a shared-process runner can
+#     only ever exercise one `init()` path per test binary. Per-process
+#     isolation makes that class of test honest.
+#   * A run is one summary line when green (see `status-level` below), which is
+#     what the repo's terse-by-default recipe contract wants.
+#
+# The one thing it does NOT do is run doctests — no test harness owns them, so
+# there is nothing for nextest to enumerate. Every recipe that runs nextest
+# therefore pairs it with an explicit `cargo test --doc`. Dropping that pairing
+# silently stops testing documentation examples; `just test-all` is the
+# reference for how the two go together.
+#
+# Profiles inherit from `default`, so `ci` below only states its differences.
+# Select one with `NEXTEST_PROFILE=<name>` or `--profile <name>`; CI sets
+# `NEXTEST_PROFILE: ci` at the workflow level.
+
+[profile.default]
+# Print per-test lines only for failures — a green run costs one summary line.
+status-level = "fail"
+# ...but always name a test that only passed on retry, so flakiness surfaces.
+final-status-level = "flaky"
+failure-output = "immediate"
+# Retries are deliberately OFF. This repo's gate is built to fail loudly rather
+# than paper over a problem, and a retried-into-green test is a quiet version of
+# the silent skip `just gate` exists to prevent. If a genuinely flaky test ever
+# lands, prefer fixing it; set `retries` here only as a temporary, commented
+# stopgap with the tracking ticket next to it.
+retries = 0
+# kamu-snap-crypto's RSA round-trips generate real keys and legitimately take
+# ~15s locally, longer on a CI runner. Warn at 60s, hard-kill at 5x that, so a
+# hung test cannot burn a whole job's wall clock.
+slow-timeout = { period = "60s", terminate-after = 5 }
+
+[profile.ci]
+# CI wants the complete picture from one run rather than the first failure, so a
+# single push surfaces every broken test instead of one per round-trip.
+fail-fast = false
+# Repeat failure output at the end of the log so a failure is readable without
+# scrolling back through the run.
+failure-output = "immediate-final"
+
+# Machine-readable results, uploaded as a build artifact by the `test` job.
+# Written to target/nextest/ci/junit.xml.
+[profile.ci.junit]
+path = "junit.xml"

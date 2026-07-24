@@ -74,9 +74,9 @@ Run `just gate` before pushing — a **green gate means CI will pass**. It runs
 every check CI runs (`lint-all` + `test-all` + MSRV 1.88 + `cov-all` + `doc` +
 cross builds + `deny`) as compact PASS/FAIL, and there is **no silent skip**: a
 missing tool or target (`taplo`, `typos`, `markdownlint-cli2`, `cargo-llvm-cov`,
-the 1.88 toolchain, the `wasm32` / `thumbv7em` targets) makes its stage FAIL
-loudly — run `just setup` and `rustup toolchain install 1.88` first. The granular
-recipes still exist and CI runs them directly:
+`cargo-nextest`, the 1.88 toolchain, the `wasm32` / `thumbv7em` targets) makes
+its stage FAIL loudly — run `just setup` and `rustup toolchain install 1.88`
+first. The granular recipes still exist and CI runs them directly:
 
 ```sh
 just lint-all   # rustfmt + clippy + Markdown + TOML + spelling
@@ -90,14 +90,22 @@ is *not* a substitute for the gate (no docs/coverage/cross-builds/MSRV). Other
 terse helpers:
 
 ```sh
-just check <crate>   # scoped clippy + test for one crate (skips the workspace)
-just test-fast       # cargo-nextest (failures-only) + doctests
+just check <crate>   # scoped clippy + tests for one crate (skips the workspace)
+just test-fast       # cargo-nextest over the workspace + doctests
 ```
 
 Cadence expectations:
 
 - **New recipes** follow the uniform `<area>-<verb>` + `*-all` scheme
   (`lint-rust`, `build-wasm`, `cov-all`, …); aggregates compose the granular ones.
+- **`cargo-nextest` is the test runner everywhere** — recipes, gate, coverage
+  (`cargo llvm-cov nextest`) and CI, configured once in
+  [`.config/nextest.toml`](.config/nextest.toml) rather than per invocation.
+  It runs each test in its own process, which is what makes `kamu-logging`'s
+  process-global subscriber testable, but it **does not run doctests**. Every
+  nextest invocation is therefore paired with an explicit `cargo test --doc`;
+  a new test recipe without that pair silently stops testing doc examples.
+  Retries are off on purpose — a retried-into-green test is a quiet silent skip.
 - **Docs must pass `just lint-all`**: give every fenced code block a language,
   keep Markdown tables lint-clean, and let `taplo` own TOML formatting
   (`just fmt` / `just fmt-check`) — don't hand-align.

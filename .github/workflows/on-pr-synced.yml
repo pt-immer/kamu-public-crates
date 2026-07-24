@@ -26,6 +26,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
+  # Select the `ci` profile in .config/nextest.toml for every cargo-nextest run
+  # in this workflow (tests and coverage alike): no fail-fast, so one push
+  # surfaces every broken test rather than one per round-trip, plus JUnit output.
+  NEXTEST_PROFILE: ci
 
 permissions:
   contents: read
@@ -91,6 +95,11 @@ jobs:
               - 'taplo.toml'
               - 'typos.toml'
               - '.cargo/**'
+              # .config/nextest.toml decides how EVERY test runs (isolation,
+              # timeouts, fail-fast, retries), so a change to it has to re-run
+              # every crate's tests — not nothing, which is what happens to a
+              # path no filter lists.
+              - '.config/**'
               - 'package.json'
               - 'package-lock.json'
               - '.github/workflows/**'
@@ -211,8 +220,18 @@ jobs:
         with:
           tool: just,cargo-nextest
       - uses: Swatinem/rust-cache@v2
-      # `just test-fast` = cargo-nextest (failures-only) + doctests.
-      - run: just test-fast
+      # `just test-all` — the same recipe `just gate` runs, so a green gate and a
+      # green CI test job mean the same thing. It covers the workspace plus the
+      # feature permutations a default run never reaches (kamu-logging with-otlp,
+      # kamu-snap-* all-features), each under cargo-nextest, then the doctests
+      # nextest cannot run.
+      - run: just test-all
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: junit-${{ matrix.toolchain }}
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: ignore
 
   test-iso3166-features:
     name: test (kamu-iso3166 feature permutations)
@@ -380,7 +399,10 @@ jobs:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@v2
         with:
-          tool: just,cargo-llvm-cov
+          # cargo-nextest is required: the cov-* recipes measure through
+          # `cargo llvm-cov nextest`, so coverage runs the same binaries the
+          # same way `just test-all` does.
+          tool: just,cargo-llvm-cov,cargo-nextest
       - uses: Swatinem/rust-cache@v2
       # `just cov` enforces the 98% floor and writes target/lcov.info.
       - run: just cov
@@ -401,7 +423,10 @@ jobs:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@v2
         with:
-          tool: just,cargo-llvm-cov
+          # cargo-nextest is required: the cov-* recipes measure through
+          # `cargo llvm-cov nextest`, so coverage runs the same binaries the
+          # same way `just test-all` does.
+          tool: just,cargo-llvm-cov,cargo-nextest
       - uses: Swatinem/rust-cache@v2
       - run: just cov-logging
 
@@ -433,7 +458,10 @@ jobs:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@v2
         with:
-          tool: just,cargo-llvm-cov
+          # cargo-nextest is required: the cov-* recipes measure through
+          # `cargo llvm-cov nextest`, so coverage runs the same binaries the
+          # same way `just test-all` does.
+          tool: just,cargo-llvm-cov,cargo-nextest
       - uses: Swatinem/rust-cache@v2
       - run: just cov-snap-crypto
 
@@ -449,7 +477,10 @@ jobs:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@v2
         with:
-          tool: just,cargo-llvm-cov
+          # cargo-nextest is required: the cov-* recipes measure through
+          # `cargo llvm-cov nextest`, so coverage runs the same binaries the
+          # same way `just test-all` does.
+          tool: just,cargo-llvm-cov,cargo-nextest
       - uses: Swatinem/rust-cache@v2
       - run: just cov-snap-response
 

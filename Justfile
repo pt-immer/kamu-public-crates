@@ -54,7 +54,7 @@ doctor:
     check markdownlint-cli2 1 markdownlint-cli2 --version
     check cargo-llvm-cov 1 cargo-llvm-cov --version
     check cargo-deny 1 cargo-deny --version
-    check cargo-nextest 0 cargo nextest --version
+    check cargo-nextest 1 cargo nextest --version
     echo "cross targets:"
     for tgt in thumbv7em-none-eabi wasm32-unknown-unknown; do
       if rustup target list --installed 2>/dev/null | grep -qx "$tgt"; then printf '  ✓ %-26s installed\n' "$tgt"; else printf '  · %-26s missing (run: just setup)\n' "$tgt"; fi
@@ -145,18 +145,27 @@ lint-all: fmt-check lint-rust lint-md lint-toml lint-spell
 test-iso3166:
     cargo nextest run -p kamu-iso3166 --all-features
     cargo nextest run -p kamu-iso3166 --no-default-features --features serde
+    # nextest cannot run doctests. This finds none today (kamu-logging owns the
+    # only doctests in the workspace) but still compiles them, so a broken `///`
+    # example fails here the moment one is written.
     cargo test -p kamu-iso3166 --all-features --doc
 
-# Test the workspace plus kamu-iso3166 / kamu-snap-* feature permutations
+# Test the workspace plus kamu-iso3166 / kamu-snap-* feature permutations.
+# Every test binary runs under cargo-nextest (process-per-test isolation, see
+# .config/nextest.toml); doctests are a SEPARATE `cargo test --doc` pass because
+# nextest does not run them.
 test-all:
-    cargo test --workspace
-    # kamu-logging OTLP path (default `cargo test` runs systemd+actix, not OTLP):
-    # exercises BatchSpanProcessor + the drain helpers + the runtime test.
-    cargo test -p kamu-logging --features with-otlp
-    cargo test -p kamu-iso3166 --all-features
-    cargo test -p kamu-iso3166 --no-default-features --features serde
-    cargo test -p kamu-snap-crypto --all-features
-    cargo test -p kamu-snap-response --all-features
+    cargo nextest run --workspace
+    # kamu-logging OTLP path (a default run exercises systemd+actix, not OTLP):
+    # covers BatchSpanProcessor + the drain helpers + the runtime test.
+    cargo nextest run -p kamu-logging --features with-otlp
+    cargo nextest run -p kamu-iso3166 --all-features
+    cargo nextest run -p kamu-iso3166 --no-default-features --features serde
+    cargo nextest run -p kamu-snap-crypto --all-features
+    cargo nextest run -p kamu-snap-response --all-features
+    # Doctests, which nextest skips by design. kamu-logging holds the only ones
+    # in the workspace, and the default-feature run reaches them.
+    cargo test --workspace --doc
     # Leaf lib must also compile with default features off (HMAC/RSA-only crypto,
     # no snap-bi/webhook). Tests pull snap-bi, so this is a lib check, not a test.
     cargo check -p kamu-snap-crypto --no-default-features
@@ -188,31 +197,38 @@ deny:
 # Coverage
 # ---------------------------------------------------------------------------
 
+# Every gate below measures through `cargo llvm-cov nextest`, so coverage runs
+# the same binaries the same way `just test-all` does — one runner, one result.
+# Verified identical to the old `cargo llvm-cov` (cargo-test runner) numbers on
+# kamu-iso3166: 99.67% lines / 96.83% regions either way. Doctests are excluded
+# from coverage under both runners (cargo-llvm-cov needs nightly for those), so
+# the floors mean the same thing they always did.
+
 # Coverage gate for kamu-iso3166 (also emits target/lcov.info for the CI artifact)
 cov:
-    cargo llvm-cov -p kamu-iso3166 --all-features --ignore-filename-regex 'generated|build/' --fail-under-lines 98 --lcov --output-path target/lcov.info
+    cargo llvm-cov nextest -p kamu-iso3166 --all-features --ignore-filename-regex 'generated|build/' --fail-under-lines 98 --lcov --output-path target/lcov.info
 
 # Coverage gate for kamu-logging (no --all-features: systemd XOR wasm32)
 cov-logging:
-    cargo llvm-cov -p kamu-logging --fail-under-lines 70
+    cargo llvm-cov nextest -p kamu-logging --fail-under-lines 70
 
 # Coverage gate for kamu-snap-crypto. Floor 70 (measured ~74%): the default-on
 # `webhook` providers ship without tests upstream; raising this is future work.
 cov-snap-crypto:
-    cargo llvm-cov -p kamu-snap-crypto --all-features --fail-under-lines 70
+    cargo llvm-cov nextest -p kamu-snap-crypto --all-features --fail-under-lines 70
 
 # Coverage gate for kamu-snap-response. Floor 70 (measured ~74%); `category.rs`
 # is currently untested upstream. The 4 thin actix/axum adapter crates have no
 # tests (framework-bound glue) and are intentionally compile-only, not gated.
 cov-snap-response:
-    cargo llvm-cov -p kamu-snap-response --all-features --fail-under-lines 70
+    cargo llvm-cov nextest -p kamu-snap-response --all-features --fail-under-lines 70
 
 # Coverage gates for every gated crate
 cov-all: cov cov-logging cov-snap-crypto cov-snap-response
 
 # HTML coverage report for the whole workspace; prints the output path
 cov-html:
-    cargo llvm-cov --workspace --ignore-filename-regex 'generated|build/' --html
+    cargo llvm-cov nextest --workspace --ignore-filename-regex 'generated|build/' --html
     @echo "report: target/llvm-cov/html/index.html"
 
 # ---------------------------------------------------------------------------
@@ -285,7 +301,7 @@ gate:
     names=("lint-all" "test-all" "msrv(1.88)" "cov-all" "doc" "build-nostd" "build-wasm" "build-wasm-snap" "deny")
     cmds=("just lint-all"
           "just test-all"
-          "cargo +1.88 test --workspace --quiet"
+          "cargo +1.88 nextest run --workspace && cargo +1.88 test --workspace --doc --quiet"
           "just cov-all"
           "just doc"
           "just build-nostd"
@@ -315,7 +331,13 @@ ci: gate publish-all
 # They print the minimum signal needed to pick the next action and keep the full
 # output behind VERBOSE=1, so a green run costs a handful of lines instead of a
 # few thousand. CI does NOT use them — CI runs the explicit lint-all / test-all /
-# cov-all recipes above, whose full logs are the source of truth.
+# cov-all recipes above.
+#
+# Test verbosity is NOT one of the things these recipes vary: every nextest run
+# in this file, agentic or not, reports through .config/nextest.toml. A green
+# run is a summary line everywhere, and CI's completeness comes from the run
+# counts, the `ci` profile's immediate-final failure output, and the JUnit
+# artifact — not from listing every passing test in the log.
 # ---------------------------------------------------------------------------
 
 # Fast inner-loop check with a compact PASS/FAIL summary: fmt + clippy + test on
@@ -329,7 +351,7 @@ check-all:
     names=("fmt" "clippy" "test")
     cmds=("cargo fmt --all --check"
           "cargo clippy --workspace --all-targets --message-format=short -- -D warnings -D clippy::all"
-          "cargo test --workspace --quiet")
+          "cargo nextest run --workspace && cargo test --workspace --doc --quiet")
     declare -a rcs outs
     fail=0
     for i in "${!names[@]}"; do
@@ -350,18 +372,18 @@ check crate:
     set -uo pipefail
     fail=0
     cargo clippy -p '{{ crate }}' --all-targets --message-format=short -- -D warnings -D clippy::all || fail=1
-    cargo test -p '{{ crate }}' --quiet || fail=1
+    cargo nextest run -p '{{ crate }}' || fail=1
+    cargo test -p '{{ crate }}' --doc --quiet || fail=1
     exit "$fail"
 
-# Falls back to `cargo test` when cargo-nextest is absent (run: just setup).
-# Terse test run via cargo-nextest (summary + failures-only) + doctests.
+# Terse test run: cargo-nextest over the workspace + the doctests it cannot run.
+# Verbosity comes from .config/nextest.toml (status-level = fail), not a flag, so
+# every nextest invocation in this file reports the same way. cargo-nextest is
+# REQUIRED — there is deliberately no `cargo test` fallback, because silently
+# swapping the runner would change test isolation without saying so; a missing
+# binary should fail loudly and send you to `just setup`.
 test-fast:
     #!/usr/bin/env bash
     set -uo pipefail
-    if command -v cargo-nextest >/dev/null 2>&1; then
-      cargo nextest run --workspace --status-level fail
-      cargo test --workspace --doc --quiet
-    else
-      echo "cargo-nextest missing (run: just setup) — falling back to cargo test"
-      cargo test --workspace --quiet
-    fi
+    cargo nextest run --workspace
+    cargo test --workspace --doc --quiet
