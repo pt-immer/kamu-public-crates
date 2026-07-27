@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn defaults_to_batch_with_unset_knobs() {
-        let cfg = OtlpConfig::new("http://localhost:4318");
+        let cfg = OtlpConfig::new("http://127.0.0.1:4318");
         assert_eq!(cfg.processor, SpanProcessorMode::Batch);
         assert_eq!(cfg.max_queue_size, None);
         assert_eq!(cfg.scheduled_delay, None);
@@ -261,13 +261,13 @@ mod tests {
 
     #[test]
     fn with_processor_overrides_mode() {
-        let cfg = OtlpConfig::new("http://localhost:4318").with_processor(SpanProcessorMode::Simple);
+        let cfg = OtlpConfig::new("http://127.0.0.1:4318").with_processor(SpanProcessorMode::Simple);
         assert_eq!(cfg.processor, SpanProcessorMode::Simple);
     }
 
     #[test]
     fn tuning_builders_set_fields() {
-        let cfg = OtlpConfig::new("http://localhost:4318")
+        let cfg = OtlpConfig::new("http://127.0.0.1:4318")
             .with_max_queue_size(4096)
             .with_scheduled_delay(Duration::from_secs(2))
             .with_max_export_batch_size(1024);

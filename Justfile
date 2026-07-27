@@ -55,6 +55,7 @@ doctor:
     check cargo-llvm-cov 1 cargo-llvm-cov --version
     check cargo-deny 1 cargo-deny --version
     check cargo-nextest 1 cargo nextest --version
+    check shellcheck 0 shellcheck --version
     echo "cross targets:"
     for tgt in thumbv7em-none-eabi wasm32-unknown-unknown; do
       if rustup target list --installed 2>/dev/null | grep -qx "$tgt"; then printf '  ✓ %-26s installed\n' "$tgt"; else printf '  · %-26s missing (run: just setup)\n' "$tgt"; fi
@@ -129,12 +130,89 @@ lint-toml:
 lint-spell:
     typos
 
-# Lint docs the way the CI `lint docs` job does: TOML fmt-check + Markdown +
-# TOML lint + spelling (no Rust). lint-all is the superset that adds Rust.
-lint-docs: fmt-toml-check lint-md lint-toml lint-spell
+# Scan the tracked tree for PII, credentials, and the fleet's connection-string
+# rules. Adopted from the incoming kamu-money repository, which held the only
+# working implementation of a rule this repo states in three places and enforced
+# nowhere.
+#
+# The host-specific needles are read from the ENVIRONMENT, never written here:
+# hardcoding this machine's username in order to search for it would commit the
+# very string being hunted. Every pattern below was TIGHTENED after its first
+# run produced a false positive — a scanner that cries wolf is one whose next
+# real finding gets waved through, so a loose pattern is worse than none.
+#
+# Own shebang, so a `git grep` that matches nothing (exit 1) does not kill the
+# recipe under this Justfile's `set shell := [... "-euo", "pipefail" ...]`.
+scrub:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    hits=0
+    scan() { # label pattern [exclude-ere]
+        local label="$1" pattern="$2" exclude="${3:-}"
+        local found
+        found=$(git grep -nIE "$pattern" -- ':!Justfile' 2>/dev/null)
+        if [ -n "$exclude" ]; then
+            found=$(printf '%s\n' "$found" | grep -vE "$exclude")
+        fi
+        if [ -n "$found" ]; then
+            printf '\033[31m%s\033[0m\n%s\n\n' "$label" "$found"
+            hits=$((hits+1))
+        fi
+    }
+    # Container and CI users are not this machine's identity; naming them in a
+    # Dockerfile or a captured error message is correct, not a leak.
+    scan "host home paths"      "/home/[a-z][a-z0-9_-]+" "/home/(pgrx|yugabyte|postgres|runner|node|ubuntu)\b"
+    # RFC 2606 reserves .invalid/.test/.example so fixtures can name an address
+    # that cannot exist. Flagging those teaches the reader to skip the report.
+    # `noreply@` is excluded because a no-reply address is by construction not
+    # a person's contact detail — and this repo REQUIRES one, in the
+    # Co-Authored-By trailer AGENTS.md documents by example.
+    scan "email addresses"      "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}" \
+         "noreply@|@(example|test|invalid|localhost)\.|@example\.(com|net|org)|\.(invalid|test|example)\b"
+    # FOUR octets, not three: a 2-octet tail matched the decimal literal
+    # "USD 10.50.50" in a parser test as though it were an RFC 1918 address.
+    scan "private IPv4"         "\b(10|192\.168|172\.(1[6-9]|2[0-9]|3[01]))\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\b"
+    # `localhost` as an actual host token. Prose saying "127.0.0.1, never
+    # localhost" is the rule being OBEYED, and flagging it trains the skim.
+    scan "localhost as a host"  "(://|@|=[ ]*[\"']?|-h[ ]+)localhost([:/\"' ]|$)"
+    scan "all-interface bind"   "[\"'=: ]0\.0\.0\.0[\"':]"
+    scan "credential prefixes"  "(ghp_|github_pat_|sk-[a-zA-Z0-9]{20}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY)"
+    # THE MACHINE ITSELF. A CPU model or kernel string fingerprints somebody's
+    # infrastructure just as surely as a hostname, and a benchmark transcript is
+    # exactly the thing that gets pasted into a design document.
+    scan "cpu model names"      "\b(Xeon|EPYC|Ryzen|Core\(TM\)|Threadripper)\b"
+    scan "kernel/distro string" "\b[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-(arch|generic|cachyos|azure|aws|gcp)[a-z-]*\b"
+    for needle in "${USER:-}" "$(hostname 2>/dev/null)"; do
+        if [ -n "$needle" ] && [ "${#needle}" -ge 3 ]; then
+            scan "this machine's identifiers" "\b${needle}\b"
+        fi
+    done
+    if [ "$hits" -gt 0 ]; then
+        echo "scrub: $hits category/categories need attention BEFORE any commit, tag, push or publish"
+        exit 1
+    fi
+    echo "scrub: clean"
 
-# Lint every file type (formatting + Rust + Markdown + TOML + spelling)
-lint-all: fmt-check lint-rust lint-md lint-toml lint-spell
+# Lint tracked shell scripts. A no-op until the PG lane's scripts arrive; it
+# lands now so the gate's shape is settled before that import, not during it.
+lint-shell:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    files=$(git ls-files '*.sh')
+    if [ -z "$files" ]; then echo "lint-shell: no shell scripts tracked"; exit 0; fi
+    # shellcheck disable=SC2086
+    shellcheck $files
+
+# Lint docs the way the CI `lint docs` job does: TOML fmt-check + Markdown +
+# TOML lint + spelling + the PII/secret scan (no Rust). lint-all adds Rust.
+# `scrub` is here as well as in lint-all on purpose: this is the job a
+# root-level `*.md`-only PR runs alone, and prose is where a leaked hostname
+# arrives far more often than Rust is.
+lint-docs: fmt-toml-check lint-md lint-toml lint-spell scrub
+
+# Lint every file type (formatting + Rust + Markdown + TOML + spelling + shell
+# + the PII/secret scan)
+lint-all: fmt-check lint-rust lint-md lint-toml lint-spell lint-shell scrub
 
 # ---------------------------------------------------------------------------
 # Tests / docs / supply chain
