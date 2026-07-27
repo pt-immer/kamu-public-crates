@@ -36,6 +36,24 @@ retries = 0
 # hung test cannot burn a whole job's wall clock.
 slow-timeout = { period = "60s", terminate-after = 5 }
 
+# kamu-money-core's database suites each start their OWN PostgreSQL
+# testcontainer. nextest is process-per-test and concurrent by default, so an
+# unqualified `--all-features` run starts five `postgres-types` containers and
+# four sqlx ones at the same time. That is a behaviour change from the source
+# repository, where the whole suite was a single `cargo test`, and on a shared
+# Docker daemon it is other people's problem too.
+#
+# Two, not one: enough to overlap container start-up latency, few enough that a
+# busy daemon is never this suite's doing. It lives here rather than as a flag on
+# a recipe so that EVERY invocation agrees — a per-recipe `--test-threads` would
+# bind only the invocation someone remembered to write it on.
+[test-groups.money-db]
+max-threads = 2
+
+[[profile.default.overrides]]
+filter = 'binary(pg_roundtrip) or binary(sqlx_roundtrip)'
+test-group = 'money-db'
+
 [profile.ci]
 # CI wants the complete picture from one run rather than the first failure, so a
 # single push surfaces every broken test instead of one per round-trip.

@@ -115,8 +115,16 @@ clippy-snap:
     cargo clippy -p kamu-snap-crypto --no-default-features -- -D warnings -D clippy::all
     cargo clippy -p kamu-snap-response --all-features --all-targets -- -D warnings -D clippy::all
 
+# kamu-money-core denies pedantic, cargo and nine named restriction lints in its
+# own lib.rs, which is stricter than the workspace — arithmetic that must not be
+# wrong earns a tighter setting than framework glue does.
+# Clippy kamu-money-core's feature permutations (stricter than the workspace).
+clippy-money:
+    cargo clippy -p kamu-money-core --all-features --all-targets -- -D warnings -D clippy::all
+    cargo clippy -p kamu-money-core --no-default-features -- -D warnings -D clippy::all
+
 # Lint Rust: workspace clippy::all + iso3166 pedantic + ALL non-default feature perms
-lint-rust: clippy-workspace clippy-iso3166 clippy-logging clippy-snap
+lint-rust: clippy-workspace clippy-iso3166 clippy-logging clippy-money clippy-snap
 
 # Lint Markdown
 lint-md:
@@ -228,12 +236,39 @@ test-iso3166:
     # example fails here the moment one is written.
     cargo test -p kamu-iso3166 --all-features --doc
 
+# Test kamu-money-core WITHOUT Docker: every feature permutation whose tests do
+# not start a container. This is the recipe `just gate` reaches through test-all.
+# Test kamu-money-core's Docker-free feature permutations + its doctests.
+test-money:
+    cargo nextest run -p kamu-money-core
+    cargo nextest run -p kamu-money-core --features serde
+    cargo nextest run -p kamu-money-core --features postgres -E 'not binary(pg_roundtrip)'
+    # nextest cannot run doctests.
+    cargo test -p kamu-money-core --all-features --doc --quiet
+
+# Test kamu-money-core's container-backed suites. REQUIRES a reachable Docker
+# daemon. Concurrency is bounded by the `money-db` test group in
+# .config/nextest.toml, not by a flag here, so every invocation agrees.
+#
+# Deliberately NOT in `gate`: the gate must stay runnable without Docker, and a
+# gate stage that cannot run is a stage that gets skipped. `pg_native_column` and
+# `yugabyte_roundtrip` are excluded too — they need the native kmoney extension,
+# which belongs to the PostgreSQL lane rather than to this crate's own suite.
+# Test kamu-money-core's container-backed suites (REQUIRES Docker; not in gate).
+test-money-db:
+    cargo nextest run -p kamu-money-core --all-features -E 'binary(pg_roundtrip) or binary(sqlx_roundtrip)'
+
 # Test the workspace plus kamu-iso3166 / kamu-snap-* feature permutations.
 # Every test binary runs under cargo-nextest (process-per-test isolation, see
 # .config/nextest.toml); doctests are a SEPARATE `cargo test --doc` pass because
 # nextest does not run them.
 test-all:
-    cargo nextest run --workspace
+    # `compile_fail` is EXCLUDED here and owned by `just test-money`. Its trybuild
+    # goldens are byte-exact rustc diagnostics, so they can only ever match ONE
+    # compiler — and this recipe runs under both `stable` and the MSRV toolchain
+    # (CI's test matrix, and `just gate`'s msrv stage). Blessed on stable, they
+    # fail on 1.94 for a reason that says nothing about the code.
+    cargo nextest run --workspace -E 'not binary(compile_fail)'
     # kamu-logging OTLP path (a default run exercises systemd+actix, not OTLP):
     # covers BatchSpanProcessor + the drain helpers + the runtime test.
     cargo nextest run -p kamu-logging --features with-otlp
@@ -241,6 +276,10 @@ test-all:
     cargo nextest run -p kamu-iso3166 --no-default-features --features serde
     cargo nextest run -p kamu-snap-crypto --all-features
     cargo nextest run -p kamu-snap-response --all-features
+    # kamu-money-core's adapters are all feature-gated, so a default run reaches
+    # none of them. Container-backed and native-extension suites are excluded —
+    # `just test-money-db` owns the first, the PostgreSQL lane owns the second.
+    cargo nextest run -p kamu-money-core --all-features -E 'not (binary(compile_fail) or binary(pg_roundtrip) or binary(sqlx_roundtrip) or binary(pg_native_column) or binary(yugabyte_roundtrip))'
     # Doctests, which nextest skips by design. kamu-logging holds the only ones
     # in the workspace, and the default-feature run reaches them.
     cargo test --workspace --doc
@@ -261,8 +300,15 @@ doc-iso3166:
 doc-snap-response:
     RUSTDOCFLAGS=-Dwarnings cargo doc -p kamu-snap-response --no-deps --all-features
 
+# Build kamu-money-core docs with all features. Every adapter is feature-gated,
+# so a default-feature docs build would not render wire, pg or sqlx_pg at all
+# (docs.rs parity — the manifest sets all-features there for the same reason).
+# Build kamu-money-core docs with all features (CI `docs (kamu-money-core)` job).
+doc-money:
+    RUSTDOCFLAGS=-Dwarnings cargo doc -p kamu-money-core --no-deps --all-features
+
 # Build docs the way docs.rs does
-doc: doc-workspace doc-iso3166 doc-snap-response
+doc: doc-workspace doc-iso3166 doc-money doc-snap-response
 
 # Supply-chain audit. `--all-features` is a GLOBAL flag (before the subcommand)
 # — it widens the audited dependency graph to every optional dep, matching what
@@ -301,8 +347,27 @@ cov-snap-crypto:
 cov-snap-response:
     cargo llvm-cov nextest -p kamu-snap-response --all-features --fail-under-lines 70
 
+# Coverage gate for kamu-money-core. Floor 80, measured 84.89% lines on
+# 2026-07-28 (2584 regions, 1370 lines).
+#
+# WHY NOT HIGHER, stated so the number is not a mystery to whoever next reads it:
+# the container-backed and native-extension suites are excluded here, because a
+# coverage gate that needs a Docker daemon is a gate that gets skipped. Those
+# suites are exactly what exercises the two driver adapters, so `sqlx_pg.rs`
+# measures 0% and `pg.rs` 12.5% in this run and pull the total down by roughly
+# four points. Everything else sits between 76% and 100%. Raising this floor
+# means either covering the adapters offline or moving the gate behind Docker —
+# not tightening the number and hoping.
+#
+# `build/` is excluded for the same reason kamu-iso3166 excludes it: the code
+# that generates the register is exercised by the build itself, and by
+# tests/register_codegen.rs, neither of which this measurement sees.
+# Coverage gate for kamu-money-core (>= 80% lines; measured 84.89%).
+cov-money:
+    cargo llvm-cov nextest -p kamu-money-core --all-features -E 'not (binary(pg_roundtrip) or binary(sqlx_roundtrip) or binary(pg_native_column) or binary(yugabyte_roundtrip))' --ignore-filename-regex 'build/' --fail-under-lines 80
+
 # Coverage gates for every gated crate
-cov-all: cov cov-logging cov-snap-crypto cov-snap-response
+cov-all: cov cov-logging cov-money cov-snap-crypto cov-snap-response
 
 # HTML coverage report for the whole workspace; prints the output path
 cov-html:
@@ -376,10 +441,11 @@ clean:
 gate:
     #!/usr/bin/env bash
     set -uo pipefail
-    names=("lint-all" "test-all" "msrv(1.94)" "cov-all" "doc" "build-nostd" "build-wasm" "build-wasm-snap" "deny")
+    names=("lint-all" "test-all" "test-money" "msrv(1.94)" "cov-all" "doc" "build-nostd" "build-wasm" "build-wasm-snap" "deny")
     cmds=("just lint-all"
           "just test-all"
-          "cargo +1.94 nextest run --workspace && cargo +1.94 test --workspace --doc --quiet"
+          "just test-money"
+          "cargo +1.94 nextest run --workspace -E 'not binary(compile_fail)' && cargo +1.94 test --workspace --doc --quiet"
           "just cov-all"
           "just doc"
           "just build-nostd"
