@@ -371,9 +371,16 @@ cov-snap-response:
 # `build/` is excluded for the same reason kamu-iso3166 excludes it: the code
 # that generates the register is exercised by the build itself, and by
 # tests/register_codegen.rs, neither of which this measurement sees.
+#
+# `compile_fail` is excluded too. A trybuild harness executes no library code, so
+# it contributes nothing to line coverage — and including it made this recipe
+# depend on `rust-src`, because the no_iterator_sum golden quotes standard-library
+# source. The coverage CI job installs llvm-tools-preview, not rust-src, so the
+# suite mismatched there while passing in `just test-money`, which does install
+# it. Measuring the same goldens in three places bought nothing and broke one.
 # Coverage gate for kamu-money-core (>= 80% lines; measured 84.89%).
 cov-money:
-    cargo llvm-cov nextest -p kamu-money-core --all-features -E 'not (binary(pg_roundtrip) or binary(sqlx_roundtrip) or binary(pg_native_column) or binary(yugabyte_roundtrip))' --ignore-filename-regex 'build/' --fail-under-lines 80
+    cargo llvm-cov nextest -p kamu-money-core --all-features -E 'not (binary(compile_fail) or binary(pg_roundtrip) or binary(sqlx_roundtrip) or binary(pg_native_column) or binary(yugabyte_roundtrip))' --ignore-filename-regex 'build/' --fail-under-lines 80
 
 # Coverage gates for every gated crate
 cov-all: cov cov-logging cov-money cov-snap-crypto cov-snap-response

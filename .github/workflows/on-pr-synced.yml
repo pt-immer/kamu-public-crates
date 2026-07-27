@@ -221,9 +221,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.toolchain }}
-          # kamu-money-core's trybuild goldens quote standard-library source, so
-          # its compile-fail suite fails for an unrelated reason without this.
-          components: rust-src
       - uses: taiki-e/install-action@v2
         with:
           tool: just,cargo-nextest
@@ -515,6 +512,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: taiki-e/install-action@v2
         with:
           tool: just
