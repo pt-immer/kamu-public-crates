@@ -47,19 +47,21 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      # Any workspace Rust/build job (iso3166, logging, snap, or shared infra).
-      rust: ${{ steps.filter.outputs.iso3166 == 'true' || steps.filter.outputs.logging == 'true' || steps.filter.outputs.snap == 'true' || steps.filter.outputs.shared == 'true' }}
+      # Any workspace Rust/build job (iso3166, logging, money, snap, or shared infra).
+      rust: ${{ steps.filter.outputs.iso3166 == 'true' || steps.filter.outputs.logging == 'true' || steps.filter.outputs.money == 'true' || steps.filter.outputs.snap == 'true' || steps.filter.outputs.shared == 'true' }}
       # iso3166-specific work (its sources, or shared infra).
       iso: ${{ steps.filter.outputs.iso3166 == 'true' || steps.filter.outputs.shared == 'true' }}
       # logging-specific work (its sources, or shared infra).
       log: ${{ steps.filter.outputs.logging == 'true' || steps.filter.outputs.shared == 'true' }}
+      # money-specific work (kamu-money-core's sources, or shared infra).
+      money: ${{ steps.filter.outputs.money == 'true' || steps.filter.outputs.shared == 'true' }}
       # snap-specific work (any kamu-snap-* crate, or shared infra). Umbrella on
       # purpose: the 6 snap crates inter-depend, so a base-crate change must
       # re-run the dependents' jobs. Release independence is preserved by the
       # per-crate dry-run/coverage jobs + per-crate release tags, not the trigger.
       snap: ${{ steps.filter.outputs.snap == 'true' || steps.filter.outputs.shared == 'true' }}
       # Doc/lint job: any crate, shared infra, or pure docs.
-      lint: ${{ steps.filter.outputs.iso3166 == 'true' || steps.filter.outputs.logging == 'true' || steps.filter.outputs.snap == 'true' || steps.filter.outputs.shared == 'true' || steps.filter.outputs.docs == 'true' }}
+      lint: ${{ steps.filter.outputs.iso3166 == 'true' || steps.filter.outputs.logging == 'true' || steps.filter.outputs.money == 'true' || steps.filter.outputs.snap == 'true' || steps.filter.outputs.shared == 'true' || steps.filter.outputs.docs == 'true' }}
     steps:
       # `push` events diff before..after against the local git repo, so a
       # checkout is required there (pull_request events use the API and need
@@ -84,6 +86,8 @@ jobs:
               - 'crates/iso3166/**'
             logging:
               - 'crates/logging/**'
+            money:
+              - 'crates/money-core/**'
             snap:
               - 'crates/snap-*/**'
             shared:
@@ -503,6 +507,113 @@ jobs:
   # succeeded or was a path-filtered skip, and fails if any job failed/cancelled.
   # Adding/renaming/splitting jobs above never needs a ruleset edit again — only
   # this `needs:` list (and `allowed-skips`) changes.
+  clippy-money:
+    name: clippy (kamu-money-core features)
+    needs: [changes, fmt]
+    if: ${{ needs.changes.outputs.money == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - uses: Swatinem/rust-cache@v2
+      - run: just clippy-money
+
+  test-money:
+    name: test (kamu-money-core features)
+    needs: [changes, fmt, clippy-money]
+    if: ${{ needs.changes.outputs.money == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # `just test-money` owns tests/compile_fail.rs, whose trybuild goldens
+          # quote standard-library source. Without rust-src those cases fail for
+          # a reason that says nothing about the code.
+          components: rust-src
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-nextest
+      - uses: Swatinem/rust-cache@v2
+      # Docker-free feature permutations plus the doctests nextest cannot run.
+      # The trybuild suite runs HERE and not in test-workspace, because its
+      # goldens can only ever match one rustc and that job also runs on the MSRV
+      # toolchain.
+      - run: just test-money
+
+  test-money-db:
+    name: test (kamu-money-core database suites)
+    needs: [changes, fmt, clippy-money]
+    if: ${{ needs.changes.outputs.money == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-nextest
+      - uses: Swatinem/rust-cache@v2
+      # Each test here starts its own PostgreSQL testcontainer; ubuntu-latest
+      # ships a working Docker daemon. Concurrency is bounded at two by the
+      # `money-db` test group in .config/nextest.toml, not by anything here.
+      - run: just test-money-db
+
+  docs-money:
+    name: docs (kamu-money-core all-features)
+    needs: [changes, fmt]
+    if: ${{ needs.changes.outputs.money == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - uses: Swatinem/rust-cache@v2
+      - run: just doc-money
+
+  coverage-money:
+    name: coverage (kamu-money-core >= 80% lines)
+    needs: changes
+    if: ${{ needs.changes.outputs.money == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@v2
+        with:
+          # cargo-nextest is required: the cov-* recipes measure through
+          # `cargo llvm-cov nextest`, so coverage runs the same binaries the
+          # same way `just test-all` does.
+          tool: just,cargo-llvm-cov,cargo-nextest
+      - uses: Swatinem/rust-cache@v2
+      # The floor is 80 against a measured 84.89%. It is not higher because this
+      # gate excludes the container-backed suites, which are exactly what
+      # exercises the two driver adapters — see the recipe's own comment.
+      - run: just cov-money
+
+  publish-dry-run-money:
+    name: cargo publish --dry-run (kamu-money-core)
+    needs: changes
+    if: ${{ needs.changes.outputs.money == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - uses: Swatinem/rust-cache@v2
+      # Proves the packaged archive still builds — which for this crate also
+      # proves `vendor/list-one.xml` is inside it, because the build script
+      # cannot generate the register without it.
+      - run: just publish-dry kamu-money-core
+
   ci-success:
     name: ci-success
     needs:
@@ -528,6 +639,12 @@ jobs:
       - coverage-snap-crypto
       - coverage-snap-response
       - publish-dry-run-snap-crypto
+      - clippy-money
+      - test-money
+      - test-money-db
+      - docs-money
+      - coverage-money
+      - publish-dry-run-money
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -559,4 +676,10 @@ jobs:
             build-wasm-snap,
             coverage-snap-crypto,
             coverage-snap-response,
-            publish-dry-run-snap-crypto
+            publish-dry-run-snap-crypto,
+            clippy-money,
+            test-money,
+            test-money-db,
+            docs-money,
+            coverage-money,
+            publish-dry-run-money

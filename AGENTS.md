@@ -1,7 +1,7 @@
 # Agent guide — kamu-public-crates
 
 >
-> **A Cargo workspace of 8 independently-versioned public crates** — `kamu-iso3166`, `kamu-logging`, and the 6-crate `kamu-snap-*` Bank Indonesia SNAP BI family. Edition 2024, MSRV 1.94, dual-licensed `MIT OR Apache-2.0`. Each crate's authoritative version lives in its `Cargo.toml` / [`CHANGELOG.md`](CHANGELOG.md); releases are per-crate (see [Commits & releases](#commits--releases)).
+> **A Cargo workspace of 9 independently-versioned public crates** — `kamu-iso3166`, `kamu-logging`, `kamu-money-core`, and the 6-crate `kamu-snap-*` Bank Indonesia SNAP BI family. Edition 2024, MSRV 1.94, dual-licensed `MIT OR Apache-2.0`. Each crate's authoritative version lives in its `Cargo.toml` / [`CHANGELOG.md`](CHANGELOG.md); releases are per-crate (see [Commits & releases](#commits--releases)).
 
 Guidance for AI coding agents (Claude Code, GitHub Copilot, and others) working in
 this repository. `CLAUDE.md` and `.github/copilot-instructions.md` are symlinks to
@@ -20,6 +20,12 @@ publishing small, focused Rust crates — libraries and CLI apps — to crates.i
 - **`kamu-logging`** (`crates/logging`) — structured logging over the `tracing`
   ecosystem: systemd/journald, Cloudflare-Worker `wasm32` (via `tracing-web`),
   `actix-web` request spans, and OpenTelemetry/OTLP export (`with-otlp`).
+- **`kamu-money-core`** (`crates/money-core`) — exact monetary arithmetic:
+  `i128` at a fixed scale of 18, compile-time currency identity, and a residue
+  that cannot be silently dropped. Its ISO 4217 register is **generated at
+  build time** from a vendored XML list, the same way `kamu-iso3166` builds its
+  tables. The `postgres` / `sqlx` adapters live in the crate itself because
+  `impl ToSql` for its type from elsewhere is `E0117`.
 - **`kamu-snap-*`** (`crates/snap-*`) — Bank Indonesia **SNAP BI** plumbing, a
   family of 6 independently-versioned crates. `kamu-snap-crypto` (HMAC/RSA
   primitives, SNAP BI recipes, webhook verifier) and `kamu-snap-response`
@@ -52,6 +58,11 @@ Each crate **versions and releases independently** — see its own `CHANGELOG.md
   build scripts under `crates/iso3166/build/` or the vendored CSV instead. If the
   dataset's cardinality changes, update the pinned counts in
   `crates/iso3166/tests/codegen_invariants.rs`.
+- **`rust-src` is required on BOTH toolchains.** Compile-fail (`trybuild`) tests
+  quote standard-library source, so without it they fail for a reason unrelated
+  to the code. `just setup` installs it; never re-bless a golden produced
+  without it. A test whose oracle is compiler output belongs to exactly ONE
+  toolchain — keep it out of any `--workspace` sweep the MSRV job also runs.
 - **`forbid(unsafe_code)`** in `kamu-iso3166` and every `kamu-snap-*` crate — no `unsafe`.
 - **`kamu-snap-crypto` depends on `rsa`** (RUSTSEC-2023-0071, the "Marvin"
   timing side-channel). No patched release exists, so it is ignored in
@@ -79,7 +90,7 @@ its stage FAIL loudly — run `just setup` and `rustup toolchain install 1.94`
 first. The granular recipes still exist and CI runs them directly:
 
 ```sh
-just lint-all   # rustfmt + clippy + Markdown + TOML + spelling
+just lint-all   # rustfmt + clippy + Markdown + TOML + spelling + shell + scrub
 just test-all   # workspace + kamu-iso3166 / kamu-logging / kamu-snap-* feature permutations
 just cov-all    # coverage gates for every gated crate
 ```
@@ -106,11 +117,19 @@ Cadence expectations:
   nextest invocation is therefore paired with an explicit `cargo test --doc`;
   a new test recipe without that pair silently stops testing doc examples.
   Retries are off on purpose — a retried-into-green test is a quiet silent skip.
+- **Container-backed tests are bounded in `.config/nextest.toml`**, never by a
+  per-recipe flag. nextest is process-per-test and concurrent, so a suite whose
+  tests each start a container will start all of them at once; a test-group cap
+  binds every invocation instead of only the one someone remembered to flag.
+  Docker-dependent recipes stay OUT of `just gate` — the gate must be runnable
+  without a daemon, and a stage that cannot run is a stage that gets skipped.
 - **Docs must pass `just lint-all`**: give every fenced code block a language,
   keep Markdown tables lint-clean, and let `taplo` own TOML formatting
   (`just fmt` / `just fmt-check`) — don't hand-align.
 - **Coverage gates are enforced** (`kamu-iso3166` ≥ 98% lines, `kamu-logging`
-  ≥ 70%, `kamu-snap-crypto` ≥ 70%, `kamu-snap-response` ≥ 70%); land tests with
+  ≥ 70%, `kamu-money-core` ≥ 80%, `kamu-snap-crypto` ≥ 70%,
+  `kamu-snap-response` ≥ 70%); floors are **measured before they are set**, and
+  a floor sitting below its measurement should say why in the recipe. Land tests with
   new code. The 4 thin `kamu-snap-*-{actix,axum}` adapter crates are
   compile-only (framework glue, no tests) and intentionally not coverage-gated.
   `kamu-logging`'s global subscriber is a process-global one-shot — test its

@@ -38,11 +38,11 @@ jobs:
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
-          if [[ "$TAG" =~ ^(kamu-iso3166|kamu-logging|kamu-snap-crypto|kamu-snap-crypto-actix|kamu-snap-crypto-axum|kamu-snap-response|kamu-snap-response-actix|kamu-snap-response-axum)-v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.+-]+)?)$ ]]; then
+          if [[ "$TAG" =~ ^(kamu-iso3166|kamu-logging|kamu-money-core|kamu-snap-crypto|kamu-snap-crypto-actix|kamu-snap-crypto-axum|kamu-snap-response|kamu-snap-response-actix|kamu-snap-response-axum)-v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.+-]+)?)$ ]]; then
             echo "crate=${BASH_REMATCH[1]}"  >> "$GITHUB_OUTPUT"
             echo "version=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
           else
-            echo "::error::Release tag '$TAG' must match '<crate>-vX.Y.Z' (crate ∈ {kamu-iso3166, kamu-logging, kamu-snap-crypto, kamu-snap-crypto-actix, kamu-snap-crypto-axum, kamu-snap-response, kamu-snap-response-actix, kamu-snap-response-axum})"
+            echo "::error::Release tag '$TAG' must match '<crate>-vX.Y.Z' (crate ∈ {kamu-iso3166, kamu-logging, kamu-money-core, kamu-snap-crypto, kamu-snap-crypto-actix, kamu-snap-crypto-axum, kamu-snap-response, kamu-snap-response-actix, kamu-snap-response-axum})"
             exit 1
           fi
 

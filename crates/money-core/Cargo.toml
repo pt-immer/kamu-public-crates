@@ -25,11 +25,19 @@ include = [
   "NOTICE",
   "README.md",
   "VENDORED.md",
+  "benches/**/*.rs",
   "build.rs",
   "build/**/*.rs",
+  "examples/**/*.rs",
   "src/**/*.rs",
   "vendor/list-one.xml",
 ]
+# `benches/` and `examples/` are listed because `[[bench]]` and `[[example]]`
+# below NAME those files: an include list that omits them leaves cargo warning
+# "ignoring benchmark `kernel` as benches/kernel.rs is not included in the
+# published package" on every publish, and ships target declarations that point
+# at nothing. The examples are also the clearest documentation this crate has of
+# the wire and FX surfaces, so they are worth the few kilobytes.
 
 [features]
 # The postgres-types and sqlx adapters live HERE, not in adapter crates:
