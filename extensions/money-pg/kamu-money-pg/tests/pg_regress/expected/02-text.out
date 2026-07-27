@@ -1,0 +1,14 @@
+-- the_text_form_matches_money_core
+USD 10.50 | USD 10.50 | JPY 10.5 | KWD 10.500 | USD -0.000000000000000001
+-- the_domain_top_round_trips
+IDR 999999999999999999.999999999999999999
+-- kmoney_refuses_what_numeric_silently_rounds
+ERROR:  kmoney: 19 fractional digits exceeds the canonical scale of 18; refused rather than rounded, because rounding here would lose money silently, in "USD 0.0000000000000000004"
+-- one_unit_past_the_domain_is_refused
+ERROR:  kmoney: money domain overflow: 1000000000000000000000000000000000000 units is outside the domain |units| <= 999999999999999999999999999999999999 (NUMERIC(36,18) admits |v| < 10^18), in "IDR 1000000000000000000"
+-- an_unknown_currency_is_refused_at_the_boundary
+ERROR:  kmoney: not a money literal: expected "<ISO> <amount>", in "ZWL 1.00"
+-- the_native_type_and_the_text_storage_agree
+render_disagreements=0
+reparse_mismatches=0
+== CASE COMPLETE: 02-text ==

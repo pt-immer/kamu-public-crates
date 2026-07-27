@@ -210,15 +210,44 @@ scrub:
     fi
     echo "scrub: clean"
 
-# Lint tracked shell scripts. A no-op until the PG lane's scripts arrive; it
-# lands now so the gate's shape is settled before that import, not during it.
+# Lint tracked shell scripts. Shell is part of the correctness boundary in the PG
+# lane, so this is a real gate rather than a formality.
+#
+# `-x` FOLLOWS `source`d FILES, which is what makes cluster.sh and artifact.sh
+# checkable at all -- without it they are opaque and SC1091 fires on every one.
+#
+# THE LANE IS CHECKED FROM ITS OWN ROOT, and that is not a stylistic choice. Its
+# scripts resolve siblings relative to the lane root (`kamu-money-pg/yb/...`),
+# exactly as they did in the repository they came from -- which is the same
+# property that let 37 of them transplant without a single edit. Checked from
+# here instead, every one of those paths resolves to nothing and shellcheck
+# reports 33 unfollowable sources. Measured both ways: 33 findings from the
+# repository root, 0 from the lane root.
 lint-shell:
     #!/usr/bin/env bash
     set -uo pipefail
-    files=$(git ls-files '*.sh')
-    if [ -z "$files" ]; then echo "lint-shell: no shell scripts tracked"; exit 0; fi
-    # shellcheck disable=SC2086
-    shellcheck $files
+    if ! command -v shellcheck >/dev/null 2>&1; then
+        echo "lint-shell: shellcheck NOT INSTALLED -- run 'just setup'. Failing rather than passing vacuously." >&2
+        exit 1
+    fi
+    lane=extensions/money-pg
+    rc=0
+    host=$(git ls-files '*.sh' | grep -v "^$lane/" || true)
+    lane_files=$(git ls-files "$lane/*.sh" | sed "s|^$lane/||" || true)
+    if [ -n "$host" ]; then
+        # shellcheck disable=SC2086
+        shellcheck -x $host || rc=1
+    fi
+    if [ -n "$lane_files" ]; then
+        # shellcheck disable=SC2086
+        (cd "$lane" && shellcheck -x $lane_files) || rc=1
+    fi
+    n_host=$(printf '%s' "$host" | grep -c . || true)
+    n_lane=$(printf '%s' "$lane_files" | grep -c . || true)
+    if [ "$rc" -eq 0 ]; then
+        echo "lint-shell: clean over $n_host repository + $n_lane lane script(s)"
+    fi
+    exit "$rc"
 
 # Lint docs the way the CI `lint docs` job does: TOML fmt-check + Markdown +
 # TOML lint + spelling + the PII/secret scan (no Rust). lint-all adds Rust.

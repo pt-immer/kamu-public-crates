@@ -1,0 +1,17 @@
+-- allocation_conserves_the_total_exactly
+USD 10.00
+-- allocation_puts_the_odd_unit_on_the_first_share
+USD 3.333333333333333334 | USD 3.333333333333333333 | USD 3.333333333333333333
+-- allocation_never_pays_a_zero_weight_recipient
+USD 0.00 | USD 0.000000000000000001 | USD 0.00
+-- allocation_honours_weights_and_still_conserves
+IDR 16000.01
+-- allocation_refuses_weights_that_sum_to_zero
+ERROR:  kmoney_allocate: weights sum to zero — the amount would have nowhere to go
+-- allocation_refuses_a_null_weight
+ERROR:  kmoney_allocate: NULL weight — a share of nothing is not a share of zero
+-- allocation_accepts_exactly_the_documented_limit
+USD 10.00
+-- allocation_refuses_more_parts_than_the_documented_limit
+ERROR:  kmoney_allocate: 65537 weights exceeds the limit of 65536; a distribution that large belongs in the application, not in one SQL call
+== CASE COMPLETE: 07-allocate ==
