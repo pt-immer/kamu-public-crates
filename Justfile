@@ -190,7 +190,16 @@ scrub:
     # exactly the thing that gets pasted into a design document.
     scan "cpu model names"      "\b(Xeon|EPYC|Ryzen|Core\(TM\)|Threadripper)\b"
     scan "kernel/distro string" "\b[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-(arch|generic|cachyos|azure|aws|gcp)[a-z-]*\b"
+    # THE MACHINE'S OWN NAMES, read from the environment so they are never written
+    # into this file. Generic container and CI account names are skipped for the
+    # same reason the home-path scan excludes them: `runner` is not anybody's
+    # identity, and on a GitHub Actions runner $USER *is* `runner` — which made
+    # this recipe fail CI on the words "test runner" and "AsyncRunner" while
+    # passing on every developer machine whose username does not collide.
     for needle in "${USER:-}" "$(hostname 2>/dev/null)"; do
+        case "$needle" in
+            runner|ubuntu|node|postgres|pgrx|yugabyte|root|admin|user|build|ci) continue ;;
+        esac
         if [ -n "$needle" ] && [ "${#needle}" -ge 3 ]; then
             scan "this machine's identifiers" "\b${needle}\b"
         fi
