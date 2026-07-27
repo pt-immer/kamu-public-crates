@@ -2,6 +2,10 @@
 [files]
 extend-exclude = [
   "crates/iso3166/vendor/**",
+  # The vendored ISO 4217 register is third-party data, redistributed
+  # unmodified. Correcting a spelling inside it would make it no longer the file
+  # whose SHA-256 crates/money-core/VENDORED.md records.
+  "crates/money-core/vendor/**",
   "target/**",
   "node_modules/**",
   ".tools/**",
@@ -31,3 +35,10 @@ traceparent = "traceparent"
 # See the extend-identifiers note above — the historical `Unathorized` typo is
 # referenced on purpose in kamu-snap-response's CHANGELOG/README migration table.
 Unathorized = "Unathorized"
+# The misspelling is upstream's, in the source URL SIX Group publishes for the
+# ISO 4217 register. Quoted verbatim in kamu-money-core's VENDORED.md so the
+# provenance link actually resolves.
+currrency = "currrency"
+# The Kuwaiti dinar's minor unit. 1 KWD = 1000 fils, which is why KWD is one of
+# the seven ISO 4217 codes with a settlement exponent of 3.
+fils = "fils"

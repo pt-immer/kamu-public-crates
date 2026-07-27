@@ -1,0 +1,31 @@
+error[E0308]: mismatched types
+  --> tests/ui/wrong_rate_pair.rs:19:25
+   |
+19 |     let _ = usd.convert(eur_idr, Rounding::HalfEven);
+   |                 ------- ^^^^^^^ expected `Rate<USD, _>`, found `Rate<EUR, IDR>`
+   |                 |
+   |                 arguments to this method are incorrect
+   |
+   = note: expected struct `Rate<kamu_money_core::iso::USD, _>`
+              found struct `Rate<kamu_money_core::iso::EUR, kamu_money_core::iso::IDR>`
+note: method defined here
+  --> src/rate.rs
+   |
+   |     pub fn convert<Quote: StaticCurrency>(
+   |            ^^^^^^^
+
+error[E0308]: mismatched types
+  --> tests/ui/wrong_rate_pair.rs:23:48
+   |
+23 |     let _: Result<Money<EUR>, _> = usd.convert(usd_idr, Rounding::HalfEven);
+   |                                        ------- ^^^^^^^ expected `Rate<USD, EUR>`, found `Rate<USD, IDR>`
+   |                                        |
+   |                                        arguments to this method are incorrect
+   |
+   = note: expected struct `Rate<kamu_money_core::iso::USD, kamu_money_core::iso::EUR>`
+              found struct `Rate<kamu_money_core::iso::USD, kamu_money_core::iso::IDR>`
+note: method defined here
+  --> src/rate.rs
+   |
+   |     pub fn convert<Quote: StaticCurrency>(
+   |            ^^^^^^^

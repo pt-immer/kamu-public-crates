@@ -2,6 +2,7 @@
 members = [
   "crates/iso3166",
   "crates/logging",
+  "crates/money-core",
   "crates/snap-crypto",
   "crates/snap-crypto-actix",
   "crates/snap-crypto-axum",
@@ -83,6 +84,24 @@ kamu-snap-crypto-axum = { path = "crates/snap-crypto-axum", version = "2" }
 kamu-snap-response = { path = "crates/snap-response", version = "2" }
 kamu-snap-response-actix = { path = "crates/snap-response-actix", version = "2" }
 kamu-snap-response-axum = { path = "crates/snap-response-axum", version = "3" }
+# --- kamu-money-core ---
+# `sqlx` is what sets this workspace's MSRV: 0.9 declares rust-version 1.94.0,
+# and it arrives through kamu-money-core's `sqlx` feature.
+bytes = "1.10"
+ethnum = "1.5.3"
+postcard = { version = "1.1.3", features = ["use-std"] }
+postgres = "0.19.14"
+postgres-types = "0.2.14"
+roxmltree = "0.21.1"
+# Benchmark-only, and a DEV dependency on purpose: `benches/kernel.rs` is the
+# fixture that keeps the comparison in money-core's DESIGN.md reproducible.
+# Nothing shipped links it.
+rust_decimal = "1.38.0"
+sqlx = { version = "0.9.0", default-features = false, features = ["postgres"] }
+testcontainers = { version = "0.27.3", features = ["blocking"] }
+testcontainers-modules = { version = "0.15.0", features = ["postgres"] }
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
+trybuild = "1.0"
 
 [workspace.lints.rust]
 warnings = "deny"

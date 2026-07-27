@@ -1,0 +1,37 @@
+error[E0277]: the trait bound `FakeUsd: currency::private::Sealed` is not satisfied
+  --> tests/ui/counterfeit_currency.rs:17:25
+   |
+17 | impl StaticCurrency for FakeUsd {
+   |                         ^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `currency::private::Sealed` is not implemented for `FakeUsd`
+  --> tests/ui/counterfeit_currency.rs:15:1
+   |
+15 | struct FakeUsd;
+   | ^^^^^^^^^^^^^^
+   = help: the following other types implement trait `currency::private::Sealed`:
+             kamu_money_core::iso::AED
+             kamu_money_core::iso::AFN
+             kamu_money_core::iso::ALL
+             kamu_money_core::iso::AMD
+             kamu_money_core::iso::AOA
+             kamu_money_core::iso::ARS
+             kamu_money_core::iso::AUD
+             kamu_money_core::iso::AWG
+           and $N others
+note: required by a bound in `StaticCurrency`
+  --> src/currency.rs
+   |
+   | pub trait StaticCurrency: private::Sealed {
+   |                           ^^^^^^^^^^^^^^^ required by this bound in `StaticCurrency`
+   = note: `StaticCurrency` is a "sealed trait", because to implement it you also need to implement `kamu_money_core::currency::private::Sealed`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
+   = help: the following types implement the trait:
+             kamu_money_core::iso::AED
+             kamu_money_core::iso::AFN
+             kamu_money_core::iso::ALL
+             kamu_money_core::iso::AMD
+             kamu_money_core::iso::AOA
+             kamu_money_core::iso::ARS
+             kamu_money_core::iso::AUD
+             kamu_money_core::iso::AWG
+           and $N others
