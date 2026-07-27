@@ -1,6 +1,6 @@
 [package]
 name = "kamu-snap-response-actix"
-version = "2.1.0"
+version = "2.2.0"
 description = "actix-web Responder adapter for kamu-snap-response"
 documentation = "https://docs.rs/kamu-snap-response-actix"
 categories = ["web-programming::http-server", "api-bindings"]

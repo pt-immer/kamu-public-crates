@@ -1,5 +1,13 @@
 # Changelog — `kamu-snap-response-axum`
 
+## 3.1.0 — 2026-07-27
+
+Toolchain maintenance only. No code or public API changes.
+
+### Changed
+
+- Minimum supported Rust version raised to 1.94.
+
 ## 3.0.0 — 2026-06-11
 
 ### Changed

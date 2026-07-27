@@ -1,6 +1,6 @@
 [package]
 name = "kamu-snap-crypto-actix"
-version = "2.1.0"
+version = "2.2.0"
 description = "actix-web inbound-verify middleware for kamu-snap-crypto SNAP BI signatures"
 documentation = "https://docs.rs/kamu-snap-crypto-actix"
 categories = ["web-programming::http-server", "authentication", "api-bindings"]
