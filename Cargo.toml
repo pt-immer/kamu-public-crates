@@ -10,9 +10,18 @@ members = [
   "crates/snap-response-actix",
   "crates/snap-response-axum",
 ]
-# The Cloudflare Worker example is a self-contained wasm32 package (its own
-# Cargo.toml + workers-rs deps); keep it out of the host workspace build/test.
-exclude = ["crates/logging/examples/cloudflare-worker"]
+exclude = [
+  # The PostgreSQL extension lane is its OWN workspace: it patches pgrx to a git
+  # fork, needs `panic = "unwind"` profiles that cargo only honours at a root,
+  # and requires a higher MSRV than the published crates. Excluding it is what
+  # makes CI selectivity structural -- `cargo <anything> --workspace` here cannot
+  # see it, so no aggregate needs an `--exclude` somebody has to remember. See
+  # extensions/money-pg/Cargo.toml and AGENTS.md.
+  "extensions/money-pg",
+  # The Cloudflare Worker example is a self-contained wasm32 package (its own
+  # Cargo.toml + workers-rs deps); keep it out of the host workspace build/test.
+  "crates/logging/examples/cloudflare-worker",
+]
 resolver = "3"
 
 [workspace.package]
