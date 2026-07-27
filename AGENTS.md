@@ -1,7 +1,7 @@
 # Agent guide — kamu-public-crates
 
 >
-> **A Cargo workspace of 8 independently-versioned public crates** — `kamu-iso3166`, `kamu-logging`, and the 6-crate `kamu-snap-*` Bank Indonesia SNAP BI family. Edition 2024, MSRV 1.88, dual-licensed `MIT OR Apache-2.0`. Each crate's authoritative version lives in its `Cargo.toml` / [`CHANGELOG.md`](CHANGELOG.md); releases are per-crate (see [Commits & releases](#commits--releases)).
+> **A Cargo workspace of 8 independently-versioned public crates** — `kamu-iso3166`, `kamu-logging`, and the 6-crate `kamu-snap-*` Bank Indonesia SNAP BI family. Edition 2024, MSRV 1.94, dual-licensed `MIT OR Apache-2.0`. Each crate's authoritative version lives in its `Cargo.toml` / [`CHANGELOG.md`](CHANGELOG.md); releases are per-crate (see [Commits & releases](#commits--releases)).
 
 Guidance for AI coding agents (Claude Code, GitHub Copilot, and others) working in
 this repository. `CLAUDE.md` and `.github/copilot-instructions.md` are symlinks to
@@ -32,8 +32,8 @@ Each crate **versions and releases independently** — see its own `CHANGELOG.md
 
 ## Ground rules
 
-- **Edition 2024, MSRV `1.88`.** Don't use APIs newer than 1.88; CI tests both
-  `stable` and `1.88`.
+- **Edition 2024, MSRV `1.94`.** Don't use APIs newer than 1.94; CI tests both
+  `stable` and `1.94`.
 - **`kamu-iso3166` needs the git submodule.** It reads its vendored ISO 3166 CSVs
   (a submodule at `crates/iso3166/vendor/iso3166-csv`) at build time. Run
   `just setup` (or `git submodule update --init --recursive`) before building.
@@ -71,11 +71,11 @@ just ci         # gate + publish dry-run (the full pipeline)
 ```
 
 Run `just gate` before pushing — a **green gate means CI will pass**. It runs
-every check CI runs (`lint-all` + `test-all` + MSRV 1.88 + `cov-all` + `doc` +
+every check CI runs (`lint-all` + `test-all` + MSRV 1.94 + `cov-all` + `doc` +
 cross builds + `deny`) as compact PASS/FAIL, and there is **no silent skip**: a
 missing tool or target (`taplo`, `typos`, `markdownlint-cli2`, `cargo-llvm-cov`,
-`cargo-nextest`, the 1.88 toolchain, the `wasm32` / `thumbv7em` targets) makes
-its stage FAIL loudly — run `just setup` and `rustup toolchain install 1.88`
+`cargo-nextest`, the 1.94 toolchain, the `wasm32` / `thumbv7em` targets) makes
+its stage FAIL loudly — run `just setup` and `rustup toolchain install 1.94`
 first. The granular recipes still exist and CI runs them directly:
 
 ```sh
@@ -167,7 +167,7 @@ Cadence expectations:
   ```text
   chore(deps): refresh workspace dependencies
 
-  Bump every workspace requirement to the latest version the MSRV-1.88
+  Bump every workspace requirement to the latest version the MSRV-1.94
   resolver allows.
 
   kec-1

@@ -288,20 +288,20 @@ clean:
 # ---------------------------------------------------------------------------
 
 # THE GATE — the complete, CI-equivalent barrier: a green gate means CI passes.
-# Runs every check CI runs (lint-all + test-all + MSRV 1.88 + cov-all + doc +
+# Runs every check CI runs (lint-all + test-all + MSRV 1.94 + cov-all + doc +
 # cross builds + deny) as compact PASS/FAIL lines; full output for failed stages,
 # or everything with `VERBOSE=1 just gate`. There is NO silent skip: a missing
-# tool or target (taplo, typos, markdownlint, cargo-llvm-cov, the 1.88 toolchain,
+# tool or target (taplo, typos, markdownlint, cargo-llvm-cov, the 1.94 toolchain,
 # the wasm32 / thumbv7em targets) makes its stage FAIL loudly — run `just setup`
-# (and `rustup toolchain install 1.88`) first. `just check-all` is the fast loop.
+# (and `rustup toolchain install 1.94`) first. `just check-all` is the fast loop.
 # Complete CI-equivalent barrier — a green gate means CI passes; run before push.
 gate:
     #!/usr/bin/env bash
     set -uo pipefail
-    names=("lint-all" "test-all" "msrv(1.88)" "cov-all" "doc" "build-nostd" "build-wasm" "build-wasm-snap" "deny")
+    names=("lint-all" "test-all" "msrv(1.94)" "cov-all" "doc" "build-nostd" "build-wasm" "build-wasm-snap" "deny")
     cmds=("just lint-all"
           "just test-all"
-          "cargo +1.88 nextest run --workspace && cargo +1.88 test --workspace --doc --quiet"
+          "cargo +1.94 nextest run --workspace && cargo +1.94 test --workspace --doc --quiet"
           "just cov-all"
           "just doc"
           "just build-nostd"

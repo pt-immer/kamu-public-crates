@@ -23,7 +23,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 publish = true
 repository = "https://github.com/pt-immer/kamu-public-crates"
-rust-version = "1.88"
+rust-version = "1.94"
 
 [workspace.dependencies]
 # --- kamu-iso3166 ---
@@ -43,10 +43,11 @@ console_error_panic_hook = "0.1.7"
 opentelemetry = { version = "0.32", default-features = false }
 opentelemetry-otlp = { version = "0.32", default-features = false }
 opentelemetry_sdk = { version = "0.32", default-features = false }
-# `time` is what sets the workspace MSRV: 0.3.46 raised time's own MSRV to
-# rustc 1.88, which is why this workspace is 1.88. The floor must also stay at
-# or above 0.3.47 — the fix for RUSTSEC-2026-0009 (RFC 2822 stack-exhaustion
-# DoS) — and keeps the `wasm-bindgen` feature kamu-logging's wasm32 path needs.
+# `time` no longer sets the workspace MSRV — `sqlx` 0.9 does, declaring
+# rust-version 1.94.0, and kamu-money-core's `sqlx` feature pulls it in. The
+# floor here must still stay at or above 0.3.47 — the fix for RUSTSEC-2026-0009
+# (RFC 2822 stack-exhaustion DoS) — and keeps the `wasm-bindgen` feature
+# kamu-logging's wasm32 path needs.
 time = "0.3.54"
 tracing = "0.1"
 tracing-actix-web = "0.7"

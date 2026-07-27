@@ -29,7 +29,7 @@ while iterating, but run `just gate` before you push.
 or the raw commands — see the [`Justfile`](Justfile). The PR pipeline
 (`on-pr-synced.yml`) runs rustfmt, clippy (`-D warnings -D clippy::all`
 workspace-wide, plus `-D clippy::pedantic` for `kamu-iso3166`), tests on
-`stable` and the `1.88` MSRV, a `no_std` cross-compile, docs, `cargo-deny`,
+`stable` and the `1.94` MSRV, a `no_std` cross-compile, docs, `cargo-deny`,
 per-crate `publish --dry-run`, a `wasm32` build, Markdown/TOML/spelling lint,
 and coverage (`kamu-iso3166` ≥ 98% lines, `kamu-logging` ≥ 70%,
 `kamu-snap-crypto` ≥ 70%, `kamu-snap-response` ≥ 70%).
@@ -58,7 +58,7 @@ from the final paragraph:
 ```text
 chore(deps): refresh workspace dependencies
 
-Bump every workspace requirement to the latest version the MSRV-1.88
+Bump every workspace requirement to the latest version the MSRV-1.94
 resolver allows.
 
 kec-1
