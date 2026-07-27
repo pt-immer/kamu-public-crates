@@ -4,7 +4,7 @@
 //! compile error rather than a runtime one, and a `Money<USD>` is exactly 16 bytes.
 //!
 //! `+` and `-` cannot round. Division can, and it returns a [`Division`] that will not give up
-//! its quotient until you say what happens to the [`Residue`]. See `specs.md` for the
+//! its quotient until you say what happens to the [`Residue`]. See `DESIGN.md` for the
 //! measurements that produced this design — in particular why `rust_decimal` is absent.
 // Enables the per-item "Available on crate feature ..." banners on docs.rs. Nightly-only,
 // hence cfg_attr: a stable build simply does not see it.
@@ -21,7 +21,7 @@
 // enabled wholesale: `restriction` is self-contradictory by design (it exists to be sampled)
 // and `nursery` is under development. Denying either group would let a toolchain upgrade break
 // every local build for reasons unrelated to this code. Naming the lints gets the benefit
-// without importing that instability. (specs.md C10)
+// without importing that instability. (DESIGN.md C10)
 #![deny(
     clippy::arithmetic_side_effects,
     clippy::as_conversions,

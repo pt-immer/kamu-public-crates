@@ -1,4 +1,4 @@
-//! The serde wire. (specs.md C7)
+//! The serde wire. (DESIGN.md C7)
 //!
 //! Feature-gated behind `serde`, **default off** — turning it on only adds trait impls.
 //!

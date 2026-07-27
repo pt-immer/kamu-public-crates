@@ -270,7 +270,7 @@ fn emit(currencies: &BTreeMap<String, Currency>) -> TokenStream {
             // The ONE permitted `as` in the crate. The enum is `#[repr(u16)]` with explicit
             // discriminants, so this reads the discriminant exactly -- it does not narrow a
             // value, and cannot lose one. `mem::discriminant` returns an opaque type and cannot
-            // produce the number, so there is no non-`as` alternative. (specs.md C10)
+            // produce the number, so there is no non-`as` alternative. (DESIGN.md C10)
             #[allow(clippy::as_conversions)]
             #[must_use]
             pub const fn numeric(self) -> u16 { self as u16 }

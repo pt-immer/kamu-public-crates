@@ -1,4 +1,4 @@
-//! Every public way to build a `Rate`, shown to refuse a non-positive one. (H1; specs.md C6)
+//! Every public way to build a `Rate`, shown to refuse a non-positive one. (H1; DESIGN.md C6)
 //!
 //! # Why a whole file, when one constructor owns the rule
 //!

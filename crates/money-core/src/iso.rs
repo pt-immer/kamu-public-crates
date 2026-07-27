@@ -52,7 +52,7 @@ mod tests {
         assert_eq!(Iso4217::JPY.exponent(), Some(0));
         assert_eq!(Iso4217::KWD.exponent(), Some(3), "Kuwaiti dinar has 3 minor digits");
         // IDR is 2 per ISO 4217 even though sen are extinct in practice. Display dp
-        // (0) lives in LocalePolicy and is NOT this number. (specs.md C2)
+        // (0) lives in LocalePolicy and is NOT this number. (DESIGN.md C2)
         assert_eq!(Iso4217::IDR.exponent(), Some(2));
     }
 

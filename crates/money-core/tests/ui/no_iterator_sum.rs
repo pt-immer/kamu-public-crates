@@ -3,7 +3,7 @@
 // depend on iteration order (and, in PostgreSQL, on the query plan). The crate removed the
 // impl on purpose; the replacement is the fallible `Money::try_sum`, which accumulates wide
 // and checks the domain once. This pins the removal so it cannot be reintroduced by reflex.
-// (specs.md R2-F4)
+// (DESIGN.md R2-F4)
 
 use kamu_money_core::iso::USD;
 use kamu_money_core::money::Money;

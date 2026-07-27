@@ -1,4 +1,4 @@
-//! `postgres-types` adapters: money in a column, as the canonical text form. (specs.md C9)
+//! `postgres-types` adapters: money in a column, as the canonical text form. (DESIGN.md C9)
 //!
 //! # Why text, and not `numeric`
 //!

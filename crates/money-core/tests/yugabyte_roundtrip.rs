@@ -1,4 +1,4 @@
-//! Money through **YugabyteDB**, over the same canonical text form. (specs.md C9, E15)
+//! Money through **YugabyteDB**, over the same canonical text form. (DESIGN.md C9, E15)
 //!
 //! # What this file covers, and what it does NOT
 //!

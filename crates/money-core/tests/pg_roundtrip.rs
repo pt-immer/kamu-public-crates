@@ -1,4 +1,4 @@
-//! Money through a real PostgreSQL, over the canonical text form. (specs.md C9)
+//! Money through a real PostgreSQL, over the canonical text form. (DESIGN.md C9)
 //!
 //! # Why `testcontainers` and not a script
 //!

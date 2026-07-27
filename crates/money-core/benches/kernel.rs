@@ -2,7 +2,7 @@
 //!
 //! # Why this exists
 //!
-//! E20 measured these numbers and then threw the measurement code away, which left `specs.md`
+//! E20 measured these numbers and then threw the measurement code away, which left `DESIGN.md`
 //! §1 saying *"reproduce before trusting"* directly above an entry nobody could reproduce. An
 //! external review called that out and was right: one run's observations on one host are a
 //! reason to decide query shape and batching, not auditable facts. This is the fixture that

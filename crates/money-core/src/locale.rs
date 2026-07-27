@@ -1,4 +1,4 @@
-//! The display form: symbol, grouping, and a **minimum** fraction width. (specs.md C2, §6)
+//! The display form: symbol, grouping, and a **minimum** fraction width. (DESIGN.md C2)
 //!
 //! # Why this is not `Display`
 //!
@@ -45,7 +45,7 @@
 //! that rots silently. Build a [`LocalePolicy`] from whatever CLDR/ICU source the application
 //! already carries.
 //!
-//! **No accounting parentheses, no `NegativeStyle`.** §6 scopes this to symbol, grouping and
+//! **No accounting parentheses, no `NegativeStyle`.** C2 scopes this to symbol, grouping and
 //! minimum width, and §0.3 admits complexity only where it deletes a demonstrable failure. A
 //! leading `-` is unambiguous and correct; `(1,234.50)` is a preference. It was considered and
 //! cut, which is the same call that deleted `to_minor_units()` and `StaticCurrency::EXP`.
@@ -97,7 +97,7 @@ pub enum SymbolPosition {
 /// `LocalePolicy<'a>` fixes that at no cost to the shipped constants, which are simply
 /// `LocalePolicy<'static>` and still `const`. There is deliberately no owned or `Cow` form: no
 /// consumer needs one yet, and adding one before there is a real caller would be inventing an
-/// API to sit beside a working one. (specs.md C2)
+/// API to sit beside a working one. (DESIGN.md C2)
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct LocalePolicy<'a> {
     currency: Iso4217,

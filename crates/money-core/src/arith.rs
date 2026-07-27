@@ -129,7 +129,7 @@ impl<C: StaticCurrency> Money<C> {
 ///
 /// This is the ONE definition of `Money`/`kmoney` addition at the units level: both
 /// [`Money::checked_add`] and `kamu-money-pg`'s `kmoney_add` delegate here, so a change to the
-/// semantics reaches the Rust and the SQL surface together (C9 / specs.md §0.1).
+/// semantics reaches the Rust and the SQL surface together (C9 / DESIGN.md §0.1).
 #[inline]
 #[must_use]
 pub const fn add_units(a: i128, b: i128) -> Option<i128> {
@@ -376,7 +376,7 @@ impl<C: StaticCurrency> Money<C> {
     ///
     /// The bundle is the enforcement. `let (share, _) = …` no longer compiles, because there
     /// is no tuple to destructure, and dropping an undecided `Division` is safe — nothing was
-    /// handed out, so nothing left the ledger. (specs.md C5)
+    /// handed out, so nothing left the ledger. (DESIGN.md C5)
     ///
     /// This is **not** how you split a payment N ways: these shares will not sum back to the
     /// whole. Use [`Money::allocate`] for that.
@@ -443,7 +443,7 @@ mod tests {
 
     #[test]
     fn checked_add_refuses_domain_overflow_loudly() {
-        // The Decimal design returned Some() here after silently dropping a digit. (specs.md E3)
+        // The Decimal design returned Some() here after silently dropping a digit. (DESIGN.md E3)
         assert_eq!(m(DOMAIN_MAX).checked_add(m(1)), None);
         assert_eq!(m(-DOMAIN_MAX).checked_sub(m(1)), None);
     }

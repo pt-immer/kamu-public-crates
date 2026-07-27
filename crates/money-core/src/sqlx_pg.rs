@@ -1,4 +1,4 @@
-//! `sqlx` adapters for PostgreSQL: the same canonical text form as [`crate::pg`]. (specs.md C9)
+//! `sqlx` adapters for PostgreSQL: the same canonical text form as [`crate::pg`]. (DESIGN.md C9)
 //!
 //! Deliberately a thin restatement of the same three moves — render on the way out, parse on
 //! the way in, refuse anything that is not a text column. There is no second codec here, and

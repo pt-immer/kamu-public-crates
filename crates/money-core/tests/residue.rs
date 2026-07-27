@@ -48,7 +48,7 @@ fn dropping_an_unabsorbed_residue_panics_in_every_profile() {
 ///
 /// This is the change that makes the drop-bomb a backstop instead of the only enforcement.
 /// The tuple was the defect: two values can be separated, so the second one needed policing.
-/// One value cannot be, so the obligation travels with the money. (specs.md C5)
+/// One value cannot be, so the obligation travels with the money. (DESIGN.md C5)
 #[test]
 fn a_division_cannot_yield_its_quotient_without_a_decision() {
     let ten = || Money::<USD>::from_units(10_000_000_000_000_000_000).unwrap();

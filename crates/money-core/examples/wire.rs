@@ -63,7 +63,7 @@ fn main() {
         Ok(m) => println!("  unexpectedly accepted: {m}"),
         Err(e) => println!("  19 decimal places -> {e}"),
     }
-    println!("  ^ rust_decimal's from_str returned Ok here and rounded silently (specs.md E2)");
+    println!("  ^ rust_decimal's from_str returned Ok here and rounded silently (DESIGN.md E2)");
 
     println!("\n== binary: the ISO NUMERIC, never the variant's position ==");
     println!("  postcard(Iso4217::IDR)  = {:?}", postcard::to_allocvec(&Iso4217::IDR).expect("ok"));

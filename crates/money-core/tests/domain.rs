@@ -31,7 +31,7 @@ proptest! {
     #[test]
     fn prop_add_never_rounds(a in -DOMAIN_MAX/2..=DOMAIN_MAX/2, b in -DOMAIN_MAX/2..=DOMAIN_MAX/2) {
         // Halving the range keeps the sum in-domain, so this is total.
-        // The claim: the result is the EXACT integer sum. No scale games. (contrast specs.md E3)
+        // The claim: the result is the EXACT integer sum. No scale games. (contrast DESIGN.md E3)
         let s = Money::<USD>::from_units(a).unwrap() + Money::<USD>::from_units(b).unwrap();
         prop_assert_eq!(s.units(), a + b);
     }

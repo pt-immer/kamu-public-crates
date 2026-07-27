@@ -5,7 +5,7 @@
 // This case exists because the pattern it forbids is the one a developer actually reaches for,
 // AND the one rustc recommends: `#[must_use]` does not survive `let (share, _) = ...`, and the
 // compiler suggests the `_` prefix that defeats it. That combination used to be guarded only by
-// a runtime panic in `Drop`. Now it does not build. (specs.md C5)
+// a runtime panic in `Drop`. Now it does not build. (DESIGN.md C5)
 
 use core::num::NonZeroU32;
 use kamu_money_core::iso::USD;

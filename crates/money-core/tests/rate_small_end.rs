@@ -1,4 +1,4 @@
-//! The small end of `Rate`, measured. (specs.md C6)
+//! The small end of `Rate`, measured. (DESIGN.md C6)
 //!
 //! At `SCALE = 18` a rate is a count of `1e-18`, so a rate of magnitude `1e-13` has only
 //! `1e5 = 100000` units behind it — five decimal digits of headroom, not the eighteen the

@@ -64,7 +64,7 @@ fn scale_usize() -> usize {
 pub(crate) fn fixed_point_parts(units: i128, min_dp: usize) -> (bool, String, String) {
     // `unsigned_abs` rather than `abs`: i128::MIN has no positive counterpart, and while it is
     // outside the domain, a Display impl must not be the thing that panics on a corrupted
-    // value. (specs.md E7)
+    // value. (DESIGN.md E7)
     let magnitude = units.unsigned_abs();
     let whole = magnitude.checked_div(SCALE_U128).expect("SCALE_U128 is 10^18, never zero");
     let frac = magnitude.checked_rem(SCALE_U128).expect("SCALE_U128 is 10^18, never zero");

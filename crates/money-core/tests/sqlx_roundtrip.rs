@@ -1,5 +1,5 @@
 //! Money through `sqlx`, and the cross-driver agreement that makes "one codec" testable.
-//! (specs.md C9)
+//! (DESIGN.md C9)
 //!
 //! The round-trip half is the same contract `pg_roundtrip.rs` asserts for `postgres-types`. The
 //! part that could not be tested until both existed is the **differential**: a value written by
@@ -76,7 +76,7 @@ async fn a_row_cannot_be_read_as_the_wrong_currency() {
     assert_eq!(row.get::<Money<IDR>, _>(0), idr);
 }
 
-/// The **fifth ingress** for `Rate`'s positivity rule (H1; specs.md C6).
+/// The **fifth ingress** for `Rate`'s positivity rule (H1; DESIGN.md C6).
 ///
 /// The other four — raw constructor, text parser, and serde's two forms — are proven offline in
 /// `rate_ingress.rs`, along with `postgres-types`, whose `FromSql` is a pure function of bytes

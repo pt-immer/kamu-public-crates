@@ -9,17 +9,17 @@ use core::marker::PhantomData;
 ///
 /// Scale is **fixed at 18 and structural** — it is not a field, so it cannot drift.
 /// Invariant: `|units| <= DOMAIN_MAX`. The raw `i128` is never publicly reachable;
-/// a caller holding one could reintroduce an unchecked construction path. (specs.md C1)
+/// a caller holding one could reintroduce an unchecked construction path. (DESIGN.md C1)
 pub struct Money<C: StaticCurrency> {
     units: i128,
     // The currency lives entirely in the type. `C` is a ZST, so this costs nothing and a
     // `Money<USD>` is exactly an i128. There is no runtime tag because there is no runtime
-    // currency — see `currency.rs` for why that variant was deleted. (specs.md C1, C3)
+    // currency — see `currency.rs` for why that variant was deleted. (DESIGN.md C1, C3)
     _c: PhantomData<C>,
 }
 
 // Hand-written, NOT derived: `#[derive(Clone)]` emits `impl<C: CurrencyRepr + Clone>`,
-// bounding C when the bound belongs on C::Tag. (specs.md E11)
+// bounding C when the bound belongs on C::Tag. (DESIGN.md E11)
 impl<C: StaticCurrency> Clone for Money<C> {
     fn clone(&self) -> Self {
         *self
@@ -43,7 +43,7 @@ impl<C: StaticCurrency> Eq for Money<C> {}
 // There is NO cross-currency question here, and that is the whole reason these are safe to
 // provide. `Money<USD>` and `Money<IDR>` are different types, so `a < b` can only ever compare
 // two amounts of the same currency; the comparison is total and means what it looks like.
-// (specs.md F2 leaves ordering open for the SQL type, where a column CAN hold mixed
+// (DESIGN.md F2 leaves ordering open for the SQL type, where a column CAN hold mixed
 // currencies and "which is larger" genuinely has no answer. That question does not reach
 // Rust, and the two must not be conflated.)
 //
@@ -157,7 +157,7 @@ mod tests {
 
     /// The compile-time currency is FREE: a `Money<USD>` is exactly an `i128`.
     ///
-    /// specs.md E8 measured `Money<Dyn>` at 32 bytes — double, because `i128`'s 16-byte
+    /// DESIGN.md E8 measured `Money<Dyn>` at 32 bytes — double, because `i128`'s 16-byte
     /// alignment padded a 2-byte tag out to a full 16. That variant is gone, so the 2x is no
     /// longer a cost anyone pays. This pins the property that outlived it.
     #[test]
@@ -169,7 +169,7 @@ mod tests {
     /// 10.5 and 10.500 are literally the same `i128` — normalization is not hard to get right
     /// here, it does not exist. Demonstrating that requires reaching the value by DIFFERENT
     /// routes; an earlier version of this test built it twice the same way and asserted
-    /// equality, which any `Eq` impl passes. (specs.md C1)
+    /// equality, which any `Eq` impl passes. (DESIGN.md C1)
     #[test]
     fn the_same_amount_reached_by_different_routes_is_the_same_value() {
         let direct = Money::<USD>::from_units(10_500_000_000_000_000_000).unwrap();

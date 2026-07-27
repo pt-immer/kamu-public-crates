@@ -4,7 +4,7 @@ use core::fmt;
 
 use crate::iso::Iso4217;
 
-/// Fractional digits. Fixed, structural, not a field — so it cannot drift. (specs.md C1)
+/// Fractional digits. Fixed, structural, not a field — so it cannot drift. (DESIGN.md C1)
 ///
 /// **18, and the same 18 for every fixed-point type in this crate — money and rates alike.**
 /// Not because money needs 18 fractional digits: the deepest real minor unit is 3dp (BHD, KWD)
@@ -29,7 +29,7 @@ pub const POW10_SCALE: i128 = 10i128.pow(SCALE);
 ///
 /// `NUMERIC(36,18)` admits `|v| < 10^18` with 18 fractional digits, i.e. `< 10^36` units.
 /// `i128::MAX` is ~1.7e38, leaving a ~170x margin. That margin is not waste: it is what
-/// lets every operation compute first and range-check after, with no wrapping. (specs.md C1)
+/// lets every operation compute first and range-check after, with no wrapping. (DESIGN.md C1)
 ///
 /// This constant counts **units**, so it does not move with [`SCALE`]: the same `10^36 - 1`
 /// and the same ~170x margin hold at 12 or at 18. Only where the decimal point sits changes,
@@ -124,7 +124,7 @@ pub enum MoneyError {
     // `WrongCurrency` was deleted at the same time and came back one commit later, for the
     // text parser above. That is the `#[non_exhaustive]` bet paying out exactly as argued:
     // dropping a variant with no caller cost nothing, and re-adding it when a real caller
-    // appeared was additive rather than breaking. (specs.md §0.3, C3)
+    // appeared was additive rather than breaking. (DESIGN.md §0.3, C3)
     /// An FX conversion left the domain.
     ///
     /// Names the **pair**, not the attempted value, and that is deliberate: the attempted
@@ -151,7 +151,7 @@ pub enum MoneyError {
     /// Separate from [`DomainOverflow`](Self::DomainOverflow) because the two are different
     /// mistakes: an out-of-domain rate is a magnitude bug, while a non-positive one is
     /// usually a feed that has handed over a spread, a delta, or a not-quoted sentinel.
-    /// (specs.md C6)
+    /// (DESIGN.md C6)
     NonPositiveRate {
         /// The value that was attempted, in canonical units.
         attempted_units: i128,
@@ -254,7 +254,7 @@ mod tests {
     /// PROVENANCE, stated precisely because it changed twice.
     ///
     /// PostgreSQL 18.4 was first measured saying, verbatim, *"A field with precision 36, scale
-    /// 12 must round to an absolute value less than 10^24"* (specs.md E9), against
+    /// 12 must round to an absolute value less than 10^24"* (DESIGN.md E9), against
     /// `numeric(36,12)`. The `10^18` here was that rule applied to scale 18 — a derivation,
     /// not a quote — and this comment used to say so, adding that confirming it was an open
     /// item for phase 4.
@@ -271,7 +271,7 @@ mod tests {
         assert_eq!(
             pg_integer_bound,
             10i128.pow(18),
-            "derived, and since measured against a live PostgreSQL 18.4 (specs.md E13)"
+            "derived, and since measured against a live PostgreSQL 18.4 (DESIGN.md E13)"
         );
         assert_eq!(DOMAIN_MAX + 1, pg_integer_bound * POW10_SCALE);
     }

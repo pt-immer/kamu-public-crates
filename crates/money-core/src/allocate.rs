@@ -56,7 +56,7 @@ pub fn allocate_units(units: i128, weights: &[u32]) -> Result<Vec<i128>, MoneyEr
 
     for &w in weights {
         // I256 IS REQUIRED. At the domain top this product is ~1e36 * 4.3e9 = 4.3e45,
-        // which overflows i128 (max 1.7e38). Verified in specs.md E11.
+        // which overflows i128 (max 1.7e38). Verified in DESIGN.md E11.
         let num = I256::from(units)
             .checked_mul(I256::from(i128::from(w)))
             .expect("|units * w| <= 4.3e45, ~31 orders of magnitude below I256::MAX");

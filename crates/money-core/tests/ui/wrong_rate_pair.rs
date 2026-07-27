@@ -4,7 +4,7 @@
 //
 // This is the claim that makes `Rate<Base, Quote>` worth having over `AnyRate`. If it ever
 // holding, every typed conversion in every downstream crate would silently become unchecked,
-// and no runtime test in this crate could notice. (specs.md C6)
+// and no runtime test in this crate could notice. (DESIGN.md C6)
 
 use kamu_money_core::iso::{EUR, IDR, USD};
 use kamu_money_core::money::Money;

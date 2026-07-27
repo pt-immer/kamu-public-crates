@@ -3,7 +3,7 @@
 //! Render at 18dp, strip trailing zeros, **stop at the currency's ISO settlement exponent**.
 //! Never round — padding is the only thing it adds, so §0.1's "display pads, never rounds"
 //! holds. Parse is liberal: any exact decimal is accepted, so the round trip is a
-//! **retraction** (`parse(render(v)) == v`) and not a bijection. (specs.md C7)
+//! **retraction** (`parse(render(v)) == v`) and not a bijection. (DESIGN.md C7)
 
 use kamu_money_core::domain::{DOMAIN_MAX, MoneyError, POW10_SCALE};
 use kamu_money_core::iso::{IDR, JPY, KWD, USD, XAU};

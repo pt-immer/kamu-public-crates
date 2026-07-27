@@ -1,4 +1,4 @@
-//! FX conversion: rates, and the money that passes through them. (specs.md C6)
+//! FX conversion: rates, and the money that passes through them. (DESIGN.md C6)
 
 use crate::currency::StaticCurrency;
 use crate::domain::{MoneyError, POW10_SCALE, in_domain};
@@ -95,7 +95,7 @@ fn apply_rate_pair(units: i128, first: i128, second: i128, mode: Rounding) -> Op
 /// There is deliberately no `inverse()` and no `compose()`: real FX has bid and ask, so
 /// inverting or composing mid-rates fabricates a price nobody can trade at. Every pair is
 /// stored in both directions; multi-leg conversion is [`Money::convert_via`], which rounds
-/// once. (specs.md C6)
+/// once. (DESIGN.md C6)
 pub struct Rate<Base: StaticCurrency, Quote: StaticCurrency> {
     units: i128,
     // `Money<C>` proves it uses `C` through a real field (`tag: C::Tag`). `Rate` has no such
@@ -197,7 +197,7 @@ impl<C: StaticCurrency> Money<C> {
     /// would train every caller of the crate's most common operation to reflexively write
     /// `let (m, _) = ...`, and that reflex carries to [`Money::div_int`], where the residue is
     /// real money. The loss here is real but **unrepresentable** — below `1e-18` of a currency
-    /// unit — so there is nothing to hand back. (specs.md C6)
+    /// unit — so there is nothing to hand back. (DESIGN.md C6)
     ///
     /// There is deliberately **no `impl Mul`**: an operator that fails on ordinary input is a
     /// lie, and this one does — `USD -> ZWL` at the 2008 rate leaves the domain at a $100 000
@@ -231,7 +231,7 @@ impl<C: StaticCurrency> Money<C> {
     /// can express. It is a **ledger** requirement: two sequential conversions materialise a
     /// `Money<Bridge>` balance the holder never held, quantising it to a whole canonical unit on the
     /// way through. `convert_via` never creates that balance, so there is no moment at which a
-    /// party appears to hold a currency they do not. (specs.md C6)
+    /// party appears to hold a currency they do not. (DESIGN.md C6)
     ///
     /// This is also what callers reaching for a `compose()` actually want. Composing two
     /// mid-rates would fabricate a third that cannot be traded at, and its error grows
@@ -295,7 +295,7 @@ mod tests {
     /// What changed is the condition the original decision named for revisiting itself: *"if a
     /// feed is ever ingested without validation."* Four such feeds ship in this crate. So the
     /// two values below are now refused at construction, and neither conversion is reachable
-    /// to test at all. (specs.md C6)
+    /// to test at all. (DESIGN.md C6)
     #[test]
     fn a_zero_or_negative_rate_is_refused_at_construction() {
         assert_eq!(
@@ -345,7 +345,7 @@ mod tests {
     /// intermediate is half a unit, which the ledger cannot express, so a sequential
     /// conversion quantises it to zero and the second leg multiplies nothing by two. Via,
     /// `0.5 * 2 == 1` exactly and the unit survives — because no `Money<EUR>` balance the
-    /// holder never held is ever created. (specs.md C6)
+    /// holder never held is ever created. (DESIGN.md C6)
     ///
     /// Mutation-check: make `convert_via` call `convert` twice; this test must go red.
     #[test]
@@ -365,7 +365,7 @@ mod tests {
     /// `convert_via`'s second `checked_mul` is the one that can genuinely overflow, and
     /// rejecting is CORRECT rather than conservative: an in-domain result implies
     /// `m*r1*r2 <= 1e72 < I256::MAX`, so anything that overflows would have left the domain
-    /// anyway. (specs.md C6)
+    /// anyway. (DESIGN.md C6)
     #[test]
     fn convert_via_refuses_a_product_that_cannot_fit_the_intermediate() {
         let m = Money::<USD>::from_units(DOMAIN_MAX).unwrap();
@@ -380,7 +380,7 @@ mod tests {
 
     /// Domain overflow in a conversion is a CONDITION, not a bug — which is why `convert`
     /// returns `Result` and there is no `impl Mul`. Measured: `USD -> ZWL` at the 2008 rate
-    /// leaves the domain at a $100 000 balance. (specs.md C6)
+    /// leaves the domain at a $100 000 balance. (DESIGN.md C6)
     ///
     /// Both gates must report the same thing, and that is the point of this test: the
     /// quotient can be too big for `DOMAIN_MAX` while still fitting `i128`, or too big for

@@ -24,7 +24,7 @@ use core::marker::PhantomData;
 /// | `m.div_int(3, mode);` | `#[must_use]` warns | `#[must_use]` warns |
 /// | dropped mid-unwind | silent loss — C5's "one hole" | nothing was produced |
 ///
-/// (specs.md C5)
+/// (DESIGN.md C5)
 #[must_use = "a Division holds money. Decide the residue: .take_residue() or .discard_deliberately()."]
 pub struct Division<C: StaticCurrency> {
     quotient: i128,
@@ -151,7 +151,7 @@ impl<C: StaticCurrency> Division<C> {
 ///
 /// The last row is why this type keeps its bomb: once you have deliberately taken the residue
 /// out of the bundle, it is a free-standing value again and Rust has no linear types to stop
-/// you dropping it. That limit is documented rather than papered over. (specs.md C5)
+/// you dropping it. That limit is documented rather than papered over. (DESIGN.md C5)
 #[must_use = "this residue is MONEY. absorb it: .take_units() and post it, add it back, or .discard_deliberately()."]
 pub struct Residue<C: StaticCurrency> {
     units: i128,
@@ -163,7 +163,7 @@ impl<C: StaticCurrency> Residue<C> {
     /// Create a residue.
     ///
     /// `pub`, not `pub(crate)`: this crate's own lossy operations are not the only source.
-    /// specs.md's adapter pattern — `quantize(dp, mode) -> (Money, Residue)` "at the adapter"
+    /// DESIGN.md's adapter pattern — `quantize(dp, mode) -> (Money, Residue)` "at the adapter"
     /// — has code outside `kamu-money-core` (a wire/Postgres boundary, say) minting a `Residue` too,
     /// so the constructor cannot be crate-private without also blocking that. That it also lets
     /// tests build one directly is a consequence of this, not the reason for it.

@@ -1,6 +1,6 @@
 // Adding two different compile-time currencies must be a COMPILE error, not a runtime one.
 // `impl Add for Money<C>` is homogeneous — `Money<USD> + Money<IDR>` has no impl to find.
-// This is the headline claim of the whole Money<C> design. (specs.md C3/C4)
+// This is the headline claim of the whole Money<C> design. (DESIGN.md C3/C4)
 
 use kamu_money_core::iso::{IDR, USD};
 use kamu_money_core::money::Money;

@@ -15,7 +15,7 @@ use ethnum::I256;
 pub enum Rounding {
     /// Ties to even. Unbiased across many roundings; the IEEE-754 default.
     HalfEven,
-    /// Ties away from zero. **This is what PostgreSQL's `round()` does** (specs.md E9),
+    /// Ties away from zero. **This is what PostgreSQL's `round()` does** (DESIGN.md E9),
     /// and what many tax authorities mandate.
     HalfAwayFromZero,
     /// Ties toward zero.
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn half_away_from_zero_matches_postgres() {
-        // PG measured: round(0.5)=1 round(1.5)=2 round(2.5)=3 round(3.5)=4. (specs.md E9)
+        // PG measured: round(0.5)=1 round(1.5)=2 round(2.5)=3 round(3.5)=4. (DESIGN.md E9)
         assert_eq!(q(1, 2, Rounding::HalfAwayFromZero), 1);
         assert_eq!(q(3, 2, Rounding::HalfAwayFromZero), 2);
         assert_eq!(q(5, 2, Rounding::HalfAwayFromZero), 3);
@@ -173,7 +173,7 @@ mod tests {
     }
 
     /// THE conservation invariant, at the primitive level: whatever rounding moved,
-    /// the residue holds. Verified exhaustively over ~2500 combinations. (specs.md C5)
+    /// the residue holds. Verified exhaustively over ~2500 combinations. (DESIGN.md C5)
     #[test]
     fn residue_identity_holds_for_every_mode() {
         for n in -25i128..=25 {

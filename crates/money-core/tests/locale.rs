@@ -1,5 +1,5 @@
 //! `LocalePolicy`: the display form, and the proof it cannot become a second number.
-//! (specs.md C2, §0.1, §6)
+//! (DESIGN.md C2, §0.1)
 //!
 //! # What this file is really testing
 //!

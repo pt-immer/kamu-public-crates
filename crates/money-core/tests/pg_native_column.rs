@@ -1,4 +1,4 @@
-//! The native `kmoney` column, read through the Rust drivers. (specs.md C8/C9; review F8)
+//! The native `kmoney` column, read through the Rust drivers. (DESIGN.md C8/C9; review F8)
 //!
 //! # The gap this closes
 //!
@@ -171,7 +171,7 @@ fn postgres_types_reads_a_native_column_through_an_explicit_cast() {
         direct.is_err(),
         "a bare native kmoney column must NOT decode: the adapters accept text-family OIDs only, \
          so `SELECT amount::text` is required. If this ever succeeds, a native codec was added \
-         and specs.md C8 / R2-F5 need revisiting."
+         and DESIGN.md C8 / R2-F5 need revisiting."
     );
 }
 

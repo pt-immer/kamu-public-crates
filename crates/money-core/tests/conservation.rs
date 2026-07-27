@@ -26,7 +26,7 @@ fn allocate_respects_weights() {
 #[test]
 fn allocate_at_the_domain_top_does_not_overflow() {
     // units * weight here is ~4e45, which OVERFLOWS i128 (max 1.7e38).
-    // If this passes, the I256 path is really being used. (specs.md E11)
+    // If this passes, the I256 path is really being used. (DESIGN.md E11)
     let parts = m(DOMAIN_MAX).allocate(&[u32::MAX, 1]);
     let sum: i128 = parts.iter().map(Money::units).sum();
     assert_eq!(sum, DOMAIN_MAX);
