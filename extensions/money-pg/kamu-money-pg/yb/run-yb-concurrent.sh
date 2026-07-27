@@ -22,15 +22,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
-# This script writes fixed paths under kamu-money-pg/yb/out/, so it is one writer among several
-# that must not overlap: a release check reads the very files a hand-started run of this script
-# would overwrite. The lock is re-entrant, so being invoked BY release-check is free.
+# This script writes under ${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}. With KMONEY_RUN_ROOT unset --
+# the default -- that is one tree shared with every other suite, so this is one writer among
+# several that must not overlap: a release check reads the very files a hand-started run of this
+# script would overwrite. Setting KMONEY_RUN_ROOT gives a run its own tree and the contention
+# stops existing rather than being serialised. The lock is re-entrant, so being invoked BY
+# release-check is free.
 # shellcheck source=kamu-money-pg/yb/workspace-lock.sh
 source "$(dirname "$0")/workspace-lock.sh"
 workspace_lock "$(basename "$0")" || exit 1
 
 YB_IMAGE="${1:-$(./kamu-money-pg/yb/yb-image.sh)}"
-ART="${2:-kamu-money-pg/yb/out}"
+ART="${2:-${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}}"
 WORKERS="${3:-8}"
 EACH="${4:-25}"
 ACCOUNTS=10
@@ -52,7 +55,7 @@ yb_cluster_up "$N" "$YB_IMAGE"
 yb_install_extension_on_all "$ART"
 yb_sql 0 -c 'CREATE EXTENSION kmoney' >/dev/null
 
-WORKDIR="kamu-money-pg/yb/out/concurrent"
+WORKDIR="$ART/concurrent"
 mkdir -p "$WORKDIR"
 
 echo

@@ -15,15 +15,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
-# This script writes fixed paths under kamu-money-pg/yb/out/, so it is one writer among several
-# that must not overlap: a release check reads the very files a hand-started run of this script
-# would overwrite. The lock is re-entrant, so being invoked BY release-check is free.
+# This script writes under ${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}. With KMONEY_RUN_ROOT unset --
+# the default -- that is one tree shared with every other suite, so this is one writer among
+# several that must not overlap: a release check reads the very files a hand-started run of this
+# script would overwrite. Setting KMONEY_RUN_ROOT gives a run its own tree and the contention
+# stops existing rather than being serialised. The lock is re-entrant, so being invoked BY
+# release-check is free.
 # shellcheck source=kamu-money-pg/yb/workspace-lock.sh
 source "$(dirname "$0")/workspace-lock.sh"
 workspace_lock "$(basename "$0")" || exit 1
 
 YB_IMAGE="${1:-$(./kamu-money-pg/yb/yb-image.sh)}"
-ART="${2:-kamu-money-pg/yb/out}"
+ART="${2:-${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}}"
 
 # Baked or copied, verified by hash either way -- see install.sh, which sources artifact.sh for the
 # coherent-triplet-by-exact-name rule.
@@ -76,8 +79,8 @@ echo "kmoney present ($YB_INSTALL_MODE, sha256 $YB_INSTALL_SHA); running the cas
 # --server-exec is how 09-wire's crafted BINARY COPY payloads get onto the SERVER's filesystem:
 # kmoney_recv takes `internal`, so COPY (FORMAT BINARY) from a file is the only in-database route
 # to it, and SQL cannot write arbitrary bytes to a file.
-mkdir -p kamu-money-pg/yb/out
-CLIENT_WRAPPER="kamu-money-pg/yb/out/client-$RUN_ID.sh"
+mkdir -p "$ART"
+CLIENT_WRAPPER="$ART/client-$RUN_ID.sh"
 cat > "$CLIENT_WRAPPER" <<EOF
 #!/usr/bin/env bash
 exec docker exec -i $NAME bash -c 'exec bin/ysqlsh -h $HOST -U yugabyte "\$@" 2>&1' ysqlsh "\$@"
@@ -95,4 +98,4 @@ trap 'cleanup; rm -f "$CLIENT_WRAPPER"' EXIT INT TERM HUP
     --client "$CLIENT_WRAPPER" \
     --server-exec "docker exec -i $NAME bash" \
     --label yb-native \
-    --outdir kamu-money-pg/yb/out/regress-yb
+    --outdir "$ART"/regress-yb

@@ -32,6 +32,10 @@ YB_NET=""
 YB_RUN_ID=""
 YB_IMAGE_REF=""
 
+# Node resource caps, defined once for every harness that starts one. See node-limits.sh.
+# shellcheck source=kamu-money-pg/yb/node-limits.sh
+source "$(dirname "${BASH_SOURCE[0]}")/node-limits.sh"
+
 # WHAT COUNTS AS RETRYABLE, in ONE place, for EVERY script that retries a transaction.
 #
 # It was two copies -- one in run-yb-concurrent.sh, one in run-yb-soak.sh -- and they had already
@@ -64,7 +68,7 @@ yb_cleanup() {
         docker rm -f $ids >/dev/null 2>&1 || true
     fi
     [ -n "$YB_NET" ] && docker network rm "$YB_NET" >/dev/null 2>&1
-    [ -n "$YB_RUN_ID" ] && rm -f "kamu-money-pg/yb/out/client-${YB_RUN_ID}-n"*.sh 2>/dev/null
+    [ -n "$YB_RUN_ID" ] && rm -f "${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}/client-${YB_RUN_ID}-n"*.sh 2>/dev/null
     return 0
 }
 
@@ -86,7 +90,7 @@ yb_sql() {
 #     survive being embedded in that string. A file has no quoting problem.
 yb_client_for() {
     local i="$1"
-    local w="kamu-money-pg/yb/out/client-${YB_RUN_ID}-n$i.sh"
+    local w="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}/client-${YB_RUN_ID}-n$i.sh"
     mkdir -p "$(dirname "$w")"
     cat > "$w" <<EOF
 #!/usr/bin/env bash
@@ -130,17 +134,23 @@ yb_cluster_up() {
             # RF=3 is what makes the failover and tablet-movement probes mean anything: with RF=1
             # a node loss is data loss and there is nothing to observe about availability.
             docker run -d --name "$name" --network "$YB_NET" \
+                --memory "$YB_NODE_MEM" --memory-swap "$YB_NODE_MEM" \
                 --label "kamu-money-pg.cluster=${YB_RUN_ID}" \
                 --label "kamu-money-pg.revision=$(git rev-parse --short HEAD 2>/dev/null || echo nogit)" \
                 "$YB_IMAGE_REF" bin/yugabyted start --background=false \
                     --advertise_address="$name" --cloud_location=cloud1.region1.zone"$i" \
+                    --tserver_flags="memory_limit_hard_bytes=$YB_TSERVER_MEM_BYTES" \
+                    --master_flags="memory_limit_hard_bytes=$YB_MASTER_MEM_BYTES" \
                     --fault_tolerance=zone >/dev/null
         else
             docker run -d --name "$name" --network "$YB_NET" \
+                --memory "$YB_NODE_MEM" --memory-swap "$YB_NODE_MEM" \
                 --label "kamu-money-pg.cluster=${YB_RUN_ID}" \
                 --label "kamu-money-pg.revision=$(git rev-parse --short HEAD 2>/dev/null || echo nogit)" \
                 "$YB_IMAGE_REF" bin/yugabyted start --background=false \
                     --advertise_address="$name" --join="$YB_RUN_ID-n0" \
+                    --tserver_flags="memory_limit_hard_bytes=$YB_TSERVER_MEM_BYTES" \
+                    --master_flags="memory_limit_hard_bytes=$YB_MASTER_MEM_BYTES" \
                     --cloud_location=cloud1.region1.zone"$i" --fault_tolerance=zone >/dev/null
         fi
         YB_NODES+=("$name")
@@ -191,7 +201,7 @@ yb_cluster_up() {
 # file exists to surface, and a copy loop that reports success because `docker cp` exited 0 is not
 # evidence that the bytes arrived intact on node 3 of 5.
 yb_install_extension_on_all() {
-    local art="${1:-kamu-money-pg/yb/out}"
+    local art="${1:-${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}}"
     local name first_mode="" first_sha=""
 
     for name in "${YB_NODES[@]}"; do
@@ -263,10 +273,12 @@ yb_read_replica_up() {
     for i in $(seq 0 $((n - 1))); do
         name="$YB_RUN_ID-rr$i"
         docker run -d --name "$name" --network "$YB_NET" \
+            --memory "$YB_NODE_MEM" --memory-swap "$YB_NODE_MEM" \
             --label "kamu-money-pg.cluster=${YB_RUN_ID}" \
             --label "kamu-money-pg.revision=$(git rev-parse --short HEAD 2>/dev/null || echo nogit)" \
             "$image" bin/yugabyted start --background=false \
                 --advertise_address="$name" --join="$YB_RUN_ID-n0" --read_replica \
+                --tserver_flags="memory_limit_hard_bytes=$YB_TSERVER_MEM_BYTES" \
                 --cloud_location="cloud1.region1.${zone}" >/dev/null
         YB_RR_NODES+=("$name")
         echo "cluster: started read replica $name"

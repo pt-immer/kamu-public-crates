@@ -59,7 +59,7 @@ YB_INSTALL_SHA=""
 # across them (see specs.md M-2) -- comparing them would make this a reproducible-builds assertion
 # it has no business making, and would fail for a reason that has nothing to do with the node.
 yb_ensure_extension() {
-    local node="$1" art="${2:-kamu-money-pg/yb/out}"
+    local node="$1" art="${2:-${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}}"
     local want got
 
     if docker exec "$node" test -f "$YB_LIB" 2>/dev/null; then
@@ -141,7 +141,7 @@ yb_restore_extension_on() {
 # build, one set of bytes, and the manifest that comes with them is the one the image verified
 # against itself at build time.
 yb_extract_artifact_from_image() {
-    local image="$1" dir="${2:-kamu-money-pg/yb/out}" cid rc=0
+    local image="$1" dir="${2:-${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}}" cid rc=0
     mkdir -p "$dir"
     # `docker create` without starting: this only needs a filesystem to copy from.
     cid="$(docker create "$image" /bin/true)" || return 1

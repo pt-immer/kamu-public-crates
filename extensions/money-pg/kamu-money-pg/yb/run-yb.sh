@@ -9,9 +9,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
-# This script writes fixed paths under kamu-money-pg/yb/out/, so it is one writer among several
-# that must not overlap: a release check reads the very files a hand-started run of this script
-# would overwrite. The lock is re-entrant, so being invoked BY release-check is free.
+# This script writes under ${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}. With KMONEY_RUN_ROOT unset --
+# the default -- that is one tree shared with every other suite, so this is one writer among
+# several that must not overlap: a release check reads the very files a hand-started run of this
+# script would overwrite. Setting KMONEY_RUN_ROOT gives a run its own tree and the contention
+# stops existing rather than being serialised. The lock is re-entrant, so being invoked BY
+# release-check is free.
 # shellcheck source=kamu-money-pg/yb/workspace-lock.sh
 source "$(dirname "$0")/workspace-lock.sh"
 workspace_lock "$(basename "$0")" || exit 1
@@ -34,6 +37,11 @@ SQLFILE="${4:-kamu-money-pg/yb/abi_battery.sql}"
 # shellcheck source=kamu-money-pg/yb/install.sh
 source ./kamu-money-pg/yb/install.sh
 
+# Node resource caps, the same ones cluster.sh uses. See node-limits.sh for why a container cannot
+# be trusted to size itself.
+# shellcheck source=kamu-money-pg/yb/node-limits.sh
+source ./kamu-money-pg/yb/node-limits.sh
+
 RUN_ID="money-yb-$$-$(od -An -N4 -tx4 /dev/urandom | tr -d ' \n')"
 NAME="$RUN_ID"
 # EXIT is not enough: a kill during the readiness wait would orphan the container,
@@ -43,7 +51,10 @@ trap cleanup EXIT INT TERM HUP
 
 echo "starting YB ($YB_IMAGE) as $NAME ..."
 docker run -d --name "$NAME" --label "kamu-money-pg.ybtest=$RUN_ID" \
-  "$YB_IMAGE" bin/yugabyted start --background=false >/dev/null
+  --memory "$YB_NODE_MEM" --memory-swap "$YB_NODE_MEM" \
+  "$YB_IMAGE" bin/yugabyted start --background=false \
+    --tserver_flags="memory_limit_hard_bytes=$YB_TSERVER_MEM_BYTES" \
+    --master_flags="memory_limit_hard_bytes=$YB_MASTER_MEM_BYTES" >/dev/null
 
 # yugabyted binds YSQL to the node's advertised address, not loopback -- discover it.
 # READINESS IS A QUERY THAT ANSWERED, NOT AN ADDRESS THAT RESOLVED. The guard after this loop

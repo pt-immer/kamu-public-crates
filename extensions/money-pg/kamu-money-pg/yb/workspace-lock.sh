@@ -6,12 +6,14 @@
 #
 # WHY THIS EXISTS. Containers and networks in this repo are well isolated: every suite invents a
 # run ID, brings up its own private network and labels everything it creates, so two suites cannot
-# see each other's nodes. The FILESYSTEM side had no such property. These paths are fixed:
+# see each other's nodes. The FILESYSTEM side had no such property. Every path below now resolves
+# under ${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}, and with that variable UNSET -- the default --
+# they are as fixed as they ever were:
 #
-#   kamu-money-pg/yb/out/{kmoney.so,kmoney.control,kmoney--*.sql}   the extracted triplet
-#   kamu-money-pg/yb/out/out-yb.txt                                 the YB battery output
-#   kamu-money-pg/yb/out/ref/out-pg15.txt                           the stock-PG15 reference
-#   kamu-money-pg/yb/out/regress-yb, regress-cluster-n*, suite-n*.log, concurrent, release-suites
+#   <root>/{kmoney.so,kmoney.control,kmoney--*.sql}   the extracted triplet
+#   <root>/out-yb.txt                                 the YB battery output
+#   <root>/ref/out-pg15.txt                           the stock-PG15 reference
+#   <root>/regress-yb, regress-cluster-n*, suite-n*.log, concurrent, release-suites
 #
 # So two release checks in one checkout could overwrite the extracted triplet between the point it
 # is hashed and the point the manifest records it -- binding node image A to artifact hashes from
@@ -20,16 +22,24 @@
 # generated SQL is not reproducible, so that substitution is possible even when both runs start
 # from the same revision. Nothing here would have raised.
 #
-# A LOCK, NOT RUN-SCOPED PATHS, AND THE TRADE IS DELIBERATE. Threading a per-run work root through
-# artifact extraction, the A/B, three regress runners and the suite logs is the better end state
-# and it is the bigger change: more places to get subtly wrong, in the machinery whose entire job
-# is to not be subtly wrong. A lock makes the failure mode IMPOSSIBLE rather than unlikely, in one
-# place, and it covers a case run-scoping does not: a stray `just yb-ab` started by hand while a
-# release check is running writes the same `out-yb.txt` the release is reading. The cost is that a
-# second release check is refused instead of proceeding independently.
+# WHAT THIS LOCK STILL PROTECTS, AND WHAT IT NO LONGER HAS TO. The paragraph that stood here chose
+# a lock INSTEAD of run-scoped paths, called run-scoping the better end state, and said it would be
+# worth the change once this workspace lived somewhere with real CI. That happened: it is now
+# extensions/money-pg in kamu-public-crates. Every path above resolves from KMONEY_RUN_ROOT, so a
+# caller that sets it writes a tree nobody else touches.
 #
-# When this workspace re-homes into a monorepo with real CI, run-scoped paths become worth the
-# change -- two branches will genuinely want to certify at once. See AGENTS.md.
+# The lock did NOT become redundant, because run-scoping never covered the case it was chosen for:
+# a stray `just yb-ab` started BY HAND, with KMONEY_RUN_ROOT unset, writes the same `out-yb.txt` a
+# release check is reading. The boundary is therefore:
+#
+#   run-scoped, no lock needed   every path above, whenever KMONEY_RUN_ROOT is set
+#   still shared, still locked   those same paths under the DEFAULT root -- anything started by
+#                                hand, or by a recipe that did not set the variable
+#
+# CI needs neither: each job gets a fresh runner with its own checkout, so there is no second
+# writer to exclude. What remains here is a developer-workstation guard, which is what it was
+# actually defending all along. The cost is unchanged and still deliberate -- a second release
+# check sharing the default root is refused rather than proceeding independently.
 #
 # SOURCED, NEVER EXECUTED. A lock is held by an open file descriptor for as long as the holding
 # process lives; a subprocess that takes one and exits has released it before its caller does any
@@ -134,12 +144,17 @@ EOF
         fi
         cat <<'EOF'
 
-These runs share fixed scratch paths under kamu-money-pg/yb/out/ -- the extracted extension
+Both runs are using the DEFAULT scratch root, kamu-money-pg/yb/out/ -- the extracted extension
 triplet, the A/B battery output and its PG15 reference, the regress and cluster and concurrency
 work directories, and the parallel suite logs. Two writers there do not fail loudly; they produce
 one run overwriting output another is mid-way through reading.
 
-Wait for the other run to finish, or use a separate checkout.
+Give this run its own tree instead of waiting:
+
+    KMONEY_RUN_ROOT=kamu-money-pg/yb/out/runs/$(date -u +%Y%m%dT%H%M%SZ)-$$ <your command>
+
+Every path listed above resolves from that variable, so a run that sets it shares nothing and is
+not refused. Waiting for the other run to finish, or using a separate checkout, both still work.
 
 If the pid above is gone and the lock is STILL held, look for its orphaned children: the lock is
 an open file descriptor and every descendant inherits it, so a suite that outlived the script

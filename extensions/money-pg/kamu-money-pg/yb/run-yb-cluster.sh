@@ -19,15 +19,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
-# This script writes fixed paths under kamu-money-pg/yb/out/, so it is one writer among several
-# that must not overlap: a release check reads the very files a hand-started run of this script
-# would overwrite. The lock is re-entrant, so being invoked BY release-check is free.
+# This script writes under ${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}. With KMONEY_RUN_ROOT unset --
+# the default -- that is one tree shared with every other suite, so this is one writer among
+# several that must not overlap: a release check reads the very files a hand-started run of this
+# script would overwrite. Setting KMONEY_RUN_ROOT gives a run its own tree and the contention
+# stops existing rather than being serialised. The lock is re-entrant, so being invoked BY
+# release-check is free.
 # shellcheck source=kamu-money-pg/yb/workspace-lock.sh
 source "$(dirname "$0")/workspace-lock.sh"
 workspace_lock "$(basename "$0")" || exit 1
 
 YB_IMAGE="${1:-$(./kamu-money-pg/yb/yb-image.sh)}"
-ART="${2:-kamu-money-pg/yb/out}"
+ART="${2:-${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}}"
 N=3
 
 # shellcheck source=kamu-money-pg/yb/cluster.sh
@@ -83,11 +86,11 @@ for i in $(seq 0 $((N - 1))); do
             --client "$(yb_client_for "$i")" \
             --server-exec "docker exec -i ${YB_NODES[$i]} bash" \
             --label "cluster-n$i" \
-            --outdir "kamu-money-pg/yb/out/regress-cluster-n$i" > "kamu-money-pg/yb/out/suite-n$i.log" 2>&1; then
-        ok "node $i: suite green ($(grep -c ': ok ' "kamu-money-pg/yb/out/suite-n$i.log") cases)"
+            --outdir "$ART/regress-cluster-n$i" > "$ART/suite-n$i.log" 2>&1; then
+        ok "node $i: suite green ($(grep -c ': ok ' "$ART/suite-n$i.log") cases)"
     else
         bad "node $i: suite FAILED"
-        sed 's/^/        /' "kamu-money-pg/yb/out/suite-n$i.log" | tail -40
+        sed 's/^/        /' "$ART/suite-n$i.log" | tail -40
     fi
 done
 

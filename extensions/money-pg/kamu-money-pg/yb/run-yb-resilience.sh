@@ -21,17 +21,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
-# ONE WRITER AT A TIME, TAKEN BEFORE ANYTHING SHARED IS TOUCHED. This script reads or writes the
-# fixed scratch paths under kamu-money-pg/yb/out/, which every other suite also uses; a 2026-07-26
-# review found several entry points reaching those paths before -- or entirely without -- taking
-# the lock, so a stray run could overwrite the artefact triplet a release was in the middle of
-# hashing. Re-entrant: a suite started by `release-check` inherits the descriptor and proceeds.
+# ONE WRITER AT A TIME, TAKEN BEFORE ANYTHING SHARED IS TOUCHED. This script reads and writes under
+# ${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}, which with that variable unset is the single tree
+# every other suite also uses; a 2026-07-26 review found several entry points reaching those paths
+# before -- or entirely without -- taking the lock, so a stray run could overwrite the artefact
+# triplet a release was in the middle of hashing. Setting KMONEY_RUN_ROOT gives a run its own tree,
+# which removes the contention rather than serialising it; the lock stays for the shared default.
+# Re-entrant: a suite started by `release-check` inherits the descriptor and proceeds.
 # shellcheck source=kamu-money-pg/yb/workspace-lock.sh
 source ./kamu-money-pg/yb/workspace-lock.sh
 workspace_lock "$(basename "$0")" || exit 1
 
 YB_IMAGE="${1:-$(./kamu-money-pg/yb/yb-image.sh)}"
-ART="${2:-kamu-money-pg/yb/out}"
+ART="${2:-${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}}"
 N=3
 
 # shellcheck source=kamu-money-pg/yb/cluster.sh
@@ -163,11 +165,11 @@ if ./kamu-money-pg/tests/pg_regress/run-suite.sh \
         --client "$(yb_client_for 2)" \
         --server-exec "docker exec -i ${YB_NODES[2]} bash" \
         --label resilience \
-        --outdir kamu-money-pg/yb/out/regress-resilience > kamu-money-pg/yb/out/suite-resilience.log 2>&1; then
+        --outdir "$ART"/regress-resilience > "$ART"/suite-resilience.log 2>&1; then
     ok "suite green on the recovered node"
 else
     bad "suite FAILED on the recovered node"
-    tail -40 kamu-money-pg/yb/out/suite-resilience.log | sed 's/^/        /'
+    tail -40 "$ART"/suite-resilience.log | sed 's/^/        /'
 fi
 
 echo

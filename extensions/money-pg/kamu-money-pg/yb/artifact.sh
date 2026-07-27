@@ -50,7 +50,7 @@ YB_ART_VERIFIED=""
 YB_ART_MANIFEST_NAME="ARTIFACT-MANIFEST.txt"
 
 yb_resolve_artifacts() {
-    local dir="${1:-kamu-money-pg/yb/out}"
+    local dir="${1:-${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}}"
 
     if [ ! -d "$dir" ]; then
         echo "artifact: $dir does not exist -- run 'just yb-build' first" >&2

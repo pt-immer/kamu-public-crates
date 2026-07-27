@@ -24,17 +24,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
-# ONE WRITER AT A TIME, TAKEN BEFORE ANYTHING SHARED IS TOUCHED. This script reads or writes the
-# fixed scratch paths under kamu-money-pg/yb/out/, which every other suite also uses; a 2026-07-26
-# review found several entry points reaching those paths before -- or entirely without -- taking
-# the lock, so a stray run could overwrite the artefact triplet a release was in the middle of
-# hashing. Re-entrant: a suite started by `release-check` inherits the descriptor and proceeds.
+# ONE WRITER AT A TIME, TAKEN BEFORE ANYTHING SHARED IS TOUCHED. This script reads and writes under
+# ${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}, which with that variable unset is the single tree
+# every other suite also uses; a 2026-07-26 review found several entry points reaching those paths
+# before -- or entirely without -- taking the lock, so a stray run could overwrite the artefact
+# triplet a release was in the middle of hashing. Setting KMONEY_RUN_ROOT gives a run its own tree,
+# which removes the contention rather than serialising it; the lock stays for the shared default.
+# Re-entrant: a suite started by `release-check` inherits the descriptor and proceeds.
 # shellcheck source=kamu-money-pg/yb/workspace-lock.sh
 source ./kamu-money-pg/yb/workspace-lock.sh
 workspace_lock "$(basename "$0")" || exit 1
 
 YB_IMAGE="${1:-$(./kamu-money-pg/yb/yb-image.sh)}"
-ART="${2:-kamu-money-pg/yb/out}"
+ART="${2:-${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}}"
 ROWS="${3:-20000}"
 N=3
 
@@ -45,7 +47,7 @@ yb_cluster_up "$N" "$YB_IMAGE"
 yb_install_extension_on_all "$ART"
 yb_sql 0 -c 'CREATE EXTENSION kmoney' >/dev/null
 
-OUT="kamu-money-pg/yb/out/bench"
+OUT="$ART/bench"
 mkdir -p "$OUT"
 REPORT="$OUT/report.txt"
 : > "$REPORT"
