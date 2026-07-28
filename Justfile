@@ -508,7 +508,36 @@ gate:
     elif [ "$fail" -ne 0 ]; then
       for i in "${!names[@]}"; do [ "${rcs[$i]}" -ne 0 ] && printf '\n=== %s (FAILED) ===\n%s\n' "${names[$i]}" "${outs[$i]}"; done
     fi
+    # STATED NON-COVERAGE, WHICH IS NOT THE SAME AS A SILENT SKIP. This gate deliberately does not
+    # build the PostgreSQL extension lane -- that needs Docker and takes hours, and a gate nobody
+    # can afford to run before a push is a gate that stops being run. But a green PASS beside
+    # uncommitted extension changes reads as "all clear" unless it says otherwise, so it says so.
+    if ! git diff --quiet HEAD -- extensions/money-pg 2>/dev/null || \
+       ! git diff --quiet -- extensions/money-pg 2>/dev/null; then
+      echo
+      echo "  NOTE  extensions/money-pg has changes this gate did NOT cover."
+      echo "        Run 'just gate-all' before pushing them."
+    fi
     exit "$fail"
+
+# Run a recipe in the PostgreSQL extension lane, e.g. `just pg gate-pg`.
+# `just pg` on its own lists that lane's recipes.
+#
+# A PASSTHROUGH RATHER THAN A MIRROR PER RECIPE. The lane has around fifty; copying their names up
+# here would create a second list to keep in step, and the copy that falls behind is the one
+# somebody trusts. CI still calls `just <something>` for every job, so the Justfile-as-source-of-
+# truth rule holds either way.
+pg *ARGS:
+    cd extensions/money-pg && just {{ ARGS }}
+
+# The PostgreSQL lane's gate. Hours, and needs Docker -- deliberately separate from `gate`, which
+# must stay fast enough to run before every push.
+gate-pg:
+    cd extensions/money-pg && just gate-pg
+
+# Everything: the nine published crates AND the extension lane. The pre-push barrier for a change
+# that touches extensions/money-pg.
+gate-all: gate gate-pg
 
 # The full pipeline: everything the gate runs, plus a publish dry-run.
 ci: gate publish-all
