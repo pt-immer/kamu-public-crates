@@ -398,6 +398,23 @@ check-pg pg="18":
 schema-hash pg="18" expect="" features="":
     ./kamu-money-pg/schema-hash.sh {{ pg }} "{{ expect }}" "{{ features }}"
 
+# Facts about the tree that no compiler checks: the Justfile's gates compose what they claim, the
+# scripts merge no docker streams on the host, the control file names the type it ships, the
+# licence texts have not drifted.
+#
+# THESE READ FILES AND LINK NOTHING, which is why they live in their own crate rather than under
+# kamu-money-pg/tests/. An integration test there drags in the pgrx build -- a trivial empty one
+# fails with `Error: $PGRX_HOME does not exist` -- and that would put PostgreSQL-from-source on the
+# critical path of a check that greps a Justfile. See hygiene/Cargo.toml.
+#
+# nextest, then the doctests, per this repository's cadence: nextest does NOT run doc examples, so
+# an unpaired invocation stops testing them silently. The lib here is empty and has none today;
+# the pairing is what keeps that true if one is ever added.
+[doc("Repository-hygiene guards: sixteen facts about the tree that no compiler checks.")]
+test-hygiene:
+    cargo {{ CORE_PATCH }} nextest run -p kamu-money-pg-hygiene
+    cargo {{ CORE_PATCH }} test -p kamu-money-pg-hygiene --doc
+
 # ONE MAJOR, NOT `--all-features`. The `pgN` features are mutually exclusive -- each selects a
 # different pgrx backend -- so `--all-features` does not compile here and never did. `doc-pg-all`
 # below is the whole matrix, for when the majors are what changed.
@@ -917,7 +934,7 @@ test-pg-all: test-yb test-pg test-pg-driver test-yb-driver
 # have broken the doc-pg.rs build of a crate this gate had just declared releasable. A check
 # nobody runs is a check that does not exist.
 [doc("The gate for a change that touches no database: format, lint, shell, doc-pg, offline tests.")]
-gate-offline: fmt-check lint doc-pg test-regress-selftest artifact-selftest workspace-lock-selftest numa-selftest
+gate-offline: fmt-check lint doc-pg test-hygiene test-regress-selftest artifact-selftest workspace-lock-selftest numa-selftest
 
 # Format, lint, doc-pg, and every suite reachable WITHOUT a from-source YugabyteDB build.
 # Expensive already: four extension builds plus a ~1.6GB image pull.

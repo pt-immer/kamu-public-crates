@@ -60,10 +60,7 @@ fn kmoney_div(
     // No default mode, for the reason kamu_money_core gives: a default rounding mode is a decision
     // made by whoever wrote the library rather than whoever owns the money.
     let Some(mode) = Rounding::from_name(rounding) else {
-        error!(
-            "kmoney_div: {rounding:?} is not a rounding mode; expected one of: {}",
-            Rounding::names()
-        );
+        error!("kmoney_div: {rounding:?} is not a rounding mode; expected one of: {}", Rounding::names());
     };
 
     let (quotient, residue) = kamu_money_core::arith::div_int_units(amount.units(), parts, mode)
@@ -132,7 +129,6 @@ mod tests {
         error = "kmoney_div: \"bankers\" is not a rounding mode; expected one of: half_even, half_away_from_zero, half_toward_zero, toward_zero, away_from_zero, floor, ceil"
     )]
     fn division_refuses_an_unknown_rounding_mode() {
-        Spi::get_one::<String>("SELECT quotient::text FROM kmoney_div('USD 10.00', 3, 'bankers')")
-            .ok();
+        Spi::get_one::<String>("SELECT quotient::text FROM kmoney_div('USD 10.00', 3, 'bankers')").ok();
     }
 }

@@ -30,9 +30,7 @@ fn kmoney_mixed_in(input: &core::ffi::CStr) -> kmoney_mixed {
 fn kmoney_mixed_out(value: kmoney_mixed) -> alloc::ffi::CString {
     let code = value.code();
     let Some(currency) = Iso4217::from_numeric(code) else {
-        error!(
-            "kmoney_mixed: stored ISO 4217 numeric code {code} is not in kamu_money_core's table"
-        );
+        error!("kmoney_mixed: stored ISO 4217 numeric code {code} is not in kamu_money_core's table");
     };
     let rendered = text::render(value.units(), currency)
         .unwrap_or_else(|e| error!("kmoney_mixed: stored amount cannot be rendered: {e}"));
@@ -57,12 +55,7 @@ CREATE TYPE kmoney_mixed (
 );
 ",
     name = "kmoney_mixed_concrete",
-    requires = [
-        kmoney_mixed_send,
-        "money_shell_types",
-        kmoney_mixed_in,
-        kmoney_mixed_out
-    ],
+    requires = [kmoney_mixed_send, "money_shell_types", kmoney_mixed_in, kmoney_mixed_out],
 );
 
 // =========================================================================================
@@ -133,11 +126,7 @@ fn kmoney_from_mixed(value: kmoney_mixed, expected: &str) -> kmoney {
         error!("kmoney: {expected:?} is not an ISO 4217 code kamu_money_core knows");
     };
     if value.code() != want.numeric() {
-        error!(
-            "kmoney: expected {}, found {}",
-            want.alpha3(),
-            describe(value.code())
-        );
+        error!("kmoney: expected {}, found {}", want.alpha3(), describe(value.code()));
     }
     kmoney::new(value.units(), value.code())
 }
@@ -156,28 +145,20 @@ mod tests {
     #[pg_test]
     fn a_mixed_column_equality_is_currency_aware_and_never_raises() {
         Spi::run("CREATE TABLE mixed_eq (amount kmoney_mixed)").expect("table created");
-        Spi::run(
-            "INSERT INTO mixed_eq VALUES ('USD 1.00'), ('IDR 1.00'), ('USD 1.00'), ('USD 2.00')",
-        )
-        .expect("rows inserted");
+        Spi::run("INSERT INTO mixed_eq VALUES ('USD 1.00'), ('IDR 1.00'), ('USD 1.00'), ('USD 2.00')")
+            .expect("rows inserted");
 
         // Equality is currency-aware and total: it never raises across currencies.
-        let same =
-            Spi::get_one::<bool>("SELECT 'USD 1.00'::kmoney_mixed = 'IDR 1.00'::kmoney_mixed")
-                .expect("query ran")
-                .expect("row");
+        let same = Spi::get_one::<bool>("SELECT 'USD 1.00'::kmoney_mixed = 'IDR 1.00'::kmoney_mixed")
+            .expect("query ran")
+            .expect("row");
         assert!(!same, "same number, different currency, different money");
 
         // `=` works as a plain predicate (a sequential-scan filter) without any opclass.
-        let n = Spi::get_one::<i64>(
-            "SELECT count(*) FROM mixed_eq WHERE amount = 'USD 1.00'::kmoney_mixed",
-        )
-        .expect("query ran")
-        .expect("row");
-        assert_eq!(
-            n, 2,
-            "two USD 1.00 rows match; IDR 1.00 and USD 2.00 do not"
-        );
+        let n = Spi::get_one::<i64>("SELECT count(*) FROM mixed_eq WHERE amount = 'USD 1.00'::kmoney_mixed")
+            .expect("query ran")
+            .expect("row");
+        assert_eq!(n, 2, "two USD 1.00 rows match; IDR 1.00 and USD 2.00 do not");
 
         // The plan-time refusal of arithmetic is UNCHANGED and asserted by
         // `sum_on_a_mixed_column_fails_at_plan_time`, not here (a failing statement would abort
@@ -193,10 +174,7 @@ mod tests {
 
     #[pg_test(error = "operator does not exist: kmoney_mixed + kmoney_mixed")]
     fn addition_on_the_mixed_type_does_not_exist_either() {
-        Spi::get_one::<String>(
-            "SELECT ('USD 1.00'::kmoney_mixed + 'USD 1.00'::kmoney_mixed)::text",
-        )
-        .ok();
+        Spi::get_one::<String>("SELECT ('USD 1.00'::kmoney_mixed + 'USD 1.00'::kmoney_mixed)::text").ok();
     }
 
     /// The mixed type stores and renders perfectly well — it is only arithmetic it lacks.
@@ -218,17 +196,14 @@ mod tests {
     /// `Money<C>` before it may be added.
     #[pg_test]
     fn the_conversion_out_of_mixed_proves_the_currency() {
-        let got = Spi::get_one::<String>(
-            "SELECT kmoney_from_mixed('USD 2.50'::kmoney_mixed, 'USD')::text",
-        )
-        .expect("query ran")
-        .expect("not null");
+        let got = Spi::get_one::<String>("SELECT kmoney_from_mixed('USD 2.50'::kmoney_mixed, 'USD')::text")
+            .expect("query ran")
+            .expect("not null");
         assert_eq!(got, "USD 2.50");
     }
 
     #[pg_test(error = "kmoney: expected USD, found IDR")]
     fn the_conversion_out_of_mixed_refuses_the_wrong_currency() {
-        Spi::get_one::<String>("SELECT kmoney_from_mixed('IDR 2.50'::kmoney_mixed, 'USD')::text")
-            .ok();
+        Spi::get_one::<String>("SELECT kmoney_from_mixed('IDR 2.50'::kmoney_mixed, 'USD')::text").ok();
     }
 }

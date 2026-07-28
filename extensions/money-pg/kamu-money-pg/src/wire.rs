@@ -103,10 +103,7 @@ unsafe fn recv_payload(fcinfo: pg_sys::FunctionCallInfo, context: &str) -> [u8; 
     // The SAME two checks the text input function performs. Binary is not more trusted.
     let currency = currency_or_error(value.code(), context);
     if !kamu_money_core::domain::in_domain(value.units()) {
-        error!(
-            "{context}: received {} amount is outside the domain |units| <= 10^36 - 1",
-            currency.alpha3()
-        );
+        error!("{context}: received {} amount is outside the domain |units| <= 10^36 - 1", currency.alpha3());
     }
     payload
 }
@@ -134,9 +131,7 @@ pub unsafe extern "C-unwind" fn kmoney_recv(fcinfo: pg_sys::FunctionCallInfo) ->
 /// docs.rs build of a crate this repository's gate had just declared releasable.
 #[unsafe(no_mangle)]
 #[pg_guard]
-pub unsafe extern "C-unwind" fn kmoney_mixed_recv(
-    fcinfo: pg_sys::FunctionCallInfo,
-) -> pg_sys::Datum {
+pub unsafe extern "C-unwind" fn kmoney_mixed_recv(fcinfo: pg_sys::FunctionCallInfo) -> pg_sys::Datum {
     let payload = unsafe { recv_payload(fcinfo, "kmoney_mixed") };
     kmoney_mixed::from_payload(&payload)
         .into_datum()
@@ -169,30 +164,25 @@ mod tests {
             .expect("rows inserted");
 
         // The catalog must advertise both, or a binary-format client falls back or fails.
-        let has_send =
-            Spi::get_one::<bool>("SELECT typsend <> 0 FROM pg_type WHERE typname = 'kmoney'")
-                .expect("query ran")
-                .expect("row");
-        let has_recv =
-            Spi::get_one::<bool>("SELECT typreceive <> 0 FROM pg_type WHERE typname = 'kmoney'")
-                .expect("query ran")
-                .expect("row");
+        let has_send = Spi::get_one::<bool>("SELECT typsend <> 0 FROM pg_type WHERE typname = 'kmoney'")
+            .expect("query ran")
+            .expect("row");
+        let has_recv = Spi::get_one::<bool>("SELECT typreceive <> 0 FROM pg_type WHERE typname = 'kmoney'")
+            .expect("query ran")
+            .expect("row");
         assert!(has_send, "kmoney must declare SEND");
         assert!(has_recv, "kmoney must declare RECEIVE");
 
         // send produces exactly the 18 stored bytes.
-        let width =
-            Spi::get_one::<i32>("SELECT octet_length(kmoney_send(amount)) FROM bin_io LIMIT 1")
-                .expect("query ran")
-                .expect("row");
+        let width = Spi::get_one::<i32>("SELECT octet_length(kmoney_send(amount)) FROM bin_io LIMIT 1")
+            .expect("query ran")
+            .expect("row");
         assert_eq!(width, 18, "the binary form is the stored payload");
 
         // COPY (FORMAT BINARY) out and back in is the real client path: it calls `kmoney_send`
         // writing the file and `kmoney_recv` reading it -- the two functions the catalog just
         // promised. A per-backend filename keeps parallel test backends from colliding.
-        let pid = Spi::get_one::<i32>("SELECT pg_backend_pid()")
-            .expect("query ran")
-            .expect("row");
+        let pid = Spi::get_one::<i32>("SELECT pg_backend_pid()").expect("query ran").expect("row");
         let path = format!("/tmp/kmoney_wire_{pid}.bin");
         Spi::run(&format!("COPY bin_io TO '{path}' (FORMAT BINARY)")).expect("send: COPY out");
         Spi::run("CREATE TABLE bin_copy (LIKE bin_io)").expect("table created");
@@ -210,9 +200,7 @@ mod tests {
         .expect("query ran")
         .expect("row");
         assert!(intact, "the binary wire round trip changed a value");
-        let copied = Spi::get_one::<i64>("SELECT count(*) FROM bin_copy")
-            .expect("query ran")
-            .expect("row");
+        let copied = Spi::get_one::<i64>("SELECT count(*) FROM bin_copy").expect("query ran").expect("row");
         assert_eq!(copied, 2, "both rows must survive send -> recv");
     }
 
@@ -223,17 +211,13 @@ mod tests {
     /// the DOMAIN check that fires with a kamu_money_core-owned (version-stable) message.
     #[pg_test(error = "kmoney: received USD amount is outside the domain |units| <= 10^36 - 1")]
     fn recv_refuses_an_out_of_domain_binary_payload() {
-        let pid = Spi::get_one::<i32>("SELECT pg_backend_pid()")
-            .expect("query ran")
-            .expect("row");
+        let pid = Spi::get_one::<i32>("SELECT pg_backend_pid()").expect("query ran").expect("row");
         let good = format!("/tmp/kmoney_recv_good_{pid}.bin");
         let bad = format!("/tmp/kmoney_recv_bad_{pid}.bin");
         // One-row, one-column BINARY COPY layout: 11 signature + 4 flags + 4 header-extension +
         // 2 field-count + 4 field-length + 18 payload + 2 trailer. The payload starts at byte 25.
-        Spi::run(&format!(
-            "COPY (SELECT 'USD 1.00'::kmoney) TO '{good}' (FORMAT BINARY)"
-        ))
-        .expect("wrote a valid binary payload");
+        Spi::run(&format!("COPY (SELECT 'USD 1.00'::kmoney) TO '{good}' (FORMAT BINARY)"))
+            .expect("wrote a valid binary payload");
         let mut bytes = std::fs::read(&good).expect("read the good payload");
         // 10^36 is one past the domain top (|units| <= 10^36 - 1). Overwrite the 16-byte LE units;
         // bytes 41..43 (the currency code = USD) are left intact so the domain check is what fires.
@@ -257,14 +241,10 @@ mod tests {
 
     /// Write one valid single-row BINARY COPY file and return `(its bytes, a path to reuse)`.
     fn binary_copy_of(literal: &str, sql_type: &str, tag: &str) -> (Vec<u8>, String) {
-        let pid = Spi::get_one::<i32>("SELECT pg_backend_pid()")
-            .expect("query ran")
-            .expect("row");
+        let pid = Spi::get_one::<i32>("SELECT pg_backend_pid()").expect("query ran").expect("row");
         let good = format!("/tmp/kmoney_{tag}_good_{pid}.bin");
-        Spi::run(&format!(
-            "COPY (SELECT '{literal}'::{sql_type}) TO '{good}' (FORMAT BINARY)"
-        ))
-        .expect("wrote a valid binary payload");
+        Spi::run(&format!("COPY (SELECT '{literal}'::{sql_type}) TO '{good}' (FORMAT BINARY)"))
+            .expect("wrote a valid binary payload");
         let bytes = std::fs::read(&good).expect("read the good payload");
         (bytes, format!("/tmp/kmoney_{tag}_bad_{pid}.bin"))
     }
@@ -326,9 +306,7 @@ mod tests {
     /// `kmoney_mixed_recv` is a SECOND `no_mangle` FFI entry point. It shares `recv_payload`,
     /// which is exactly what this pins: the mixed symbol must route through the same validation
     /// rather than accept bytes the strict type would reject.
-    #[pg_test(
-        error = "kmoney_mixed: received USD amount is outside the domain |units| <= 10^36 - 1"
-    )]
+    #[pg_test(error = "kmoney_mixed: received USD amount is outside the domain |units| <= 10^36 - 1")]
     fn the_mixed_recv_entry_point_validates_too() {
         let (mut bytes, bad) = binary_copy_of("USD 1.00", "kmoney_mixed", "mixed");
         let out_of_domain: i128 = 1_000_000_000_000_000_000_000_000_000_000_000_000;

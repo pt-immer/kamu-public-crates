@@ -26,9 +26,7 @@ use pgrx::prelude::*;
 // `could not find function "kmoney_typmod_in" in file "...kmoney.so"`.
 #[unsafe(no_mangle)]
 #[pg_guard]
-pub unsafe extern "C-unwind" fn kmoney_typmod_in(
-    fcinfo: pg_sys::FunctionCallInfo,
-) -> pg_sys::Datum {
+pub unsafe extern "C-unwind" fn kmoney_typmod_in(fcinfo: pg_sys::FunctionCallInfo) -> pg_sys::Datum {
     // A REAL check, not `debug_assert!` -- see `recv_payload` for the full argument. The release
     // build must not be the permissive one when the next statement indexes a flexible array.
     if unsafe { (*fcinfo).nargs } < 1 {
@@ -90,8 +88,7 @@ pub unsafe extern "C-unwind" fn kmoney_typmod_in(
 
     // SAFETY: `deconstruct_array` wrote `count` valid cstring Datums into `items`, and
     // `count == 1` was just checked.
-    let raw =
-        unsafe { core::ffi::CStr::from_ptr(items.read().cast_mut_ptr::<core::ffi::c_char>()) };
+    let raw = unsafe { core::ffi::CStr::from_ptr(items.read().cast_mut_ptr::<core::ffi::c_char>()) };
     let Ok(alpha3) = raw.to_str() else {
         error!("kmoney: type modifier is not valid UTF-8");
     };
@@ -112,9 +109,7 @@ pub unsafe extern "C-unwind" fn kmoney_typmod_in(
 // `could not find function "kmoney_typmod_out" in file "...kmoney.so"`.
 #[unsafe(no_mangle)]
 #[pg_guard]
-pub unsafe extern "C-unwind" fn kmoney_typmod_out(
-    fcinfo: pg_sys::FunctionCallInfo,
-) -> pg_sys::Datum {
+pub unsafe extern "C-unwind" fn kmoney_typmod_out(fcinfo: pg_sys::FunctionCallInfo) -> pg_sys::Datum {
     // A REAL check, not `debug_assert!` -- see `recv_payload` for the full argument.
     if unsafe { (*fcinfo).nargs } < 1 {
         error!("kmoney_typmod_out: called with no argument");
@@ -125,21 +120,16 @@ pub unsafe extern "C-unwind" fn kmoney_typmod_out(
     // -1 exactly, whereas `i32::try_from` would REJECT it as out of range. This is the rare cast
     // where the lint's suggested "safe" fix is the bug, so the exception is taken narrowly on
     // this one statement rather than on the whole function.
-    #[allow(
-        clippy::as_conversions,
-        clippy::cast_possible_truncation,
-        clippy::cast_possible_wrap
-    )]
+    #[allow(clippy::as_conversions, clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     let typmod = unsafe { (*fcinfo).args.as_ptr().read().value.value() } as i32;
 
     // A dumped schema must round-trip through typmod_in, so an unknown code cannot be rendered
     // as something that would parse back to a different currency.
-    let rendered =
-        if let Some(currency) = u16::try_from(typmod).ok().and_then(Iso4217::from_numeric) {
-            format!("('{}')", currency.alpha3())
-        } else {
-            error!("kmoney: stored type modifier {typmod} is not an ISO 4217 numeric code")
-        };
+    let rendered = if let Some(currency) = u16::try_from(typmod).ok().and_then(Iso4217::from_numeric) {
+        format!("('{}')", currency.alpha3())
+    } else {
+        error!("kmoney: stored type modifier {typmod} is not an ISO 4217 numeric code")
+    };
 
     // SAFETY: CurrentMemoryContext is valid; PostgreSQL frees this with the context.
     let size = rendered
@@ -243,9 +233,8 @@ mod tests {
         Spi::run("CREATE TABLE pinned (amount kmoney('IDR'))").expect("table created");
         Spi::run("INSERT INTO pinned VALUES ('IDR 16000.00')").expect("row inserted");
 
-        let stored = Spi::get_one::<String>("SELECT amount::text FROM pinned")
-            .expect("query ran")
-            .expect("not null");
+        let stored =
+            Spi::get_one::<String>("SELECT amount::text FROM pinned").expect("query ran").expect("not null");
         assert_eq!(stored, "IDR 16000.00");
 
         let declared = Spi::get_one::<String>(
@@ -254,10 +243,7 @@ mod tests {
         )
         .expect("query ran")
         .expect("not null");
-        assert_eq!(
-            declared, "kmoney('IDR')",
-            "typmod_out must round-trip for pg_dump"
-        );
+        assert_eq!(declared, "kmoney('IDR')", "typmod_out must round-trip for pg_dump");
     }
 
     /// **The point of typmod.** The wrong currency is refused at INSERT, before it is stored --
@@ -271,11 +257,8 @@ mod tests {
     #[pg_test]
     fn an_unpinned_column_still_accepts_every_currency() {
         Spi::run("CREATE TABLE unpinned (amount kmoney)").expect("table created");
-        Spi::run("INSERT INTO unpinned VALUES ('USD 1.00'), ('IDR 16000.00')")
-            .expect("rows inserted");
-        let n = Spi::get_one::<i64>("SELECT count(*) FROM unpinned")
-            .expect("query ran")
-            .expect("not null");
+        Spi::run("INSERT INTO unpinned VALUES ('USD 1.00'), ('IDR 16000.00')").expect("rows inserted");
+        let n = Spi::get_one::<i64>("SELECT count(*) FROM unpinned").expect("query ran").expect("not null");
         assert_eq!(n, 2);
     }
 

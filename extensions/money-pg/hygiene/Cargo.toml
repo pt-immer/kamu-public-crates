@@ -1,0 +1,35 @@
+# Repository-hygiene guards for the PostgreSQL extension lane.
+#
+# WHY THIS IS ITS OWN CRATE, AND NOT `kamu-money-pg/tests/`. These tests only READ FILES -- the
+# Justfile, the yb/*.sh scripts, the control file, kamu-money-pg/src. They need no PostgreSQL and
+# no pgrx. But an integration test under `kamu-money-pg/tests/` makes cargo build that crate's lib
+# target first, and kamu-money-pg is a pgrx cdylib: a trivial empty test there fails with
+# `Error: $PGRX_HOME does not exist`. Measured, not assumed.
+#
+# Putting the guards there would make `gate-offline` -- whose entire premise is needing nothing
+# external -- require `cargo pgrx init`, which builds PostgreSQL from source. A test that checks
+# whether the Justfile names the right recipes would have become the most expensive check in the
+# lane.
+#
+# So the guards live in a crate with NO dependencies at all. `repo_root()` walks up from
+# CARGO_MANIFEST_DIR and looks for a Justfile, which lands on the lane root from here exactly as it
+# did from the crate that used to host them.
+[package]
+name = "kamu-money-pg-hygiene"
+version = "0.1.0"
+description = "Repository-hygiene guards for the kamu-money-pg lane. Never published; reads files, builds nothing."
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+# EMPTY ON PURPOSE. The crate exists to host `tests/repo_hygiene.rs`; there is no library here and
+# there is not meant to be one. cargo needs a lib target for an integration test to attach to, and
+# an empty one costs nothing to compile -- which is the point, because this must stay the cheapest
+# thing in the gate.
+[lib]
+path = "src/lib.rs"
+
+[dependencies]

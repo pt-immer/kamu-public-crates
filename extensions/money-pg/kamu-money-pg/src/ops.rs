@@ -246,9 +246,7 @@ fn kmoney_sum(values: VariadicArray<kmoney>) -> Option<kmoney> {
         // the total, and its error names the offending value in `attempted_units`. A prefix
         // asserting the SUM overflowed while the number quoted is an input would contradict the
         // message it wraps -- so the prefix only says which function refused.
-        acc = acc
-            .add_units(value.units())
-            .unwrap_or_else(|e| error!("kmoney_sum: {e}"));
+        acc = acc.add_units(value.units()).unwrap_or_else(|e| error!("kmoney_sum: {e}"));
     }
 
     // No non-NULL operand -> no currency -> NULL, never a currencyless zero.
@@ -278,10 +276,9 @@ mod tests {
             .expect("not null");
         assert_eq!(sum, "USD 11.00");
 
-        let difference =
-            Spi::get_one::<String>("SELECT ('USD 10.50'::kmoney - 'USD 0.50'::kmoney)::text")
-                .expect("query ran")
-                .expect("not null");
+        let difference = Spi::get_one::<String>("SELECT ('USD 10.50'::kmoney - 'USD 0.50'::kmoney)::text")
+            .expect("query ran")
+            .expect("not null");
         assert_eq!(difference, "USD 10.00");
     }
 
@@ -315,10 +312,9 @@ mod tests {
 
     #[pg_test]
     fn kmoney_sum_adds_an_explicit_list_within_one_currency() {
-        let total =
-            Spi::get_one::<String>("SELECT kmoney_sum('USD 10.50', 'USD 0.25', 'USD 0.25')::text")
-                .expect("query ran")
-                .expect("not null");
+        let total = Spi::get_one::<String>("SELECT kmoney_sum('USD 10.50', 'USD 0.25', 'USD 0.25')::text")
+            .expect("query ran")
+            .expect("not null");
         assert_eq!(total, "USD 11.00");
     }
 
@@ -340,10 +336,7 @@ mod tests {
             let total = Spi::get_one::<String>(&format!("SELECT ({expr})::text"))
                 .expect("query ran")
                 .expect("not null");
-            assert_eq!(
-                total, max,
-                "every order of one multiset must give the same total"
-            );
+            assert_eq!(total, max, "every order of one multiset must give the same total");
         }
     }
 
@@ -354,8 +347,8 @@ mod tests {
         // An explicit empty array rather than a bare `kmoney_sum()`: PostgreSQL will not resolve
         // a zero-argument call to a VARIADIC function (`function kmoney_sum() does not exist`),
         // and an empty array is the honest way to say "sum of no values" anyway.
-        let total = Spi::get_one::<String>("SELECT kmoney_sum(VARIADIC ARRAY[]::kmoney[])::text")
-            .expect("query ran");
+        let total =
+            Spi::get_one::<String>("SELECT kmoney_sum(VARIADIC ARRAY[]::kmoney[])::text").expect("query ran");
         assert!(total.is_none(), "expected NULL, got {total:?}");
     }
 
@@ -395,10 +388,7 @@ mod tests {
         let same = Spi::get_one::<bool>("SELECT 'USD 1.00'::kmoney = 'IDR 1.00'::kmoney")
             .expect("query ran")
             .expect("row");
-        assert!(
-            !same,
-            "USD 1.00 is not the same money as IDR 1.00 — false, not an error"
-        );
+        assert!(!same, "USD 1.00 is not the same money as IDR 1.00 — false, not an error");
 
         let equal = Spi::get_one::<bool>("SELECT 'USD 1.00'::kmoney = 'USD 1.00'::kmoney")
             .expect("query ran")
@@ -407,14 +397,10 @@ mod tests {
 
         // `=` is TOTAL, so it filters the mixed column without raising: two rows equal USD 1.00,
         // and the IDR row simply does not match.
-        let usd_ones =
-            Spi::get_one::<i64>("SELECT count(*) FROM cmp WHERE amount = 'USD 1.00'::kmoney")
-                .expect("query ran")
-                .expect("row");
-        assert_eq!(
-            usd_ones, 2,
-            "= is total: two USD 1.00 rows match, the IDR row does not"
-        );
+        let usd_ones = Spi::get_one::<i64>("SELECT count(*) FROM cmp WHERE amount = 'USD 1.00'::kmoney")
+            .expect("query ran")
+            .expect("row");
+        assert_eq!(usd_ones, 2, "= is total: two USD 1.00 rows match, the IDR row does not");
 
         // Ordering within ONE currency works as a predicate (a sequential-scan filter), which is
         // all a wallet -- whose columns are typmod-pinned to one currency -- asks of it.
@@ -439,20 +425,15 @@ mod tests {
     /// opclass, this count goes non-zero and the test goes red.
     #[pg_test]
     fn neither_type_has_an_operator_class() {
-        let kmoney = Spi::get_one::<i64>(
-            "SELECT count(*) FROM pg_opclass WHERE opcintype = 'kmoney'::regtype",
-        )
-        .expect("query ran")
-        .expect("row");
-        assert_eq!(
-            kmoney, 0,
-            "kmoney must carry no btree or hash operator class"
-        );
-        let mixed = Spi::get_one::<i64>(
-            "SELECT count(*) FROM pg_opclass WHERE opcintype = 'kmoney_mixed'::regtype",
-        )
-        .expect("query ran")
-        .expect("row");
+        let kmoney =
+            Spi::get_one::<i64>("SELECT count(*) FROM pg_opclass WHERE opcintype = 'kmoney'::regtype")
+                .expect("query ran")
+                .expect("row");
+        assert_eq!(kmoney, 0, "kmoney must carry no btree or hash operator class");
+        let mixed =
+            Spi::get_one::<i64>("SELECT count(*) FROM pg_opclass WHERE opcintype = 'kmoney_mixed'::regtype")
+                .expect("query ran")
+                .expect("row");
         assert_eq!(mixed, 0, "kmoney_mixed must carry no operator class either");
     }
 
@@ -491,9 +472,8 @@ mod tests {
 
         // The same payload under the mixed type must hash identically -- they share a codec, so
         // two implementations would be free to drift while each looked right on its own.
-        let native = Spi::get_one::<i32>("SELECT kmoney_hash('USD 1.00'::kmoney)")
-            .expect("query ran")
-            .expect("row");
+        let native =
+            Spi::get_one::<i32>("SELECT kmoney_hash('USD 1.00'::kmoney)").expect("query ran").expect("row");
         let mixed = Spi::get_one::<i32>("SELECT kmoney_mixed_hash('USD 1.00'::kmoney_mixed)")
             .expect("query ran")
             .expect("row");

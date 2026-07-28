@@ -62,22 +62,12 @@ fn sum_state_encode(acc: UnitSum, code: u16) -> Vec<u8> {
 /// same reasoning as the binary `RECEIVE` path, which validates rather than trusts its payload.
 fn sum_state_decode(state: &[u8], context: &str) -> (UnitSum, u16) {
     let Ok(bytes) = <[u8; SUM_STATE_BYTES]>::try_from(state) else {
-        error!(
-            "{context}: transition state must be exactly {SUM_STATE_BYTES} bytes, got {}",
-            state.len()
-        );
+        error!("{context}: transition state must be exactly {SUM_STATE_BYTES} bytes, got {}", state.len());
     };
     let (units, code) = bytes.split_at(UnitSum::ENCODED_BYTES);
     (
-        UnitSum::from_le_bytes(
-            units
-                .try_into()
-                .expect("split_at(ENCODED_BYTES) yields ENCODED_BYTES"),
-        ),
-        u16::from_le_bytes(
-            code.try_into()
-                .expect("SUM_STATE_BYTES - ENCODED_BYTES == 2"),
-        ),
+        UnitSum::from_le_bytes(units.try_into().expect("split_at(ENCODED_BYTES) yields ENCODED_BYTES")),
+        u16::from_le_bytes(code.try_into().expect("SUM_STATE_BYTES - ENCODED_BYTES == 2")),
     )
 }
 
@@ -112,9 +102,7 @@ fn kmoney_sum_accum(state: Option<Vec<u8>>, value: Option<kmoney>) -> Option<Vec
         }
     };
 
-    let acc = acc
-        .add_units(value.units())
-        .unwrap_or_else(|e| error!("sum(kmoney): {e}"));
+    let acc = acc.add_units(value.units()).unwrap_or_else(|e| error!("sum(kmoney): {e}"));
     Some(sum_state_encode(acc, code))
 }
 
@@ -139,9 +127,7 @@ fn kmoney_sum_combine(left: Option<Vec<u8>>, right: Option<Vec<u8>>) -> Option<V
 
     // Associative and commutative, so it does not matter which worker finished first. That is the
     // property the removed narrow-state aggregate did not have.
-    let acc = acc_l
-        .merge(acc_r)
-        .unwrap_or_else(|e| error!("sum(kmoney): {e}"));
+    let acc = acc_l.merge(acc_r).unwrap_or_else(|e| error!("sum(kmoney): {e}"));
     Some(sum_state_encode(acc, code_l))
 }
 
@@ -172,12 +158,7 @@ CREATE AGGREGATE sum(kmoney) (
 );
 ",
     name = "kmoney_sum_aggregate",
-    requires = [
-        "kmoney_concrete",
-        kmoney_sum_accum,
-        kmoney_sum_combine,
-        kmoney_sum_final
-    ],
+    requires = ["kmoney_concrete", kmoney_sum_accum, kmoney_sum_combine, kmoney_sum_final],
 );
 
 #[cfg(any(test, feature = "pg_test"))]
@@ -195,9 +176,8 @@ mod tests {
         Spi::run("CREATE TABLE ledger (amount kmoney)").expect("table created");
         Spi::run("INSERT INTO ledger VALUES ('USD 10.50'), ('USD 0.25'), ('USD 0.25')")
             .expect("rows inserted");
-        let total = Spi::get_one::<String>("SELECT sum(amount)::text FROM ledger")
-            .expect("query ran")
-            .expect("row");
+        let total =
+            Spi::get_one::<String>("SELECT sum(amount)::text FROM ledger").expect("query ran").expect("row");
         assert_eq!(total, "USD 11.00");
     }
 
@@ -208,23 +188,19 @@ mod tests {
     #[pg_test]
     fn the_sum_aggregate_of_nothing_is_null() {
         Spi::run("CREATE TABLE ledger (amount kmoney)").expect("table created");
-        let empty = Spi::get_one::<bool>("SELECT sum(amount) IS NULL FROM ledger")
-            .expect("query ran")
-            .expect("row");
+        let empty =
+            Spi::get_one::<bool>("SELECT sum(amount) IS NULL FROM ledger").expect("query ran").expect("row");
         assert!(empty, "no rows must total NULL");
 
         Spi::run("INSERT INTO ledger VALUES (NULL), (NULL)").expect("rows inserted");
-        let all_null = Spi::get_one::<bool>("SELECT sum(amount) IS NULL FROM ledger")
-            .expect("query ran")
-            .expect("row");
+        let all_null =
+            Spi::get_one::<bool>("SELECT sum(amount) IS NULL FROM ledger").expect("query ran").expect("row");
         assert!(all_null, "an all-NULL group must total NULL");
 
         // And a NULL among real rows is skipped, exactly as `sum()` skips NULLs everywhere else.
-        Spi::run("INSERT INTO ledger VALUES ('USD 1.00'), (NULL), ('USD 2.00')")
-            .expect("rows inserted");
-        let total = Spi::get_one::<String>("SELECT sum(amount)::text FROM ledger")
-            .expect("query ran")
-            .expect("row");
+        Spi::run("INSERT INTO ledger VALUES ('USD 1.00'), (NULL), ('USD 2.00')").expect("rows inserted");
+        let total =
+            Spi::get_one::<String>("SELECT sum(amount)::text FROM ledger").expect("query ran").expect("row");
         assert_eq!(total, "USD 3.00");
     }
 
@@ -306,8 +282,7 @@ mod tests {
         Spi::run("SET max_parallel_workers_per_gather = 0").expect("guc set");
         let serial_plan = explain_of("SELECT sum(amount) FROM ledger");
         assert!(
-            !serial_plan.contains("Partial Aggregate")
-                && !serial_plan.contains("Finalize Aggregate"),
+            !serial_plan.contains("Partial Aggregate") && !serial_plan.contains("Finalize Aggregate"),
             "the baseline was supposed to be SERIAL and the planner split it anyway, so the \
              comparison below would be parallel-versus-parallel and would prove nothing about \
              the combine function. Plan was:\n{serial_plan}"
@@ -351,9 +326,8 @@ mod tests {
     fn explain_of(query: &str) -> String {
         let mut lines = Vec::new();
         Spi::connect(|client| {
-            let rows = client
-                .select(&format!("EXPLAIN (COSTS OFF) {query}"), None, &[])
-                .expect("explain ran");
+            let rows =
+                client.select(&format!("EXPLAIN (COSTS OFF) {query}"), None, &[]).expect("explain ran");
             for row in rows {
                 if let Ok(Some(line)) = row.get::<String>(1) {
                     lines.push(line);
@@ -367,19 +341,15 @@ mod tests {
     #[pg_test]
     fn the_sum_aggregate_combines_an_empty_partial() {
         let one = "kmoney_sum_accum(NULL, 'USD 1.00')";
-        for expr in [
-            format!("kmoney_sum_combine({one}, NULL)"),
-            format!("kmoney_sum_combine(NULL, {one})"),
-        ] {
+        for expr in [format!("kmoney_sum_combine({one}, NULL)"), format!("kmoney_sum_combine(NULL, {one})")] {
             let total = Spi::get_one::<String>(&format!("SELECT kmoney_sum_final({expr})::text"))
                 .expect("query ran")
                 .expect("row");
             assert_eq!(total, "USD 1.00");
         }
-        let nothing =
-            Spi::get_one::<bool>("SELECT kmoney_sum_final(kmoney_sum_combine(NULL, NULL)) IS NULL")
-                .expect("query ran")
-                .expect("row");
+        let nothing = Spi::get_one::<bool>("SELECT kmoney_sum_final(kmoney_sum_combine(NULL, NULL)) IS NULL")
+            .expect("query ran")
+            .expect("row");
         assert!(nothing, "two empty partials still total NULL");
     }
 
@@ -420,15 +390,11 @@ mod tests {
              ('IDR -1.50')",
         )
         .expect("rows inserted");
-        let agree = Spi::get_one::<bool>(
-            "SELECT sum(amount) = kmoney_sum(VARIADIC array_agg(amount)) FROM ledger",
-        )
-        .expect("query ran")
-        .expect("row");
-        assert!(
-            agree,
-            "the row aggregate and the variadic form are one kernel"
-        );
+        let agree =
+            Spi::get_one::<bool>("SELECT sum(amount) = kmoney_sum(VARIADIC array_agg(amount)) FROM ledger")
+                .expect("query ran")
+                .expect("row");
+        assert!(agree, "the row aggregate and the variadic form are one kernel");
     }
 
     /// **The reason `kmoney_mixed` exists**, and it is exactly what `kmoney` no longer has.
@@ -445,8 +411,7 @@ mod tests {
     #[pg_test(error = "function sum(kmoney_mixed) does not exist")]
     fn sum_on_a_mixed_column_fails_at_plan_time() {
         Spi::run("CREATE TABLE payments (amount kmoney_mixed)").expect("table created");
-        Spi::run("INSERT INTO payments VALUES ('USD 1.00'), ('IDR 16000.00')")
-            .expect("rows inserted");
+        Spi::run("INSERT INTO payments VALUES ('USD 1.00'), ('IDR 16000.00')").expect("rows inserted");
         Spi::get_one::<String>("SELECT sum(amount)::text FROM payments").ok();
     }
 }

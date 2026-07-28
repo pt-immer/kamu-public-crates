@@ -1,5 +1,8 @@
 [workspace]
-members = ["kamu-money-pg"]
+# `hygiene` is a dependency-free crate holding the repository guards. It is separate from
+# kamu-money-pg because an integration test there would drag in the pgrx build -- see
+# hygiene/Cargo.toml for the measurement.
+members = ["kamu-money-pg", "hygiene"]
 # A locally checked-out pgrx is its OWN workspace. Without this, cargo resolves
 # ITS members' inherited fields against THIS root and dies in `cargo metadata`
 # before compiling anything. See the escape hatch at the end of the patch note.

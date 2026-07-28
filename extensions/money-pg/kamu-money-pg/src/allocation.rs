@@ -120,9 +120,7 @@ fn kmoney_allocate(amount: kmoney, weights: Array<'_, i32>) -> Vec<kmoney> {
             error!("kmoney_allocate: NULL weight — a share of nothing is not a share of zero");
         };
         let Ok(weight) = u32::try_from(weight) else {
-            error!(
-                "kmoney_allocate: weight {weight} is negative; a negative share is not a distribution"
-            );
+            error!("kmoney_allocate: weight {weight} is negative; a negative share is not a distribution");
         };
         checked.push(weight);
     }
@@ -167,10 +165,7 @@ mod tests {
         )
         .expect("query ran")
         .expect("not null");
-        assert_eq!(
-            shares,
-            "USD 3.333333333333333334 | USD 3.333333333333333333 | USD 3.333333333333333333"
-        );
+        assert_eq!(shares, "USD 3.333333333333333334 | USD 3.333333333333333333 | USD 3.333333333333333333");
     }
 
     /// R2-F1, at the SQL boundary: a zero-weight recipient receives exactly nothing, including

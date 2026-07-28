@@ -415,10 +415,7 @@ fn same_currency(a: kmoney, b: kmoney, op: &str) -> Iso4217 {
         error!("kmoney: cannot compute {left} {op} {right}: different currencies");
     }
     let Some(currency) = Iso4217::from_numeric(a.code()) else {
-        error!(
-            "kmoney: stored ISO 4217 numeric code {} is not in kamu_money_core's table",
-            a.code()
-        );
+        error!("kmoney: stored ISO 4217 numeric code {} is not in kamu_money_core's table", a.code());
     };
     currency
 }
@@ -439,10 +436,7 @@ fn currency_or_error(code: u16, context: &str) -> Iso4217 {
 
 /// An ISO code for an error message, without erroring on the way to an error.
 fn describe(code: u16) -> String {
-    Iso4217::from_numeric(code).map_or_else(
-        || format!("<unknown code {code}>"),
-        |c| c.alpha3().to_owned(),
-    )
+    Iso4217::from_numeric(code).map_or_else(|| format!("<unknown code {code}>"), |c| c.alpha3().to_owned())
 }
 
 // =========================================================================================
@@ -569,9 +563,8 @@ mod tests {
         Spi::run("CREATE TABLE sized (v kmoney)").expect("table created");
         Spi::run("INSERT INTO sized VALUES ('USD 10.50')").expect("row inserted");
 
-        let stored = Spi::get_one::<i32>("SELECT pg_column_size(v) FROM sized")
-            .expect("query ran")
-            .expect("not null");
+        let stored =
+            Spi::get_one::<i32>("SELECT pg_column_size(v) FROM sized").expect("query ran").expect("not null");
         let in_memory = Spi::get_one::<i32>("SELECT pg_column_size('USD 10.50'::kmoney)")
             .expect("query ran")
             .expect("not null");
@@ -706,10 +699,7 @@ mod tests {
         let rounded = Spi::get_one::<bool>("SELECT '0.0000000000000000004'::numeric(36,18) = 0")
             .expect("query ran")
             .expect("not null");
-        assert!(
-            rounded,
-            "E13: numeric(36,18) rounds 4e-19 to zero, silently"
-        );
+        assert!(rounded, "E13: numeric(36,18) rounds 4e-19 to zero, silently");
     }
 
     /// `kmoney` refuses exactly what `numeric(36,18)` swallows.
@@ -729,11 +719,9 @@ mod tests {
     /// The top of the domain is representable — the bound is `<=`, not `<`.
     #[pg_test]
     fn the_domain_top_round_trips() {
-        let top = Spi::get_one::<String>(
-            "SELECT 'IDR 999999999999999999.999999999999999999'::kmoney::text",
-        )
-        .expect("query ran")
-        .expect("not null");
+        let top = Spi::get_one::<String>("SELECT 'IDR 999999999999999999.999999999999999999'::kmoney::text")
+            .expect("query ran")
+            .expect("not null");
         assert_eq!(top, "IDR 999999999999999999.999999999999999999");
     }
 
@@ -786,10 +774,8 @@ mod tests {
             "USD -0.000000000000000001",
             "XAU 10.5",
         ] {
-            Spi::run(&format!(
-                "INSERT INTO both_forms VALUES ('{literal}', '{literal}')"
-            ))
-            .unwrap_or_else(|e| panic!("insert {literal}: {e}"));
+            Spi::run(&format!("INSERT INTO both_forms VALUES ('{literal}', '{literal}')"))
+                .unwrap_or_else(|e| panic!("insert {literal}: {e}"));
         }
 
         // Rendering the native column back must reproduce the stored text, for every row.
@@ -797,17 +783,13 @@ mod tests {
             Spi::get_one::<i64>("SELECT count(*) FROM both_forms WHERE phase4 <> phase5::text")
                 .expect("query ran")
                 .expect("not null");
-        assert_eq!(
-            disagreements, 0,
-            "the text storage and the native type must render identically"
-        );
+        assert_eq!(disagreements, 0, "the text storage and the native type must render identically");
 
         // And the reverse direction: text parsed into the native type equals the native value.
-        let mismatches = Spi::get_one::<i64>(
-            "SELECT count(*) FROM both_forms WHERE phase4::kmoney::text <> phase5::text",
-        )
-        .expect("query ran")
-        .expect("not null");
+        let mismatches =
+            Spi::get_one::<i64>("SELECT count(*) FROM both_forms WHERE phase4::kmoney::text <> phase5::text")
+                .expect("query ran")
+                .expect("not null");
         assert_eq!(mismatches, 0, "text -> kmoney -> text must be the identity");
     }
 
