@@ -22,10 +22,18 @@ use std::time::Duration;
 use kamu_logging::otlp::OtlpConfig;
 use kamu_logging::{InitOptions, Sink, init_with};
 
+#[derive(Debug)]
+struct CapturedRequest {
+    request_line: String,
+    content_type: Option<String>,
+    content_length: usize,
+    body: Vec<u8>,
+}
+
 /// Minimal OTLP/HTTP sink: accepts loopback connections, reads each request in
-/// full, signals receipt, and replies `200 OK` with an empty (valid) protobuf
-/// body. Runs on its own thread for the life of the test process.
-fn spawn_sink() -> (String, mpsc::Receiver<()>) {
+/// full, captures its wire contract, and replies `200 OK` with an empty valid
+/// protobuf body. Runs on its own thread for the life of the test process.
+fn spawn_sink() -> (String, mpsc::Receiver<CapturedRequest>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback sink");
     let addr = listener.local_addr().expect("sink local addr");
     let (tx, rx) = mpsc::channel();
@@ -59,7 +67,15 @@ fn spawn_sink() -> (String, mpsc::Receiver<()>) {
                 }
             }
 
-            let _ = tx.send(());
+            let end = header_end.unwrap_or(buf.len());
+            let headers = String::from_utf8_lossy(&buf[..end]);
+            let request = CapturedRequest {
+                request_line: headers.lines().next().unwrap_or_default().to_owned(),
+                content_type: header_value(&headers, "content-type"),
+                content_length: content_len,
+                body: buf.get(end..).unwrap_or_default().to_vec(),
+            };
+            let _ = tx.send(request);
             let _ = stream.write_all(
                 b"HTTP/1.1 200 OK\r\nContent-Type: application/x-protobuf\r\nContent-Length: 0\r\n\r\n",
             );
@@ -84,6 +100,13 @@ fn parse_content_length(headers: &[u8]) -> usize {
         }
     }
     0
+}
+
+fn header_value(headers: &str, wanted: &str) -> Option<String> {
+    headers.lines().skip(1).find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case(wanted).then(|| value.trim().to_owned())
+    })
 }
 
 #[test]
@@ -116,16 +139,15 @@ fn otlp_exports_off_thread_inside_runtime() {
         // Force the batch thread to export now (blocks until the round-trip ends).
         kamu_logging::flush_otlp().expect("flush_otlp succeeds");
 
-        // The sink must have received the export, off the runtime thread. Tolerate
-        // a network-restricted sandbox: the no-panic init above is the hard
-        // assertion; only require delivery when loopback is actually permitted.
-        match rx.recv_timeout(Duration::from_secs(10)) {
-            Ok(()) => {}
-            Err(_) => eprintln!(
-                "otlp_runtime: no export received within timeout (loopback may be restricted); \
-                 the init-inside-a-runtime assertion already passed"
-            ),
-        }
+        // A successful bind makes delivery the behavior under test. Timeout is a
+        // hard failure, not an environmental skip.
+        let request = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("OTLP collector must receive an export after flush");
+        assert_eq!(request.request_line, "POST /v1/traces HTTP/1.1");
+        assert_eq!(request.content_type.as_deref(), Some("application/x-protobuf"));
+        assert!(request.content_length > 0, "protobuf body must be non-empty");
+        assert_eq!(request.body.len(), request.content_length);
 
         // Draining is idempotent.
         kamu_logging::shutdown_otlp().expect("shutdown_otlp succeeds");

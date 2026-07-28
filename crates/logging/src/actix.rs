@@ -79,10 +79,4 @@ mod tests {
         let _default = get_actix_web_logger_with::<DefaultRootSpanBuilder>();
         let _explicit = get_actix_web_logger_with::<EnrichedRootSpanBuilder>();
     }
-
-    // `EnrichedRootSpanBuilder::on_request_start` calls `tracing_actix_web::root_span!`,
-    // which unwraps a `RequestId` request extension that only the `TracingLogger`
-    // middleware inserts — so the enrichment path is integration-bound (needs a full
-    // `App` + test service), not unit-testable in isolation. Its correlation-id
-    // extraction half is covered directly by the `correlation` module tests.
 }

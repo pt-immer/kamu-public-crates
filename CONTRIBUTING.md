@@ -31,8 +31,9 @@ or the raw commands — see the [`Justfile`](Justfile). The PR pipeline
 workspace-wide, plus `-D clippy::pedantic` for `kamu-iso3166`), tests on
 `stable` and the `1.94` MSRV, a `no_std` cross-compile, docs, `cargo-deny`,
 per-crate `publish --dry-run`, a `wasm32` build, Markdown/TOML/spelling lint,
-and coverage (`kamu-iso3166` ≥ 98% lines, `kamu-logging` ≥ 70%,
-`kamu-snap-crypto` ≥ 70%, `kamu-snap-response` ≥ 85%).
+and coverage (`kamu-iso3166` ≥ 98% lines, `kamu-logging` ≥ 88%,
+`kamu-money-core` ≥ 80%, `kamu-snap-crypto` ≥ 70%,
+`kamu-snap-response` ≥ 85%).
 
 > Do not use `--all-features` across the whole workspace: `kamu-logging`'s
 > `systemd` and `wasm32` features are mutually exclusive. Select features

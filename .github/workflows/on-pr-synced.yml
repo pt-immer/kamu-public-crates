@@ -395,7 +395,7 @@ jobs:
           path: target/lcov.info
 
   coverage-logging:
-    name: coverage (kamu-logging >= 70% lines)
+    name: coverage (kamu-logging >= 88% lines)
     needs: changes
     if: ${{ needs.changes.outputs.log == 'true' }}
     runs-on: ubuntu-latest

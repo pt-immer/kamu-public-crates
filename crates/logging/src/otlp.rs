@@ -20,7 +20,7 @@
 //! [`BatchSpanProcessor`]: opentelemetry_sdk::trace::BatchSpanProcessor
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::fmt;
 use std::time::Duration;
 
 use opentelemetry::KeyValue;
@@ -44,7 +44,13 @@ pub enum SpanProcessorMode {
 }
 
 /// Configuration for the OTLP exporter.
-#[derive(Debug, Clone)]
+///
+/// Its [`Debug`](fmt::Debug) output never includes header values or the
+/// endpoint. Resource values are redacted when their key, after ASCII
+/// case-folding and punctuation removal, contains `authorization`,
+/// `credential`, `password`, `secret`, or `token`, or names an
+/// API/access/private key.
+#[derive(Clone)]
 pub struct OtlpConfig {
     pub(crate) endpoint: String,
     pub(crate) service_name: Option<String>,
@@ -56,9 +62,28 @@ pub struct OtlpConfig {
     pub(crate) max_export_batch_size: Option<usize>,
 }
 
+impl fmt::Debug for OtlpConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OtlpConfig")
+            .field("endpoint", &"<configured>")
+            .field("service_name", &self.service_name)
+            .field("headers", &RedactedHeaders(&self.headers))
+            .field("resource_attributes", &RedactedResourceAttributes(&self.resource_attributes))
+            .field("processor", &self.processor)
+            .field("max_queue_size", &self.max_queue_size)
+            .field("scheduled_delay", &self.scheduled_delay)
+            .field("max_export_batch_size", &self.max_export_batch_size)
+            .finish()
+    }
+}
+
 impl OtlpConfig {
-    /// Endpoint for the OTLP/HTTP collector, e.g.
+    /// Base endpoint for the OTLP/HTTP collector, e.g.
     /// `https://otel-collector.example.com:4318`.
+    ///
+    /// `/v1/traces` is appended unless the endpoint already ends with that
+    /// standard signal path.
     #[must_use]
     pub fn new(endpoint: impl Into<String>) -> Self {
         Self {
@@ -138,8 +163,8 @@ impl OtlpConfig {
 /// Build the OTLP `tracing` layer plus the owning [`SdkTracerProvider`].
 ///
 /// The returned provider is a second owned handle (the layer's tracer holds its
-/// own `Arc`); [`init`](crate::init_with) stows it via [`store_provider`] so
-/// [`flush_otlp`] / [`shutdown_otlp`] can drain the batch later.
+/// own `Arc`); [`init_with`](crate::init_with) moves it into the committed
+/// subscriber state so [`flush_otlp`] / [`shutdown_otlp`] can drain the batch.
 pub(crate) fn build_layer<S>(
     config: &OtlpConfig,
 ) -> Result<
@@ -149,7 +174,8 @@ pub(crate) fn build_layer<S>(
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
 {
-    let mut builder = SpanExporter::builder().with_http().with_endpoint(&config.endpoint);
+    let endpoint = traces_endpoint(&config.endpoint);
+    let mut builder = SpanExporter::builder().with_http().with_endpoint(endpoint);
 
     if !config.headers.is_empty() {
         builder = builder.with_headers(config.headers.clone());
@@ -193,16 +219,9 @@ where
     Ok((layer, provider))
 }
 
-/// Process-global handle to the active OTLP tracer provider, retained so the
-/// buffered batch can be drained after init. Set once per process, mirroring
-/// the one-shot global subscriber.
-static OTLP_PROVIDER: OnceLock<SdkTracerProvider> = OnceLock::new();
-
-/// Retain the provider built in [`build_layer`] for later flush/shutdown.
-///
-/// First write wins; later calls are ignored (matches the one-shot subscriber).
-pub(crate) fn store_provider(provider: SdkTracerProvider) {
-    let _ = OTLP_PROVIDER.set(provider);
+fn traces_endpoint(endpoint: &str) -> String {
+    let endpoint = endpoint.trim_end_matches('/');
+    if endpoint.ends_with("/v1/traces") { endpoint.to_owned() } else { format!("{endpoint}/v1/traces") }
 }
 
 /// Flush spans the batch processor has buffered, blocking until the export
@@ -215,7 +234,7 @@ pub(crate) fn store_provider(provider: SdkTracerProvider) {
 /// [`Error::OtlpInit`](crate::Error::OtlpInit) if the exporter reports a flush
 /// failure.
 pub fn flush_otlp() -> Result<(), crate::Error> {
-    match OTLP_PROVIDER.get() {
+    match crate::init::otlp_provider() {
         Some(provider) => provider.force_flush().map_err(|e| crate::Error::OtlpInit(e.to_string())),
         None => Ok(()),
     }
@@ -232,13 +251,62 @@ pub fn flush_otlp() -> Result<(), crate::Error> {
 /// [`Error::OtlpInit`](crate::Error::OtlpInit) if the exporter reports a
 /// shutdown failure other than "already shut down".
 pub fn shutdown_otlp() -> Result<(), crate::Error> {
-    let Some(provider) = OTLP_PROVIDER.get() else {
+    let Some(provider) = crate::init::otlp_provider() else {
         return Ok(());
     };
     match provider.shutdown() {
         Ok(()) | Err(opentelemetry_sdk::error::OTelSdkError::AlreadyShutdown) => Ok(()),
         Err(err) => Err(crate::Error::OtlpInit(err.to_string())),
     }
+}
+
+struct RedactedHeaders<'a>(&'a HashMap<String, String>);
+
+impl fmt::Debug for RedactedHeaders<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut map = formatter.debug_map();
+        for key in self.0.keys() {
+            map.entry(key, &"<redacted>");
+        }
+        map.finish()
+    }
+}
+
+struct RedactedResourceAttributes<'a>(&'a [(String, String)]);
+
+impl fmt::Debug for RedactedResourceAttributes<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut map = formatter.debug_map();
+        for (key, value) in self.0 {
+            if is_secret_resource_key(key) {
+                map.entry(key, &"<redacted>");
+            } else {
+                map.entry(key, value);
+            }
+        }
+        map.finish()
+    }
+}
+
+fn is_secret_resource_key(key: &str) -> bool {
+    let key: String = key
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .map(|character| character.to_ascii_lowercase())
+        .collect();
+    [
+        "authorization",
+        "credential",
+        "password",
+        "passwd",
+        "secret",
+        "token",
+        "apikey",
+        "accesskey",
+        "privatekey",
+    ]
+    .iter()
+    .any(|marker| key.contains(marker))
 }
 
 #[cfg(test)]
@@ -252,6 +320,13 @@ mod tests {
         assert_eq!(cfg.max_queue_size, None);
         assert_eq!(cfg.scheduled_delay, None);
         assert_eq!(cfg.max_export_batch_size, None);
+    }
+
+    #[test]
+    fn collector_base_endpoint_resolves_to_standard_trace_path() {
+        assert_eq!(traces_endpoint("http://127.0.0.1:4318"), "http://127.0.0.1:4318/v1/traces");
+        assert_eq!(traces_endpoint("http://127.0.0.1:4318/"), "http://127.0.0.1:4318/v1/traces");
+        assert_eq!(traces_endpoint("http://127.0.0.1:4318/v1/traces"), "http://127.0.0.1:4318/v1/traces");
     }
 
     #[test]
@@ -274,6 +349,23 @@ mod tests {
         assert_eq!(cfg.max_queue_size, Some(4096));
         assert_eq!(cfg.scheduled_delay, Some(Duration::from_secs(2)));
         assert_eq!(cfg.max_export_batch_size, Some(1024));
+    }
+
+    #[test]
+    fn debug_redacts_transport_and_secret_resource_values() {
+        let marker = "never-print-this-token";
+        let cfg = OtlpConfig::new(format!("https://user:{marker}@collector.invalid"))
+            .with_header("authorization", marker)
+            .with_resource_attribute("deployment.environment", "production")
+            .with_resource_attribute("service.api_token", marker);
+
+        let debug = format!("{cfg:?}");
+        assert!(!debug.contains(marker));
+        assert!(debug.contains("authorization"));
+        assert!(debug.contains("deployment.environment"));
+        assert!(debug.contains("production"));
+        assert!(debug.contains("service.api_token"));
+        assert!(debug.contains("<redacted>"));
     }
 
     #[test]

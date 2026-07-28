@@ -1,7 +1,7 @@
 [package]
 name = "kamu-logging"
-version = "1.6.0"
-description = "Small helper crate to configure structured logging for IMMER's services using the tracing ecosystem."
+version = "2.0.0"
+description = "Structured tracing setup for native services and Cloudflare Workers."
 documentation = "https://docs.rs/kamu-logging"
 categories = ["asynchronous", "development-tools::debugging", "wasm"]
 keywords = ["actix", "logging", "systemd", "tracing", "wasm"]

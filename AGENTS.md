@@ -186,7 +186,7 @@ Cadence expectations:
   keep Markdown tables lint-clean, and let `taplo` own TOML formatting
   (`just fmt` / `just fmt-check`) — don't hand-align.
 - **Coverage gates are enforced** (`kamu-iso3166` ≥ 98% lines, `kamu-logging`
-  ≥ 70%, `kamu-money-core` ≥ 80%, `kamu-snap-crypto` ≥ 70%,
+  ≥ 88%, `kamu-money-core` ≥ 80%, `kamu-snap-crypto` ≥ 70%,
   `kamu-snap-response` ≥ 85%); floors are **measured before they are set**, and
   a floor sitting below its measurement should say why in the recipe. Land tests with
   new code. The 4 thin `kamu-snap-*-{actix,axum}` adapter crates are

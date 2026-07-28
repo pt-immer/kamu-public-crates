@@ -2,6 +2,7 @@
 edition = "2024"
 name = "kamu-logging-cloudflare-worker-example"
 publish = false
+rust-version = "1.94"
 version = "0.1.0"
 
 [lib]

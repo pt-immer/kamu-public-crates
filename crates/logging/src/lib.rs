@@ -11,6 +11,7 @@
 //! Re-exports common `tracing` items so consumers can avoid a separate
 //! `tracing` import for the basic logging vocabulary.
 
+#![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
 #[cfg(all(feature = "systemd", feature = "wasm32"))]
@@ -37,7 +38,7 @@ mod actix;
 pub mod otlp;
 
 pub use crate::init::{init, init_or_skip, init_with};
-pub use crate::options::{Format, InitOptions, Sink};
+pub use crate::options::{Format, InitOptions, ParseFormatError, ParseSinkError, Sink};
 
 #[cfg(feature = "with-actix-web")]
 pub use crate::actix::{EnrichedRootSpanBuilder, get_actix_web_logger, get_actix_web_logger_with};
@@ -59,7 +60,7 @@ pub enum Error {
     #[error("{0}")]
     IO(#[from] std::io::Error),
 
-    /// A subscriber is already set and `idempotent` was `false`.
+    /// This crate already installed the subscriber and `idempotent` was false.
     #[error("logging subscriber already initialized")]
     AlreadyInitialized,
 
@@ -67,14 +68,31 @@ pub enum Error {
     #[error("invalid logging configuration: {0}")]
     InvalidConfiguration(String),
 
-    /// `tracing::subscriber::set_global_default` failed.
-    #[error("{0}")]
-    TracingGlobal(#[from] tracing::subscriber::SetGlobalDefaultError),
+    /// An environment variable contains an unsupported or malformed value.
+    #[error("invalid {variable}: expected {expected}")]
+    InvalidEnvironmentValue {
+        /// Name of the invalid environment variable.
+        variable: String,
+        /// Accepted grammar, without echoing the rejected value.
+        expected: &'static str,
+    },
 
-    /// `log::set_logger` failed (the `log` → `tracing` bridge).
+    /// Another crate installed the process-global tracing subscriber.
+    #[error("a foreign tracing subscriber already owns the process-global slot")]
+    ForeignGlobalSubscriber,
+
+    /// Another crate installed the process-global `log` facade.
+    ///
+    /// The tracing subscriber and any OTLP provider are already committed when
+    /// this error is returned; only the `log`-to-`tracing` bridge is foreign.
     #[cfg(feature = "systemd")]
-    #[error("{0}")]
-    TracingLog(#[from] tracing_log::log::SetLoggerError),
+    #[error("a foreign logger already owns the process-global log facade")]
+    ForeignGlobalLogger,
+
+    /// A prior installation panicked after claiming the tracing subscriber.
+    #[cfg(feature = "systemd")]
+    #[error("logging installation stopped before the log bridge committed")]
+    InstallationIncomplete,
 
     /// OTLP exporter construction failed.
     #[cfg(feature = "with-otlp")]

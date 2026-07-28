@@ -22,7 +22,7 @@ Disable default features and enable only `wasm32`:
 
 ```toml
 [dependencies]
-kamu-logging = { version = "1", default-features = false, features = ["wasm32"] }
+kamu-logging = { version = "2", default-features = false, features = ["wasm32"] }
 worker = "0.8"
 ```
 
@@ -33,7 +33,8 @@ intentionally incompatible with `wasm32`.
 
 Workers have a single global tracing subscriber, gated by an internal
 `OnceLock` — the **first** `init_with` call wins for the isolate's lifetime,
-and later calls are no-ops. When the filter depends on an `Env` binding
+and later idempotent calls are no-ops. A later strict call returns
+`Error::AlreadyInitialized`. When the filter depends on an `Env` binding
 (see [Configure filtering from Worker variables](#configure-filtering-from-worker-variables)
 below), this matters: install the subscriber on the **first fetch**, where
 `Env` is available. Do **not** install from `#[event(start)]` as well — `start`
@@ -50,12 +51,13 @@ use worker::{Context, Env, Request, Response, Result, event};
 
 #[event(fetch)]
 async fn main(_req: Request, env: Env, _ctx: Context) -> Result<Response> {
-    let _ = init_with(
+    init_with(
         InitOptions::default()
             .with_format(Format::Json)
             .with_sink(Sink::Stdout)
             .idempotent(true),
-    );
+    )
+    .map_err(|error| worker::Error::RustError(error.to_string()))?;
     let _ = &env;
     Response::ok("ok")
 }
@@ -75,7 +77,7 @@ binding inside `#[event(fetch)]` and pass it into
 use kamu_logging::{Format, InitOptions, Sink, init_with};
 use worker::Env;
 
-fn init_logging(env: &Env) {
+fn init_logging(env: &Env) -> Result<(), kamu_logging::Error> {
     let mut options = InitOptions::default()
         .with_format(Format::Json)
         .with_sink(Sink::Stdout)
@@ -85,7 +87,7 @@ fn init_logging(env: &Env) {
         options = options.with_default_filter(filter.to_string());
     }
 
-    let _ = init_with(options);
+    init_with(options)
 }
 ```
 
@@ -135,7 +137,9 @@ fn correlation_id(req: &Request) -> Option<String> {
 ```
 
 The default chain checks `x-request-id`, `x-correlation-id`, then `traceparent`.
-For `traceparent`, the W3C trace-id segment is used as the correlation id.
+Request and correlation IDs must be 1–128 visible ASCII bytes. For
+`traceparent`, the trace ID is used only after the complete W3C prefix
+validates.
 
 ## Local development
 

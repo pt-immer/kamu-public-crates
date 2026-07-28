@@ -15,9 +15,12 @@ extend-exclude = [
 
 [default]
 extend-ignore-re = [
-  # W3C `traceparent` header values: 00-<32 hex trace-id>-<16 hex span-id>-<2 hex
-  # flags>. The hex runs trip the dictionary (e.g. "...0ba902b7..." -> "ba").
-  "00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}",
+  # W3C `traceparent` test vectors: <2 hex version>-<32 hex trace-id>-<16 hex
+  # span-id>-<2 hex flags>. The parser tests deliberately include uppercase
+  # hex and a wrong delimiter; their hex runs trip the dictionary ("ba").
+  "[0-9A-Fa-f]{2}[-_][0-9A-Fa-f]{32}-[0-9A-Fa-f]{16}-[0-9A-Fa-f]{2}",
+  # The same W3C example's span id is also asserted on its own.
+  "00f067aa0ba902b7",
   # SQL keywords carrying English inflection, in kamu-money-pg's prose and its
   # pg_regress comments: "really LOADed", "ERRORs still print". The dictionary
   # splits the inflected tail off the keyword and reads the remainder as a typo

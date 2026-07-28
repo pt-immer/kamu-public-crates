@@ -372,7 +372,9 @@ cov:
 
 # Coverage gate for kamu-logging (no --all-features: systemd XOR wasm32)
 cov-logging:
-    cargo llvm-cov nextest -p kamu-logging --fail-under-lines 70
+    # Measured 92.67% after the 2.0 ownership/Actix tests. Keep 4.67 points for
+    # target-only terminal, environment, and wasm branches the host run cannot hit.
+    cargo llvm-cov nextest -p kamu-logging --fail-under-lines 88
 
 # Coverage gate for kamu-snap-crypto. Floor 70 (measured ~74%): the default-on
 # `webhook` providers ship without tests upstream; raising this is future work.
