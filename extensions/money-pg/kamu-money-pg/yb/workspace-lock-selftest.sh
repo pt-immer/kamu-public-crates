@@ -160,7 +160,7 @@ else
     # the substitution is not merely a theoretical byte difference.
     #
     # REFUSAL IS NOT ENOUGH; IT MUST COME FIRST. So this checks two things per entry point: a
-    # non-zero exit, and that nothing under kamu-money-pg/yb/out changed while it ran.
+    # non-zero exit, and that nothing under the fixture run root changed while it ran.
     #
     # `docker` and `cargo` are STUBBED to record-and-fail. An entry point that gets past the lock
     # will reach one of them, and the stub turns a twenty-minute image build inside `just check`
@@ -173,10 +173,26 @@ else
     done
     : > "$WORK/tool.calls"
 
-    SHARED="kamu-money-pg/yb/out"
+    # HERMETIC: THE PROBED ENTRY POINTS AND THE OBSERVED TREE ARE BOTH THE FIXTURE.
+    #
+    # This used to point at the real `kamu-money-pg/yb/out`, write a canary into it, and snapshot
+    # it. That made the selftest observe every other run on the machine: a legitimate concurrent
+    # `gate-pg-release` writing there changed the snapshot mid-probe, and this reported
+    #
+    #     'just _yb-ab-ref sha256:000...000' changed shared state before being refused
+    #
+    # blaming whichever entry point happened to be under test. A guard that fails for something
+    # its subject did not do teaches people to re-run it until it passes, which is the end of it
+    # as a guard. It also littered the real tree with a canary file.
+    #
+    # `KMONEY_RUN_ROOT` is what makes the redirect possible, and it is exported so the entry
+    # points below inherit it: every artifact-dir default in the suites resolves from it, so a
+    # probed script that DID write before refusing would write here, where the snapshot is
+    # watching. Nothing outside this fixture is read or written.
+    export KMONEY_RUN_ROOT="$WORK/shared"
+    SHARED="$KMONEY_RUN_ROOT"
     mkdir -p "$SHARED"
-    # A canary among whatever is really there, so the snapshot has something to notice even in a
-    # clean checkout. Name says why it exists, in case a run is killed before it is removed.
+    # A canary, so the snapshot has something to notice even though the fixture starts empty.
     CANARY="$SHARED/.workspace-lock-selftest-canary"
     printf 'written by workspace-lock-selftest; safe to delete\n' > "$CANARY"
     # Names, sizes and mtimes -- enough to see a write, cheap enough to run per entry point even
