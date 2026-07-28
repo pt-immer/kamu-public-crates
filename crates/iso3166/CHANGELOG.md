@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0]
+
+Toolchain maintenance only. No code or public API changes.
+
+### Changed
+
+- Minimum supported Rust version raised to 1.94.
+
 ## [0.3.1]
 
 Dependency maintenance only. No code or public API changes (the `phf` lookup

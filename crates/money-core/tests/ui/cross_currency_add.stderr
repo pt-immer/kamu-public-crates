@@ -1,0 +1,15 @@
+error[E0277]: cannot add `Money<kamu_money_core::iso::IDR>` to `Money<kamu_money_core::iso::USD>`
+  --> tests/ui/cross_currency_add.rs:11:17
+   |
+11 |     let _ = usd + idr;
+   |                 ^ no implementation for `Money<kamu_money_core::iso::USD> + Money<kamu_money_core::iso::IDR>`
+   |
+   = help: the trait `Add<Money<kamu_money_core::iso::IDR>>` is not implemented for `Money<kamu_money_core::iso::USD>`
+help: `Money<C>` implements trait `Add<Rhs>`
+  --> src/arith.rs
+   |
+   | impl<C: StaticCurrency> Add for Money<C> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Add`
+...
+   | impl<C: StaticCurrency> Add<&Self> for Money<C> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Add<&Money<C>>`

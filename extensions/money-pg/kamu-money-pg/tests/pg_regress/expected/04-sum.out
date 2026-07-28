@@ -1,0 +1,28 @@
+-- kmoney_sum_adds_an_explicit_list_within_one_currency
+USD 11.00
+-- kmoney_sum_is_order_independent_across_a_domain_edge_transient
+USD 999999999999999999.999999999999999999 | USD 999999999999999999.999999999999999999 | USD 999999999999999999.999999999999999999
+-- kmoney_sum_of_nothing_is_null
+empty_sum_is_null=true
+-- kmoney_sum_rejects_a_mixed_currency_argument
+ERROR:  kmoney: cannot sum USD and IDR: different currencies
+-- kmoney_sum_rejects_a_total_that_leaves_the_domain
+ERROR:  kmoney_sum: money domain overflow: 1000000000000000000000000000000000000 units is outside the domain |units| <= 999999999999999999999999999999999999 (NUMERIC(36,18) admits |v| < 10^18)
+-- the_sum_aggregate_totals_a_column
+USD 11.00
+-- the_sum_aggregate_of_nothing_is_null
+USD 11.00
+empty_group_is_null=true
+-- the_sum_aggregate_agrees_with_the_variadic_form
+aggregate_equals_variadic=true
+-- the_sum_aggregate_is_plan_independent_across_a_domain_edge_transient
+USD 999999999999999999.999999999999999999 | USD 999999999999999999.999999999999999999
+-- the_sum_aggregate_combines_an_empty_partial
+empty_partial_is_identity=true
+-- the_sum_aggregate_rejects_a_forged_transition_state
+ERROR:  sum(kmoney): transition state must be exactly 34 bytes, got 3
+-- the_sum_aggregate_rejects_a_total_that_leaves_the_domain
+ERROR:  sum(kmoney): money domain overflow: 1000000000000000000000000000000000000 units is outside the domain |units| <= 999999999999999999999999999999999999 (NUMERIC(36,18) admits |v| < 10^18)
+-- the_sum_aggregate_refuses_a_mixed_currency_column
+ERROR:  kmoney: cannot sum USD and IDR: different currencies
+== CASE COMPLETE: 04-sum ==

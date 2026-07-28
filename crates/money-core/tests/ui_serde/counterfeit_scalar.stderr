@@ -1,0 +1,28 @@
+error[E0277]: the trait bound `Counterfeit: transparent::sealed::Sealed` is not satisfied
+  --> tests/ui_serde/counterfeit_scalar.rs:13:53
+   |
+13 | impl kamu_money_core::wire::transparent::Scalar for Counterfeit {
+   |                                                     ^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `transparent::sealed::Sealed` is not implemented for `Counterfeit`
+  --> tests/ui_serde/counterfeit_scalar.rs:11:1
+   |
+11 | struct Counterfeit;
+   | ^^^^^^^^^^^^^^^^^^
+help: the following other types implement trait `transparent::sealed::Sealed`
+  --> src/wire.rs
+   |
+   |           impl<C: crate::currency::StaticCurrency> Sealed for crate::money::Money<C> {}
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Money<C>`
+   | /         impl<Base: crate::currency::StaticCurrency, Quote: crate::currency::StaticCurrency> Sealed
+   | |             for crate::rate::Rate<Base, Quote>
+   | |______________________________________________^ `Rate<Base, Quote>`
+note: required by a bound in `Scalar`
+  --> src/wire.rs
+   |
+   |     pub trait Scalar: sealed::Sealed + Sized {
+   |                       ^^^^^^^^^^^^^^ required by this bound in `Scalar`
+   = note: `Scalar` is a "sealed trait", because to implement it you also need to implement `kamu_money_core::wire::transparent::sealed::Sealed`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
+   = help: the following types implement the trait:
+             kamu_money_core::Money<C>
+             kamu_money_core::Rate<Base, Quote>

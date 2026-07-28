@@ -1,1 +1,11 @@
-msrv = "1.88"
+msrv = "1.94"
+
+# Words `clippy::doc_markdown` must NOT demand backticks around. `..` extends clippy's default
+# list rather than replacing it.
+#
+# These are product and standard names, not code identifiers. Backticking them renders a proper
+# noun as inline code, which is a claim that the reader can type it into a compiler.
+#
+# Only `kamu-money-core` and `kamu-iso3166` hold to `clippy::pedantic`, so this list exists for
+# them. It arrived with the money crate, whose documentation names PostgreSQL and ISO constantly.
+doc-valid-idents = ["IEEE", "ISO", "MurmurHash3", "MurmurHash3's", "PostgreSQL", "PostgreSQL's", ".."]

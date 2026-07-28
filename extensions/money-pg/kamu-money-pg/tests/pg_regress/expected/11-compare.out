@@ -1,0 +1,7 @@
+-- equality_is_currency_aware_and_never_raises
+cross_eq=false same_eq=true usd_ones=2 gt_within_one_currency=true
+-- ordering_refuses_cross_currency
+ERROR:  kmoney: cannot compute IDR > USD: different currencies
+-- there_is_no_cast_to_numeric
+ERROR:  cannot cast type kmoney to numeric
+== CASE COMPLETE: 11-compare ==

@@ -29,7 +29,7 @@ while iterating, but run `just gate` before you push.
 or the raw commands — see the [`Justfile`](Justfile). The PR pipeline
 (`on-pr-synced.yml`) runs rustfmt, clippy (`-D warnings -D clippy::all`
 workspace-wide, plus `-D clippy::pedantic` for `kamu-iso3166`), tests on
-`stable` and the `1.88` MSRV, a `no_std` cross-compile, docs, `cargo-deny`,
+`stable` and the `1.94` MSRV, a `no_std` cross-compile, docs, `cargo-deny`,
 per-crate `publish --dry-run`, a `wasm32` build, Markdown/TOML/spelling lint,
 and coverage (`kamu-iso3166` ≥ 98% lines, `kamu-logging` ≥ 70%,
 `kamu-snap-crypto` ≥ 70%, `kamu-snap-response` ≥ 70%).
@@ -38,11 +38,31 @@ and coverage (`kamu-iso3166` ≥ 98% lines, `kamu-logging` ≥ 70%,
 > `systemd` and `wasm32` features are mutually exclusive. Select features
 > per crate.
 
+Tests run under [cargo-nextest](https://nexte.st/) — locally, in `just gate`, in
+coverage, and in CI — configured in `.config/nextest.toml`. `just setup`
+installs it. nextest runs each test in its own process, and it does **not** run
+doctests, so every recipe pairs a nextest run with an explicit
+`cargo test --doc`; keep that pair when adding one.
+
 ## Commits
 
 Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`,
 `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, optionally scoped, e.g.
 `feat(iso3166): add Alpha2::iter()`.
+
+Work is tracked in JIRA under the `kec-` prefix. Name branches
+`<type>/kec-<n>-<slug>`, and end every commit message with the lowercase ticket
+on its own line — above any `Co-Authored-By:` trailer, which git only reads
+from the final paragraph:
+
+```text
+chore(deps): refresh workspace dependencies
+
+Bump every workspace requirement to the latest version the MSRV-1.94
+resolver allows.
+
+kec-1
+```
 
 ## Releasing a crate
 

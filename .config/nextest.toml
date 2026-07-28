@@ -1,0 +1,74 @@
+# cargo-nextest configuration — the test runner for every Justfile test recipe.
+#
+# Why nextest is the runner here, not a convenience:
+#
+#   * It runs each test in its OWN PROCESS. `kamu-logging`'s global tracing
+#     subscriber is a process-global one-shot, so a shared-process runner can
+#     only ever exercise one `init()` path per test binary. Per-process
+#     isolation makes that class of test honest.
+#   * A run is one summary line when green (see `status-level` below), which is
+#     what the repo's terse-by-default recipe contract wants.
+#
+# The one thing it does NOT do is run doctests — no test harness owns them, so
+# there is nothing for nextest to enumerate. Every recipe that runs nextest
+# therefore pairs it with an explicit `cargo test --doc`. Dropping that pairing
+# silently stops testing documentation examples; `just test-all` is the
+# reference for how the two go together.
+#
+# Profiles inherit from `default`, so `ci` below only states its differences.
+# Select one with `NEXTEST_PROFILE=<name>` or `--profile <name>`; CI sets
+# `NEXTEST_PROFILE: ci` at the workflow level.
+
+[profile.default]
+# Print per-test lines only for failures — a green run costs one summary line.
+status-level = "fail"
+# ...but always name a test that only passed on retry, so flakiness surfaces.
+final-status-level = "flaky"
+failure-output = "immediate"
+# Retries are deliberately OFF. This repo's gate is built to fail loudly rather
+# than paper over a problem, and a retried-into-green test is a quiet version of
+# the silent skip `just gate` exists to prevent. If a genuinely flaky test ever
+# lands, prefer fixing it; set `retries` here only as a temporary, commented
+# stopgap with the tracking ticket next to it.
+retries = 0
+# kamu-snap-crypto's RSA round-trips generate real keys and legitimately take
+# ~15s locally, longer on a CI runner. Warn at 60s, hard-kill at 5x that, so a
+# hung test cannot burn a whole job's wall clock.
+slow-timeout = { period = "60s", terminate-after = 5 }
+
+# kamu-money-core's database suites each start their OWN PostgreSQL
+# testcontainer. nextest is process-per-test and concurrent by default, so an
+# unqualified `--all-features` run starts five `postgres-types` containers and
+# four sqlx ones at the same time. That is a behaviour change from the source
+# repository, where the whole suite was a single `cargo test`, and on a shared
+# Docker daemon it is other people's problem too.
+#
+# Two, not one: enough to overlap container start-up latency, few enough that a
+# busy daemon is never this suite's doing. It lives here rather than as a flag on
+# a recipe so that EVERY invocation agrees — a per-recipe `--test-threads` would
+# bind only the invocation someone remembered to write it on.
+[test-groups.money-db]
+max-threads = 2
+
+[[profile.default.overrides]]
+filter = 'binary(pg_roundtrip) or binary(sqlx_roundtrip)'
+test-group = 'money-db'
+
+[profile.ci]
+# CI wants the complete picture from one run rather than the first failure, so a
+# single push surfaces every broken test instead of one per round-trip.
+fail-fast = false
+# Repeat failure output at the end of the log so a failure is readable without
+# scrolling back through the run.
+failure-output = "immediate-final"
+
+# No JUnit output, deliberately. The junit path is a per-PROFILE setting, and
+# `just test-all` invokes nextest seven times (one per feature permutation), so
+# every run would overwrite target/nextest/ci/junit.xml and the file would end up
+# holding only the last invocation — 24 kamu-snap-response tests out of 142,
+# while looking like a complete report. Measured, not theorised: an earlier
+# revision shipped exactly that artifact. nextest has no per-run junit path
+# (`--config` overrides *Cargo* config, not nextest's), and nothing here consumes
+# JUnit anyway — `failure-output = "immediate-final"` already repeats every
+# failure at the end of the log, which beats downloading an artifact. Revisit
+# only if a consumer appears, and give each invocation its own path if so.

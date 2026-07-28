@@ -11,6 +11,7 @@ A Cargo workspace of small, focused Rust crates — libraries and CLI apps — p
 | ------------------------------------ | --------------------------------------------------------------------------- | --------- |
 | [`kamu-iso3166`](crates/iso3166)     | Zero-allocation, `no_std` ISO 3166-1 / 3166-2 country & subdivision primitives | [![v](https://img.shields.io/crates/v/kamu-iso3166.svg)](https://crates.io/crates/kamu-iso3166) |
 | [`kamu-logging`](crates/logging)     | Structured logging over the `tracing` ecosystem: systemd/journald, Cloudflare-Worker `wasm32`, `actix-web` spans, OpenTelemetry/OTLP | [![v](https://img.shields.io/crates/v/kamu-logging.svg)](https://crates.io/crates/kamu-logging) |
+| [`kamu-money-core`](crates/money-core) | Exact monetary arithmetic: `i128` at a fixed scale of 18, compile-time currency identity, a residue that cannot be silently dropped | [![v](https://img.shields.io/crates/v/kamu-money-core.svg)](https://crates.io/crates/kamu-money-core) |
 | [`kamu-snap-crypto`](crates/snap-crypto) | Bank Indonesia SNAP BI cryptography: HMAC/RSA primitives, signing recipes, webhook verifier (framework-free leaf) | [![v](https://img.shields.io/crates/v/kamu-snap-crypto.svg)](https://crates.io/crates/kamu-snap-crypto) |
 | [`kamu-snap-response`](crates/snap-response) | SNAP BI response envelope + 61-variant error taxonomy (framework-free leaf) | [![v](https://img.shields.io/crates/v/kamu-snap-response.svg)](https://crates.io/crates/kamu-snap-response) |
 | [`kamu-snap-crypto-actix`](crates/snap-crypto-actix) | actix-web inbound-verify helper for `kamu-snap-crypto` | [![v](https://img.shields.io/crates/v/kamu-snap-crypto-actix.svg)](https://crates.io/crates/kamu-snap-crypto-actix) |
@@ -28,6 +29,7 @@ kamu-public-crates/
 ├── crates/
 │   ├── iso3166/          # kamu-iso3166 (vendors ISO data as a git submodule)
 │   ├── logging/          # kamu-logging
+│   ├── money-core/       # kamu-money-core (vendors the ISO 4217 register)
 │   ├── snap-crypto/      # kamu-snap-crypto (SNAP BI crypto, leaf)
 │   ├── snap-response/    # kamu-snap-response (SNAP BI envelope/errors, leaf)
 │   ├── snap-crypto-actix/    # actix-web verify adapter
@@ -55,16 +57,21 @@ just            # list recipes
 just gate       # complete CI-equivalent barrier — run before pushing
 just check-all  # fast inner loop: fmt + clippy + test
 just ci         # gate + publish dry-run (the full pipeline)
-just test-all   # workspace tests + kamu-iso3166 feature permutations
-just cov-all    # coverage gates for both crates
+just test-all   # workspace tests + every crate's feature permutations
+just cov-all    # coverage gates for every gated crate
 just lint-all   # rustfmt + clippy + Markdown + TOML + spelling
 ```
+
+Tests run under [cargo-nextest](https://nexte.st/) (installed by `just setup`,
+configured in `.config/nextest.toml`). It runs each test in its own process and
+does not run doctests, so doctests are always a separate pass.
 
 Without `just`:
 
 ```sh
-cargo test --workspace
-cargo test -p kamu-iso3166 --all-features
+cargo nextest run --workspace
+cargo test --workspace --doc
+cargo nextest run -p kamu-iso3166 --all-features
 cargo clippy --workspace --all-targets -- -D warnings -D clippy::all
 ```
 
@@ -81,7 +88,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## MSRV
 
-Rust **1.88** (workspace-wide), exercised in CI alongside `stable`.
+Rust **1.94** (workspace-wide), exercised in CI alongside `stable`.
 
 ## License
 

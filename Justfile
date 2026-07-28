@@ -54,7 +54,8 @@ doctor:
     check markdownlint-cli2 1 markdownlint-cli2 --version
     check cargo-llvm-cov 1 cargo-llvm-cov --version
     check cargo-deny 1 cargo-deny --version
-    check cargo-nextest 0 cargo nextest --version
+    check cargo-nextest 1 cargo nextest --version
+    check shellcheck 0 shellcheck --version
     echo "cross targets:"
     for tgt in thumbv7em-none-eabi wasm32-unknown-unknown; do
       if rustup target list --installed 2>/dev/null | grep -qx "$tgt"; then printf '  ✓ %-26s installed\n' "$tgt"; else printf '  · %-26s missing (run: just setup)\n' "$tgt"; fi
@@ -114,8 +115,16 @@ clippy-snap:
     cargo clippy -p kamu-snap-crypto --no-default-features -- -D warnings -D clippy::all
     cargo clippy -p kamu-snap-response --all-features --all-targets -- -D warnings -D clippy::all
 
+# kamu-money-core denies pedantic, cargo and nine named restriction lints in its
+# own lib.rs, which is stricter than the workspace — arithmetic that must not be
+# wrong earns a tighter setting than framework glue does.
+# Clippy kamu-money-core's feature permutations (stricter than the workspace).
+clippy-money:
+    cargo clippy -p kamu-money-core --all-features --all-targets -- -D warnings -D clippy::all
+    cargo clippy -p kamu-money-core --no-default-features -- -D warnings -D clippy::all
+
 # Lint Rust: workspace clippy::all + iso3166 pedantic + ALL non-default feature perms
-lint-rust: clippy-workspace clippy-iso3166 clippy-logging clippy-snap
+lint-rust: clippy-workspace clippy-iso3166 clippy-logging clippy-money clippy-snap
 
 # Lint Markdown
 lint-md:
@@ -129,12 +138,127 @@ lint-toml:
 lint-spell:
     typos
 
-# Lint docs the way the CI `lint docs` job does: TOML fmt-check + Markdown +
-# TOML lint + spelling (no Rust). lint-all is the superset that adds Rust.
-lint-docs: fmt-toml-check lint-md lint-toml lint-spell
+# Scan the tracked tree for PII, credentials, and the fleet's connection-string
+# rules. Adopted from the incoming kamu-money repository, which held the only
+# working implementation of a rule this repo states in three places and enforced
+# nowhere.
+#
+# The host-specific needles are read from the ENVIRONMENT, never written here:
+# hardcoding this machine's username in order to search for it would commit the
+# very string being hunted. Every pattern below was TIGHTENED after its first
+# run produced a false positive — a scanner that cries wolf is one whose next
+# real finding gets waved through, so a loose pattern is worse than none.
+#
+# Own shebang, so a `git grep` that matches nothing (exit 1) does not kill the
+# recipe under this Justfile's `set shell := [... "-euo", "pipefail" ...]`.
+scrub:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    hits=0
+    scan() { # label pattern [exclude-ere]
+        local label="$1" pattern="$2" exclude="${3:-}"
+        local found
+        found=$(git grep -nIE "$pattern" -- ':!Justfile' 2>/dev/null)
+        if [ -n "$exclude" ]; then
+            found=$(printf '%s\n' "$found" | grep -vE "$exclude")
+        fi
+        if [ -n "$found" ]; then
+            printf '\033[31m%s\033[0m\n%s\n\n' "$label" "$found"
+            hits=$((hits+1))
+        fi
+    }
+    # Container and CI users are not this machine's identity; naming them in a
+    # Dockerfile or a captured error message is correct, not a leak.
+    scan "host home paths"      "/home/[a-z][a-z0-9_-]+" "/home/(pgrx|yugabyte|postgres|runner|node|ubuntu)\b"
+    # RFC 2606 reserves .invalid/.test/.example so fixtures can name an address
+    # that cannot exist. Flagging those teaches the reader to skip the report.
+    # `noreply@` is excluded because a no-reply address is by construction not
+    # a person's contact detail — and this repo REQUIRES one, in the
+    # Co-Authored-By trailer AGENTS.md documents by example.
+    scan "email addresses"      "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}" \
+         "noreply@|@(example|test|invalid|localhost)\.|@example\.(com|net|org)|\.(invalid|test|example)\b"
+    # FOUR octets, not three: a 2-octet tail matched the decimal literal
+    # "USD 10.50.50" in a parser test as though it were an RFC 1918 address.
+    scan "private IPv4"         "\b(10|192\.168|172\.(1[6-9]|2[0-9]|3[01]))\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\b"
+    # `localhost` as an actual host token. Prose saying "127.0.0.1, never
+    # localhost" is the rule being OBEYED, and flagging it trains the skim.
+    scan "localhost as a host"  "(://|@|=[ ]*[\"']?|-h[ ]+)localhost([:/\"' ]|$)"
+    scan "all-interface bind"   "[\"'=: ]0\.0\.0\.0[\"':]"
+    scan "credential prefixes"  "(ghp_|github_pat_|sk-[a-zA-Z0-9]{20}|AKIA[0-9A-Z]{16}|BEGIN [A-Z ]*PRIVATE KEY)"
+    # THE MACHINE ITSELF. A CPU model or kernel string fingerprints somebody's
+    # infrastructure just as surely as a hostname, and a benchmark transcript is
+    # exactly the thing that gets pasted into a design document.
+    scan "cpu model names"      "\b(Xeon|EPYC|Ryzen|Core\(TM\)|Threadripper)\b"
+    scan "kernel/distro string" "\b[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-(arch|generic|cachyos|azure|aws|gcp)[a-z-]*\b"
+    # THE MACHINE'S OWN NAMES, read from the environment so they are never written
+    # into this file. Generic container and CI account names are skipped for the
+    # same reason the home-path scan excludes them: `runner` is not anybody's
+    # identity, and on a GitHub Actions runner $USER *is* `runner` — which made
+    # this recipe fail CI on the words "test runner" and "AsyncRunner" while
+    # passing on every developer machine whose username does not collide.
+    for needle in "${USER:-}" "$(hostname 2>/dev/null)"; do
+        case "$needle" in
+            runner|ubuntu|node|postgres|pgrx|yugabyte|root|admin|user|build|ci) continue ;;
+        esac
+        if [ -n "$needle" ] && [ "${#needle}" -ge 3 ]; then
+            scan "this machine's identifiers" "\b${needle}\b"
+        fi
+    done
+    if [ "$hits" -gt 0 ]; then
+        echo "scrub: $hits category/categories need attention BEFORE any commit, tag, push or publish"
+        exit 1
+    fi
+    echo "scrub: clean"
 
-# Lint every file type (formatting + Rust + Markdown + TOML + spelling)
-lint-all: fmt-check lint-rust lint-md lint-toml lint-spell
+# Lint tracked shell scripts. Shell is part of the correctness boundary in the PG
+# lane, so this is a real gate rather than a formality.
+#
+# `-x` FOLLOWS `source`d FILES, which is what makes cluster.sh and artifact.sh
+# checkable at all -- without it they are opaque and SC1091 fires on every one.
+#
+# THE LANE IS CHECKED FROM ITS OWN ROOT, and that is not a stylistic choice. Its
+# scripts resolve siblings relative to the lane root (`kamu-money-pg/yb/...`),
+# exactly as they did in the repository they came from -- which is the same
+# property that let 37 of them transplant without a single edit. Checked from
+# here instead, every one of those paths resolves to nothing and shellcheck
+# reports 33 unfollowable sources. Measured both ways: 33 findings from the
+# repository root, 0 from the lane root.
+lint-shell:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    if ! command -v shellcheck >/dev/null 2>&1; then
+        echo "lint-shell: shellcheck NOT INSTALLED -- run 'just setup'. Failing rather than passing vacuously." >&2
+        exit 1
+    fi
+    lane=extensions/money-pg
+    rc=0
+    host=$(git ls-files '*.sh' | grep -v "^$lane/" || true)
+    lane_files=$(git ls-files "$lane/*.sh" | sed "s|^$lane/||" || true)
+    if [ -n "$host" ]; then
+        # shellcheck disable=SC2086
+        shellcheck -x $host || rc=1
+    fi
+    if [ -n "$lane_files" ]; then
+        # shellcheck disable=SC2086
+        (cd "$lane" && shellcheck -x $lane_files) || rc=1
+    fi
+    n_host=$(printf '%s' "$host" | grep -c . || true)
+    n_lane=$(printf '%s' "$lane_files" | grep -c . || true)
+    if [ "$rc" -eq 0 ]; then
+        echo "lint-shell: clean over $n_host repository + $n_lane lane script(s)"
+    fi
+    exit "$rc"
+
+# Lint docs the way the CI `lint docs` job does: TOML fmt-check + Markdown +
+# TOML lint + spelling + the PII/secret scan (no Rust). lint-all adds Rust.
+# `scrub` is here as well as in lint-all on purpose: this is the job a
+# root-level `*.md`-only PR runs alone, and prose is where a leaked hostname
+# arrives far more often than Rust is.
+lint-docs: fmt-toml-check lint-md lint-toml lint-spell scrub
+
+# Lint every file type (formatting + Rust + Markdown + TOML + spelling + shell
+# + the PII/secret scan)
+lint-all: fmt-check lint-rust lint-md lint-toml lint-spell lint-shell scrub
 
 # ---------------------------------------------------------------------------
 # Tests / docs / supply chain
@@ -145,18 +269,58 @@ lint-all: fmt-check lint-rust lint-md lint-toml lint-spell
 test-iso3166:
     cargo nextest run -p kamu-iso3166 --all-features
     cargo nextest run -p kamu-iso3166 --no-default-features --features serde
+    # nextest cannot run doctests. This finds none today (kamu-logging owns the
+    # only doctests in the workspace) but still compiles them, so a broken `///`
+    # example fails here the moment one is written.
     cargo test -p kamu-iso3166 --all-features --doc
 
-# Test the workspace plus kamu-iso3166 / kamu-snap-* feature permutations
+# Test kamu-money-core WITHOUT Docker: every feature permutation whose tests do
+# not start a container. This is the recipe `just gate` reaches through test-all.
+# Test kamu-money-core's Docker-free feature permutations + its doctests.
+test-money:
+    cargo nextest run -p kamu-money-core
+    cargo nextest run -p kamu-money-core --features serde
+    cargo nextest run -p kamu-money-core --features postgres -E 'not binary(pg_roundtrip)'
+    # nextest cannot run doctests.
+    cargo test -p kamu-money-core --all-features --doc --quiet
+
+# Test kamu-money-core's container-backed suites. REQUIRES a reachable Docker
+# daemon. Concurrency is bounded by the `money-db` test group in
+# .config/nextest.toml, not by a flag here, so every invocation agrees.
+#
+# Deliberately NOT in `gate`: the gate must stay runnable without Docker, and a
+# gate stage that cannot run is a stage that gets skipped. `pg_native_column` and
+# `yugabyte_roundtrip` are excluded too — they need the native kmoney extension,
+# which belongs to the PostgreSQL lane rather than to this crate's own suite.
+# Test kamu-money-core's container-backed suites (REQUIRES Docker; not in gate).
+test-money-db:
+    cargo nextest run -p kamu-money-core --all-features -E 'binary(pg_roundtrip) or binary(sqlx_roundtrip)'
+
+# Test the workspace plus kamu-iso3166 / kamu-snap-* feature permutations.
+# Every test binary runs under cargo-nextest (process-per-test isolation, see
+# .config/nextest.toml); doctests are a SEPARATE `cargo test --doc` pass because
+# nextest does not run them.
 test-all:
-    cargo test --workspace
-    # kamu-logging OTLP path (default `cargo test` runs systemd+actix, not OTLP):
-    # exercises BatchSpanProcessor + the drain helpers + the runtime test.
-    cargo test -p kamu-logging --features with-otlp
-    cargo test -p kamu-iso3166 --all-features
-    cargo test -p kamu-iso3166 --no-default-features --features serde
-    cargo test -p kamu-snap-crypto --all-features
-    cargo test -p kamu-snap-response --all-features
+    # `compile_fail` is EXCLUDED here and owned by `just test-money`. Its trybuild
+    # goldens are byte-exact rustc diagnostics, so they can only ever match ONE
+    # compiler — and this recipe runs under both `stable` and the MSRV toolchain
+    # (CI's test matrix, and `just gate`'s msrv stage). Blessed on stable, they
+    # fail on 1.94 for a reason that says nothing about the code.
+    cargo nextest run --workspace -E 'not binary(compile_fail)'
+    # kamu-logging OTLP path (a default run exercises systemd+actix, not OTLP):
+    # covers BatchSpanProcessor + the drain helpers + the runtime test.
+    cargo nextest run -p kamu-logging --features with-otlp
+    cargo nextest run -p kamu-iso3166 --all-features
+    cargo nextest run -p kamu-iso3166 --no-default-features --features serde
+    cargo nextest run -p kamu-snap-crypto --all-features
+    cargo nextest run -p kamu-snap-response --all-features
+    # kamu-money-core's adapters are all feature-gated, so a default run reaches
+    # none of them. Container-backed and native-extension suites are excluded —
+    # `just test-money-db` owns the first, the PostgreSQL lane owns the second.
+    cargo nextest run -p kamu-money-core --all-features -E 'not (binary(compile_fail) or binary(pg_roundtrip) or binary(sqlx_roundtrip) or binary(pg_native_column) or binary(yugabyte_roundtrip))'
+    # Doctests, which nextest skips by design. kamu-logging holds the only ones
+    # in the workspace, and the default-feature run reaches them.
+    cargo test --workspace --doc
     # Leaf lib must also compile with default features off (HMAC/RSA-only crypto,
     # no snap-bi/webhook). Tests pull snap-bi, so this is a lib check, not a test.
     cargo check -p kamu-snap-crypto --no-default-features
@@ -174,8 +338,15 @@ doc-iso3166:
 doc-snap-response:
     RUSTDOCFLAGS=-Dwarnings cargo doc -p kamu-snap-response --no-deps --all-features
 
+# Build kamu-money-core docs with all features. Every adapter is feature-gated,
+# so a default-feature docs build would not render wire, pg or sqlx_pg at all
+# (docs.rs parity — the manifest sets all-features there for the same reason).
+# Build kamu-money-core docs with all features (CI `docs (kamu-money-core)` job).
+doc-money:
+    RUSTDOCFLAGS=-Dwarnings cargo doc -p kamu-money-core --no-deps --all-features
+
 # Build docs the way docs.rs does
-doc: doc-workspace doc-iso3166 doc-snap-response
+doc: doc-workspace doc-iso3166 doc-money doc-snap-response
 
 # Supply-chain audit. `--all-features` is a GLOBAL flag (before the subcommand)
 # — it widens the audited dependency graph to every optional dep, matching what
@@ -188,31 +359,64 @@ deny:
 # Coverage
 # ---------------------------------------------------------------------------
 
+# Every gate below measures through `cargo llvm-cov nextest`, so coverage runs
+# the same binaries the same way `just test-all` does — one runner, one result.
+# Verified identical to the old `cargo llvm-cov` (cargo-test runner) numbers on
+# kamu-iso3166: 99.67% lines / 96.83% regions either way. Doctests are excluded
+# from coverage under both runners (cargo-llvm-cov needs nightly for those), so
+# the floors mean the same thing they always did.
+
 # Coverage gate for kamu-iso3166 (also emits target/lcov.info for the CI artifact)
 cov:
-    cargo llvm-cov -p kamu-iso3166 --all-features --ignore-filename-regex 'generated|build/' --fail-under-lines 98 --lcov --output-path target/lcov.info
+    cargo llvm-cov nextest -p kamu-iso3166 --all-features --ignore-filename-regex 'generated|build/' --fail-under-lines 98 --lcov --output-path target/lcov.info
 
 # Coverage gate for kamu-logging (no --all-features: systemd XOR wasm32)
 cov-logging:
-    cargo llvm-cov -p kamu-logging --fail-under-lines 70
+    cargo llvm-cov nextest -p kamu-logging --fail-under-lines 70
 
 # Coverage gate for kamu-snap-crypto. Floor 70 (measured ~74%): the default-on
 # `webhook` providers ship without tests upstream; raising this is future work.
 cov-snap-crypto:
-    cargo llvm-cov -p kamu-snap-crypto --all-features --fail-under-lines 70
+    cargo llvm-cov nextest -p kamu-snap-crypto --all-features --fail-under-lines 70
 
 # Coverage gate for kamu-snap-response. Floor 70 (measured ~74%); `category.rs`
 # is currently untested upstream. The 4 thin actix/axum adapter crates have no
 # tests (framework-bound glue) and are intentionally compile-only, not gated.
 cov-snap-response:
-    cargo llvm-cov -p kamu-snap-response --all-features --fail-under-lines 70
+    cargo llvm-cov nextest -p kamu-snap-response --all-features --fail-under-lines 70
+
+# Coverage gate for kamu-money-core. Floor 80, measured 84.89% lines on
+# 2026-07-28 (2584 regions, 1370 lines).
+#
+# WHY NOT HIGHER, stated so the number is not a mystery to whoever next reads it:
+# the container-backed and native-extension suites are excluded here, because a
+# coverage gate that needs a Docker daemon is a gate that gets skipped. Those
+# suites are exactly what exercises the two driver adapters, so `sqlx_pg.rs`
+# measures 0% and `pg.rs` 12.5% in this run and pull the total down by roughly
+# four points. Everything else sits between 76% and 100%. Raising this floor
+# means either covering the adapters offline or moving the gate behind Docker —
+# not tightening the number and hoping.
+#
+# `build/` is excluded for the same reason kamu-iso3166 excludes it: the code
+# that generates the register is exercised by the build itself, and by
+# tests/register_codegen.rs, neither of which this measurement sees.
+#
+# `compile_fail` is excluded too. A trybuild harness executes no library code, so
+# it contributes nothing to line coverage — and including it made this recipe
+# depend on `rust-src`, because the no_iterator_sum golden quotes standard-library
+# source. The coverage CI job installs llvm-tools-preview, not rust-src, so the
+# suite mismatched there while passing in `just test-money`, which does install
+# it. Measuring the same goldens in three places bought nothing and broke one.
+# Coverage gate for kamu-money-core (>= 80% lines; measured 84.89%).
+cov-money:
+    cargo llvm-cov nextest -p kamu-money-core --all-features -E 'not (binary(compile_fail) or binary(pg_roundtrip) or binary(sqlx_roundtrip) or binary(pg_native_column) or binary(yugabyte_roundtrip))' --ignore-filename-regex 'build/' --fail-under-lines 80
 
 # Coverage gates for every gated crate
-cov-all: cov cov-logging cov-snap-crypto cov-snap-response
+cov-all: cov cov-logging cov-money cov-snap-crypto cov-snap-response
 
 # HTML coverage report for the whole workspace; prints the output path
 cov-html:
-    cargo llvm-cov --workspace --ignore-filename-regex 'generated|build/' --html
+    cargo llvm-cov nextest --workspace --ignore-filename-regex 'generated|build/' --html
     @echo "report: target/llvm-cov/html/index.html"
 
 # ---------------------------------------------------------------------------
@@ -272,20 +476,21 @@ clean:
 # ---------------------------------------------------------------------------
 
 # THE GATE — the complete, CI-equivalent barrier: a green gate means CI passes.
-# Runs every check CI runs (lint-all + test-all + MSRV 1.88 + cov-all + doc +
+# Runs every check CI runs (lint-all + test-all + MSRV 1.94 + cov-all + doc +
 # cross builds + deny) as compact PASS/FAIL lines; full output for failed stages,
 # or everything with `VERBOSE=1 just gate`. There is NO silent skip: a missing
-# tool or target (taplo, typos, markdownlint, cargo-llvm-cov, the 1.88 toolchain,
+# tool or target (taplo, typos, markdownlint, cargo-llvm-cov, the 1.94 toolchain,
 # the wasm32 / thumbv7em targets) makes its stage FAIL loudly — run `just setup`
-# (and `rustup toolchain install 1.88`) first. `just check-all` is the fast loop.
+# (and `rustup toolchain install 1.94`) first. `just check-all` is the fast loop.
 # Complete CI-equivalent barrier — a green gate means CI passes; run before push.
 gate:
     #!/usr/bin/env bash
     set -uo pipefail
-    names=("lint-all" "test-all" "msrv(1.88)" "cov-all" "doc" "build-nostd" "build-wasm" "build-wasm-snap" "deny")
+    names=("lint-all" "test-all" "test-money" "msrv(1.94)" "cov-all" "doc" "build-nostd" "build-wasm" "build-wasm-snap" "deny")
     cmds=("just lint-all"
           "just test-all"
-          "cargo +1.88 test --workspace --quiet"
+          "just test-money"
+          "cargo +1.94 nextest run --workspace -E 'not binary(compile_fail)' && cargo +1.94 test --workspace --doc --quiet"
           "just cov-all"
           "just doc"
           "just build-nostd"
@@ -303,7 +508,36 @@ gate:
     elif [ "$fail" -ne 0 ]; then
       for i in "${!names[@]}"; do [ "${rcs[$i]}" -ne 0 ] && printf '\n=== %s (FAILED) ===\n%s\n' "${names[$i]}" "${outs[$i]}"; done
     fi
+    # STATED NON-COVERAGE, WHICH IS NOT THE SAME AS A SILENT SKIP. This gate deliberately does not
+    # build the PostgreSQL extension lane -- that needs Docker and takes hours, and a gate nobody
+    # can afford to run before a push is a gate that stops being run. But a green PASS beside
+    # uncommitted extension changes reads as "all clear" unless it says otherwise, so it says so.
+    if ! git diff --quiet HEAD -- extensions/money-pg 2>/dev/null || \
+       ! git diff --quiet -- extensions/money-pg 2>/dev/null; then
+      echo
+      echo "  NOTE  extensions/money-pg has changes this gate did NOT cover."
+      echo "        Run 'just gate-all' before pushing them."
+    fi
     exit "$fail"
+
+# Run a recipe in the PostgreSQL extension lane, e.g. `just pg gate-pg`.
+# `just pg` on its own lists that lane's recipes.
+#
+# A PASSTHROUGH RATHER THAN A MIRROR PER RECIPE. The lane has around fifty; copying their names up
+# here would create a second list to keep in step, and the copy that falls behind is the one
+# somebody trusts. CI still calls `just <something>` for every job, so the Justfile-as-source-of-
+# truth rule holds either way.
+pg *ARGS:
+    cd extensions/money-pg && just {{ ARGS }}
+
+# The PostgreSQL lane's gate. Hours, and needs Docker -- deliberately separate from `gate`, which
+# must stay fast enough to run before every push.
+gate-pg:
+    cd extensions/money-pg && just gate-pg
+
+# Everything: the nine published crates AND the extension lane. The pre-push barrier for a change
+# that touches extensions/money-pg.
+gate-all: gate gate-pg
 
 # The full pipeline: everything the gate runs, plus a publish dry-run.
 ci: gate publish-all
@@ -315,7 +549,13 @@ ci: gate publish-all
 # They print the minimum signal needed to pick the next action and keep the full
 # output behind VERBOSE=1, so a green run costs a handful of lines instead of a
 # few thousand. CI does NOT use them — CI runs the explicit lint-all / test-all /
-# cov-all recipes above, whose full logs are the source of truth.
+# cov-all recipes above.
+#
+# Test verbosity is NOT one of the things these recipes vary: every nextest run
+# in this file, agentic or not, reports through .config/nextest.toml. A green
+# run is a summary line everywhere, and CI's completeness comes from the run
+# counts ("Starting N tests across M binaries") plus the `ci` profile's
+# immediate-final failure output — not from listing every passing test.
 # ---------------------------------------------------------------------------
 
 # Fast inner-loop check with a compact PASS/FAIL summary: fmt + clippy + test on
@@ -329,7 +569,7 @@ check-all:
     names=("fmt" "clippy" "test")
     cmds=("cargo fmt --all --check"
           "cargo clippy --workspace --all-targets --message-format=short -- -D warnings -D clippy::all"
-          "cargo test --workspace --quiet")
+          "cargo nextest run --workspace && cargo test --workspace --doc --quiet")
     declare -a rcs outs
     fail=0
     for i in "${!names[@]}"; do
@@ -350,18 +590,18 @@ check crate:
     set -uo pipefail
     fail=0
     cargo clippy -p '{{ crate }}' --all-targets --message-format=short -- -D warnings -D clippy::all || fail=1
-    cargo test -p '{{ crate }}' --quiet || fail=1
+    cargo nextest run -p '{{ crate }}' || fail=1
+    cargo test -p '{{ crate }}' --doc --quiet || fail=1
     exit "$fail"
 
-# Falls back to `cargo test` when cargo-nextest is absent (run: just setup).
-# Terse test run via cargo-nextest (summary + failures-only) + doctests.
+# Terse test run: cargo-nextest over the workspace + the doctests it cannot run.
+# Verbosity comes from .config/nextest.toml (status-level = fail), not a flag, so
+# every nextest invocation in this file reports the same way. cargo-nextest is
+# REQUIRED — there is deliberately no `cargo test` fallback, because silently
+# swapping the runner would change test isolation without saying so; a missing
+# binary should fail loudly and send you to `just setup`.
 test-fast:
     #!/usr/bin/env bash
     set -uo pipefail
-    if command -v cargo-nextest >/dev/null 2>&1; then
-      cargo nextest run --workspace --status-level fail
-      cargo test --workspace --doc --quiet
-    else
-      echo "cargo-nextest missing (run: just setup) — falling back to cargo test"
-      cargo test --workspace --quiet
-    fi
+    cargo nextest run --workspace
+    cargo test --workspace --doc --quiet

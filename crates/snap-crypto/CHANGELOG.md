@@ -1,5 +1,13 @@
 # Changelog — `kamu-snap-crypto`
 
+## 2.3.0 — 2026-07-27
+
+Toolchain maintenance only. No code or public API changes.
+
+### Changed
+
+- Minimum supported Rust version raised to 1.94.
+
 ## 2.2.0 — 2026-06-14
 
 Webhook-verifier hardening + doc fix surfaced by a knowledge-graph audit.

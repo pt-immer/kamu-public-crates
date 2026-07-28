@@ -146,7 +146,7 @@ npm install
 npm run dev
 ```
 
-Then visit `http://localhost:8787/` and watch Wrangler's console output for
+Then visit `http://127.0.0.1:8787/` and watch Wrangler's console output for
 JSON-formatted tracing events.
 
 ## Limitations

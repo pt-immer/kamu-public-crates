@@ -1,0 +1,9 @@
+-- addition_within_one_currency_is_exact
+USD 11.00 | USD 10.00
+-- addition_is_exact_at_one_unit_of_the_eighteenth_decimal
+IDR 999999999999999999.999999999999999999
+-- addition_across_currencies_is_refused_at_runtime
+ERROR:  kmoney: cannot compute USD + IDR: different currencies
+-- addition_past_the_domain_top_is_refused
+ERROR:  kmoney: the result of IDR + IDR is outside the domain |units| <= 10^36 - 1
+== CASE COMPLETE: 03-arith ==

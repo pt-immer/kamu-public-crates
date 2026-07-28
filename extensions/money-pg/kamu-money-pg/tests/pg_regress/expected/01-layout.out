@@ -1,0 +1,11 @@
+-- kmoney_is_eighteen_bytes_with_no_header
+stored=18 in_memory=18
+-- the_catalog_says_fixed_length_plain_and_byte_aligned
+18/f/c/p
+-- the_size_tradeoff_against_numeric_is_measured_not_assumed
+kmoney_fixed_at_18=true numeric_wins_typical=true numeric_loses_at_top=true
+-- the_size_does_not_depend_on_the_value
+distinct_sizes=1
+-- numeric_silently_rounds_four_e_minus_nineteen_to_zero
+numeric_rounds_4e_minus_19_to_zero=true
+== CASE COMPLETE: 01-layout ==

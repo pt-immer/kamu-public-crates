@@ -4,6 +4,18 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows
 [SemVer](https://semver.org/) from `1.0.0` onwards.
 
+## [1.6.0] — 2026-07-27
+
+Toolchain maintenance. No public API changes.
+
+### Changed
+
+- Minimum supported Rust version raised to 1.94.
+- Unit tests and the Cloudflare Workers guide now spell loopback as
+  `127.0.0.1` rather than `localhost`, matching the rest of the fleet.
+  `localhost` resolves `::1` first, which is the wrong answer wherever a
+  service is published on IPv4 only.
+
 ## [1.5.0] — 2026-06-15
 
 Move OTLP span export off the request path so it no longer blocks the thread

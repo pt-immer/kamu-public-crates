@@ -65,7 +65,7 @@ Runtime dependencies are kept minimal and none require the allocator:
 
 ## MSRV
 
-Rust **1.88** (the workspace MSRV; the crate itself only needs
+Rust **1.94** (the workspace MSRV; the crate itself only needs
 `core::error::Error` in `no_std`, stable since 1.81).
 
 ## Licensing
@@ -103,7 +103,7 @@ building from `crates.io` do **not** need submodule access.
 [badge-docs]: https://img.shields.io/docsrs/kamu-iso3166?style=flat-square&logo=docs.rs&label=docs.rs
 [badge-ci]: https://img.shields.io/github/actions/workflow/status/pt-immer/kamu-public-crates/on-pr-synced.yml?branch=main&style=flat-square&label=CI
 [badge-license]: https://img.shields.io/crates/l/kamu-iso3166?style=flat-square
-[badge-msrv]: https://img.shields.io/badge/MSRV-1.88-blue?style=flat-square&logo=rust
+[badge-msrv]: https://img.shields.io/badge/MSRV-1.94-blue?style=flat-square&logo=rust
 
 [link-crates]: https://crates.io/crates/kamu-iso3166
 [link-docs]: https://docs.rs/kamu-iso3166

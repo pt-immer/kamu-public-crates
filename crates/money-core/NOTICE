@@ -1,0 +1,19 @@
+kamu-money-core
+Copyright (c) 2026 PT. IMMER Contributors
+
+This product includes the ISO 4217 currency register published by
+SIX Group AG (SIX Financial Information), which serves as the maintenance
+agency for ISO 4217 on behalf of ISO.
+
+    vendor/list-one.xml
+
+The register is redistributed unmodified. SIX publishes it free of charge and
+states no terms alongside it. This project asserts no licence over the file and
+claims no ownership of the register; the credit above is the point of this
+notice.
+
+The crate's own MIT OR Apache-2.0 licence covers this project's work — the
+build script, the parser, the validation, the emitted code and the
+documentation. It does not, and cannot, cover vendor/list-one.xml.
+
+See VENDORED.md for the full provenance record.

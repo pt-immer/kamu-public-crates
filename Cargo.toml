@@ -2,6 +2,7 @@
 members = [
   "crates/iso3166",
   "crates/logging",
+  "crates/money-core",
   "crates/snap-crypto",
   "crates/snap-crypto-actix",
   "crates/snap-crypto-axum",
@@ -9,9 +10,18 @@ members = [
   "crates/snap-response-actix",
   "crates/snap-response-axum",
 ]
-# The Cloudflare Worker example is a self-contained wasm32 package (its own
-# Cargo.toml + workers-rs deps); keep it out of the host workspace build/test.
-exclude = ["crates/logging/examples/cloudflare-worker"]
+exclude = [
+  # The PostgreSQL extension lane is its OWN workspace: it patches pgrx to a git
+  # fork, needs `panic = "unwind"` profiles that cargo only honours at a root,
+  # and requires a higher MSRV than the published crates. Excluding it is what
+  # makes CI selectivity structural -- `cargo <anything> --workspace` here cannot
+  # see it, so no aggregate needs an `--exclude` somebody has to remember. See
+  # extensions/money-pg/Cargo.toml and AGENTS.md.
+  "extensions/money-pg",
+  # The Cloudflare Worker example is a self-contained wasm32 package (its own
+  # Cargo.toml + workers-rs deps); keep it out of the host workspace build/test.
+  "crates/logging/examples/cloudflare-worker",
+]
 resolver = "3"
 
 [workspace.package]
@@ -23,17 +33,17 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 publish = true
 repository = "https://github.com/pt-immer/kamu-public-crates"
-rust-version = "1.88"
+rust-version = "1.94"
 
 [workspace.dependencies]
 # --- kamu-iso3166 ---
 csv = "1.4.0"
 phf = { version = "0.14.0", default-features = false }
 phf_codegen = "0.14.0"
-proc-macro2 = "1.0.106"
+proc-macro2 = "1.0.107"
 proptest = "1.11.0"
-quote = "1.0.45"
-serde = { version = "1.0.228", default-features = false }
+quote = "1.0.47"
+serde = { version = "1.0.229", default-features = false }
 serde_json = "1"
 thiserror = { version = "2", default-features = false }
 # --- kamu-logging ---
@@ -43,11 +53,12 @@ console_error_panic_hook = "0.1.7"
 opentelemetry = { version = "0.32", default-features = false }
 opentelemetry-otlp = { version = "0.32", default-features = false }
 opentelemetry_sdk = { version = "0.32", default-features = false }
-# Floor at 0.3.47: the fix for RUSTSEC-2026-0009 (RFC 2822 stack-exhaustion
-# DoS) shipped in 0.3.47 — 0.3.46 only raised time's MSRV to rustc 1.88, which
-# is why the workspace MSRV is 1.88. 0.3.47 keeps the `wasm-bindgen` feature
+# `time` no longer sets the workspace MSRV — `sqlx` 0.9 does, declaring
+# rust-version 1.94.0, and kamu-money-core's `sqlx` feature pulls it in. The
+# floor here must still stay at or above 0.3.47 — the fix for RUSTSEC-2026-0009
+# (RFC 2822 stack-exhaustion DoS) — and keeps the `wasm-bindgen` feature
 # kamu-logging's wasm32 path needs.
-time = "0.3.47"
+time = "0.3.54"
 tracing = "0.1"
 tracing-actix-web = "0.7"
 tracing-journald = "0.3"
@@ -56,10 +67,10 @@ tracing-opentelemetry = { version = "0.33", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
 tracing-web = "0.1.3"
 # --- kamu-snap-* (Bank Indonesia SNAP BI) ---
-# actix-web (declared above) is shared with kamu-logging. `time` is floored at
-# 0.3.47 (see above) for RUSTSEC-2026-0009 — actix-web -> cookie pulls it.
+# actix-web (declared above) is shared with kamu-logging. `time` is floored
+# above 0.3.47 (see above) for RUSTSEC-2026-0009 — actix-web -> cookie pulls it.
 axum = { version = "0.8", default-features = false, features = ["json"] }
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 hex = "0.4"
 # hmac / sha2 / rand_core are pinned to the digest-0.10 generation: sha2 types
@@ -67,6 +78,8 @@ hex = "0.4"
 # latest stable rsa (0.9.x) is built on digest 0.10 + rand_core 0.6. Bump the
 # whole stack together (hmac 0.13, sha2 0.11, rand_core 0.10) when rsa 0.10
 # leaves release-candidate status — don't split digest generations here.
+# Re-checked 2026-07-25: rsa max_stable is still 0.9.10 (0.10.0-rc.18 is the
+# newest, still a release candidate), so the pin stands.
 hmac = { version = "0.12", features = ["reset", "std"] }
 http = "1"
 rand_core = { version = "0.6", features = ["getrandom"] }
@@ -80,6 +93,29 @@ kamu-snap-crypto-axum = { path = "crates/snap-crypto-axum", version = "2" }
 kamu-snap-response = { path = "crates/snap-response", version = "2" }
 kamu-snap-response-actix = { path = "crates/snap-response-actix", version = "2" }
 kamu-snap-response-axum = { path = "crates/snap-response-axum", version = "3" }
+# --- kamu-money-core ---
+# `sqlx` is what sets this workspace's MSRV: 0.9 declares rust-version 1.94.0,
+# and it arrives through kamu-money-core's `sqlx` feature.
+bytes = "1.10"
+ethnum = "1.5.3"
+# `default-features = false` is load-bearing, not tidiness: postcard's default
+# feature set pulls heapless 0.7, which pulls atomic-polyfill, which is
+# unmaintained (RUSTSEC-2023-0089) and fails `cargo deny`. `use-std` is all the
+# binary wire-format tests need, and without the defaults heapless leaves the
+# graph entirely — so this is a real fix rather than an advisory ignore.
+postcard = { version = "1.1.3", default-features = false, features = ["use-std"] }
+postgres = "0.19.14"
+postgres-types = "0.2.14"
+roxmltree = "0.21.1"
+# Benchmark-only, and a DEV dependency on purpose: `benches/kernel.rs` is the
+# fixture that keeps the comparison in money-core's DESIGN.md reproducible.
+# Nothing shipped links it.
+rust_decimal = "1.38.0"
+sqlx = { version = "0.9.0", default-features = false, features = ["postgres"] }
+testcontainers = { version = "0.27.3", features = ["blocking"] }
+testcontainers-modules = { version = "0.15.0", features = ["postgres"] }
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
+trybuild = "1.0"
 
 [workspace.lints.rust]
 warnings = "deny"
