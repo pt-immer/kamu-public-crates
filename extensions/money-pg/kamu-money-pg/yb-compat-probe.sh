@@ -4,7 +4,7 @@
 #
 #   just yb-probe            (or: ./kamu-money-pg/yb-compat-probe.sh [yb-image] [builder-image])
 #
-# Two independent blockers, each asserted. See specs.md E15. Exit status is the result:
+# Two independent blockers, each asserted. See kamu-money-core's DESIGN.md E15. Exit status is the result:
 #
 #   0  both blockers reproduced; E15 still describes reality
 #   1  a blocker is gone; E15 must be re-examined, not re-asserted
@@ -51,7 +51,7 @@ WORK="$(mktemp -d)"
 #
 # The direction of the assertion is the unusual part and the reason it is spelled out here.
 # Every check below demands that something FAIL. A blocker that stops reproducing is not good
-# news to be swallowed -- it means specs.md E15 is describing a world that no longer exists, and
+# news to be swallowed -- it means kamu-money-core's DESIGN.md E15 is describing a world that no longer exists, and
 # the adapter-only decision it justifies has to be revisited. So "the compile succeeded" exits
 # non-zero, on purpose.
 BLOCKERS_CONFIRMED=0
@@ -213,7 +213,7 @@ if [ -n "$BLOCKERS_LOST" ]; then
   echo "PROBE FAILED: ${BLOCKERS_CONFIRMED} of 2 blockers reproduced."
   echo "These no longer reproduce:${BLOCKERS_LOST}"
   echo
-  echo "This is not a broken script -- it is the finding changing underneath specs.md E15."
+  echo "This is not a broken script -- it is the finding changing underneath kamu-money-core's DESIGN.md E15."
   echo "E15 documents why kamu-money-pg cannot run on YugabyteDB and justifies serving it through"
   echo "the phase-4 text adapters instead. If a blocker is gone, that reasoning needs to be"
   echo "re-examined rather than re-asserted. Read the transcript above before editing E15."

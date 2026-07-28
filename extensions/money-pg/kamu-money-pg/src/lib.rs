@@ -1,4 +1,4 @@
-//! `kmoney` — money as a native PostgreSQL type. (specs.md C8)
+//! `kmoney` — money as a native PostgreSQL type. (kamu-money-core's DESIGN.md C8)
 //!
 //! The storage claim this crate makes good on: a **fixed-size payload, no varlena decode, no
 //! limb codec**, so reading a value is a header read and a cast.
@@ -26,7 +26,7 @@
 // and `clippy::nursery` BY NAME rather than enabling either group, for the reason kamu-money-core
 // records: `restriction` is self-contradictory by design and `nursery` is under development, so
 // denying a whole group lets a toolchain upgrade break the build for reasons unrelated to this
-// code. (specs.md C10)
+// code. (kamu-money-core's DESIGN.md C10)
 //
 // This is the C ABI crate, so casts are load-bearing rather than incidental — which is exactly
 // why the lints are ON. Every `as` that survives is a deliberate reinterpret, and each one takes
@@ -296,7 +296,7 @@ fixed_length_money_type! {
     ///
     /// # Why this type is `snake_case`
     ///
-    /// The SQL name is the permanent public interface of a database extension and specs.md C8
+    /// The SQL name is the permanent public interface of a database extension and kamu-money-core's DESIGN.md C8
     /// fixes it as `kmoney`, so the Rust name is what gives way — nothing imports this crate
     /// as a Rust library, it is a `cdylib`. Keeping the two identical also means
     /// `rust_regtypein::<Self>()`, which resolves the OID from the Rust type's last path

@@ -5,7 +5,7 @@
 #
 # WHY THIS EXISTS, AND WHY IT IS NOT `sha256sum schema.sql`.
 #
-# pgrx's generated SQL is NOT REPRODUCIBLE. Measured 2026-07-27 (specs.md E21): two runs of
+# pgrx's generated SQL is NOT REPRODUCIBLE. Measured 2026-07-27 (DESIGN.md E21): two runs of
 # `cargo pgrx schema pg18` over BYTE-IDENTICAL source produce different files, because the order
 # in which entities are emitted varies between runs. The observed diff was 437 lines in which
 # `kmoney_mixed_eq` and `kmoney_mixed_ne` swapped places, neither having moved in source.

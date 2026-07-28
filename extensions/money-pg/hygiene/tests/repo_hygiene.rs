@@ -240,7 +240,7 @@ fn the_control_file_does_not_describe_a_type_that_was_renamed() {
 ///
 /// This is a CLASS guard, and it exists because fixing the instances did not hold. An external
 /// review named three sites by line; those three were corrected and six identical claims
-/// survived elsewhere — including a dated Note in `specs.md` still giving the retracted premise
+/// survived elsewhere — including a dated Note in a design document still giving the retracted premise
 /// as the *current* rationale, a thousand lines after §0 had dropped it. A grep is the only
 /// thing that scales to "and everywhere else".
 ///
@@ -1189,7 +1189,7 @@ fn the_boundary_probe_cannot_reach_a_deployable_artifact() {
 
 /// A benchmark runner must print a host DIGEST, never the host's identity.
 ///
-/// A transcript gets pasted into `specs.md`, and a CPU model plus kernel string plus core count
+/// A transcript gets pasted into a design document, and a CPU model plus kernel string plus core count
 /// fingerprints somebody's infrastructure. What a reader of two transcripts actually needs is
 /// *"was this the same machine?"*, never *"which machine was it?"* — so the runners hash those
 /// values and print twelve hex characters, and the raw strings survive only as hash inputs.

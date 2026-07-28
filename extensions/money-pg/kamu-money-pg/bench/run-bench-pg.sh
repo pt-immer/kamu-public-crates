@@ -4,7 +4,7 @@
 #   kamu-money-pg/bench/run-bench-pg.sh [major]      # default 18
 #
 # WHY THIS EXISTS. E20's SQL figures were measured with code that was deliberately discarded,
-# which left `specs.md` §1 saying "reproduce before trusting" directly above an entry nobody could
+# which left kamu-money-core's DESIGN.md §1 saying "reproduce before trusting" directly above an entry nobody could
 # reproduce. This is the fixture that closes that. It reports; it never fails on a number.
 #
 # NO THRESHOLD, ON PURPOSE -- the same rule `just bench-yb` states: a limit invented before there

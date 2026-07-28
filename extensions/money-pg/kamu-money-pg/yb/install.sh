@@ -56,7 +56,7 @@ YB_INSTALL_SHA=""
 #
 # The expected hash for a baked image comes from the manifest INSIDE the image, never from the
 # host's out/ directory. Those are separate builds, and pgrx's generated SQL is not byte-stable
-# across them (see specs.md M-2) -- comparing them would make this a reproducible-builds assertion
+# across them (see DESIGN.md E21) -- comparing them would make this a reproducible-builds assertion
 # it has no business making, and would fail for a reason that has nothing to do with the node.
 yb_ensure_extension() {
     local node="$1" art="${2:-${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}}"

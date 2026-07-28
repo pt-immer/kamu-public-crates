@@ -109,7 +109,7 @@ YB_ALLOW_UNPINNED=1 just yb-build "$NEW"
 YB_ALLOW_UNPINNED=1 just release-check 4 "$NEW"
 
 # 4. ONLY if all of the above are green: record the new digest in kamu-money-pg/yb/YB-PINNED.txt,
-#    add an evidence entry to specs.md, and commit the two together.
+#    add an evidence entry to kamu-money-core's DESIGN.md, and commit the two together.
 ```
 
 If step 2 or 3 fails, **the answer is not to loosen the probe.** Re-derive the adaptation in the

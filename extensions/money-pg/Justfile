@@ -504,7 +504,7 @@ test-yb tag="":
 test-pg majors=PG_MAJORS jobs="1":
     MATRIX_JOBS={{ jobs }} ./kamu-money-pg/test-matrix.sh {{ majors }}
 
-# The evidence behind specs.md E15, re-run against a live YugabyteDB.
+# The evidence behind kamu-money-core's DESIGN.md E15, re-run against a live YugabyteDB.
 #
 # Deliberately OUTSIDE `gate-pg`. Every other recipe here asserts that this project works;
 # this one asserts that something else does NOT, which is a claim about a third party's
@@ -518,7 +518,7 @@ test-pg majors=PG_MAJORS jobs="1":
 # NOTE: this proves the *naive* (unshimmed) build still fails -- the E15 measurement. It does
 # NOT contradict `just yb-native`, which builds the SAME extension against the 3-symbol pgrx fork
 # and runs it byte-exact on YB (E16). Same code, two builds: naive fails, adapted works.
-[doc("Re-run the YugabyteDB incompatibility (NAIVE build) evidence behind specs.md E15.")]
+[doc("Re-run the YugabyteDB incompatibility (NAIVE build) evidence behind kamu-money-core's DESIGN.md E15.")]
 yb-probe yb-image="" builder-image="":
     ./kamu-money-pg/yb-compat-probe.sh "{{ yb-image }}" "{{ builder-image }}"
 
@@ -717,7 +717,7 @@ numa-selftest:
 # regress against -- and a soak's duration is a decision, not a default.
 #
 # THESE ARE FIXTURES, NOT ONE-OFFS, and that is the point. E20's figures were measured with code
-# that was deliberately thrown away, which left specs.md §1 saying "reproduce before trusting"
+# that was deliberately thrown away, which left kamu-money-core's DESIGN.md §1 saying "reproduce before trusting"
 # directly above an entry nobody could reproduce. `bench-rust` and `bench-pg` are what make those
 # numbers checkable; they are deliberately OUTSIDE `gate-offline`, `gate-pg` and `gate-pg-release`,
 # because a timing that can fail a gate on a loaded machine is a gate that gets disabled.
