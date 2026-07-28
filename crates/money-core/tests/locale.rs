@@ -19,13 +19,13 @@
 //!    that a second number claiming to be the money, and rejects it.
 
 use kamu_money_core::iso::{EUR, IDR, JPY, USD, XAU};
-use kamu_money_core::locale::{DE_EUR, EN_USD, ID_IDR, JA_JPY, LocalePolicy, SymbolPosition};
-use kamu_money_core::{DOMAIN_MAX, Iso4217, Money, MoneyError, POW10_SCALE, text};
+use kamu_money_core::locale::{DE_EUR, EN_USD, FractionDigits, ID_IDR, JA_JPY, LocalePolicy, SymbolPosition};
+use kamu_money_core::{DOMAIN_MAX, Iso4217, LocaleError, Money, POW10_SCALE, text};
 use proptest::prelude::*;
 
 /// 16 000.50 IDR — the amount the spec's own C2 example turns on.
 fn idr_16000_50() -> Money<IDR> {
-    Money::<IDR>::from_units(16_000 * POW10_SCALE + POW10_SCALE / 2).expect("in domain")
+    Money::<IDR>::try_from_units(16_000 * POW10_SCALE + POW10_SCALE / 2).expect("in domain")
 }
 
 /// **This test did not compile before 2026-07-27, and that is the whole assertion.**
@@ -52,9 +52,11 @@ fn a_policy_can_be_built_from_data_loaded_at_run_time() {
     let grouping: Vec<u8> = vec![3];
 
     let policy = LocalePolicy::new(Iso4217::IDR, &symbol)
-        .with_separators(&group, &decimal)
-        .with_grouping(&grouping)
-        .with_min_fraction_digits(0);
+        .try_with_separators(&group, &decimal)
+        .unwrap()
+        .try_with_grouping(&grouping)
+        .unwrap()
+        .with_min_fraction_digits(FractionDigits::ZERO);
 
     assert_eq!(policy.render(idr_16000_50()).unwrap(), "Rp 16.000,5");
 
@@ -75,7 +77,7 @@ fn the_canonical_form_is_untouched_by_any_policy() {
     assert_eq!(ID_IDR.render(m).unwrap(), "Rp 16.000,5");
     assert_eq!(m.to_string(), "IDR 16000.50", "and still unchanged after rendering");
 
-    let usd = Money::<USD>::from_units(1_234_500_000_000_000_000_000).unwrap();
+    let usd = Money::<USD>::try_from_units(1_234_500_000_000_000_000_000).unwrap();
     assert_eq!(usd.to_string(), "USD 1234.50");
     assert_eq!(EN_USD.render(usd).unwrap(), "$1,234.50");
 }
@@ -84,7 +86,7 @@ fn the_canonical_form_is_untouched_by_any_policy() {
 #[test]
 fn rupiah_displays_at_zero_dp_but_settles_at_two() {
     assert_eq!(Iso4217::IDR.exponent(), Some(2), "ISO settlement exponent is 2");
-    let whole = Money::<IDR>::from_major(16_000).unwrap();
+    let whole = Money::<IDR>::try_from_major(16_000).unwrap();
     assert_eq!(whole.to_string(), "IDR 16000.00", "settles at 2");
     assert_eq!(ID_IDR.render(whole).unwrap(), "Rp 16.000", "displays at 0");
 }
@@ -100,17 +102,17 @@ fn rupiah_displays_at_zero_dp_but_settles_at_two() {
 /// assertion here, it is load-bearing under most of the file.
 #[test]
 fn a_policy_pads_but_never_rounds() {
-    assert_eq!(ID_IDR.min_fraction_digits(), 0);
+    assert_eq!(ID_IDR.min_fraction_digits(), FractionDigits::ZERO);
 
     // One significant digit past the display minimum.
     assert_eq!(ID_IDR.render(idr_16000_50()).unwrap(), "Rp 16.000,5");
 
     // Eighteen of them: the smallest representable value must survive intact.
-    let dust = Money::<IDR>::from_units(1).unwrap();
+    let dust = Money::<IDR>::try_from_units(1).unwrap();
     assert_eq!(ID_IDR.render(dust).unwrap(), "Rp 0,000000000000000001");
 
     // And a value whose digits stop short of the minimum is PADDED up to it.
-    let flat = Money::<USD>::from_major(7).unwrap();
+    let flat = Money::<USD>::try_from_major(7).unwrap();
     assert_eq!(EN_USD.render(flat).unwrap(), "$7.00");
 }
 
@@ -118,23 +120,23 @@ fn a_policy_pads_but_never_rounds() {
 /// Indian lakh/crore shape, which is the reason this is a slice and not a single number.
 #[test]
 fn the_last_grouping_size_repeats() {
-    let big = Money::<USD>::from_major(12_345_678).unwrap();
+    let big = Money::<USD>::try_from_major(12_345_678).unwrap();
     assert_eq!(EN_USD.render(big).unwrap(), "$12,345,678.00");
 
     // Indian digit grouping: 3, then 2 forever. Built by hand rather than shipped as a
     // named locale, because the table has no INR and inventing one to decorate a test
     // would be a fact this crate did not measure.
-    let indian = LocalePolicy::new(Iso4217::USD, "$").with_grouping(&[3, 2]);
+    let indian = LocalePolicy::new(Iso4217::USD, "$").try_with_grouping(&[3, 2]).unwrap();
     assert_eq!(indian.render(big).unwrap(), "$1,23,45,678.00");
 
-    let ungrouped = LocalePolicy::new(Iso4217::USD, "$").with_grouping(&[]);
+    let ungrouped = LocalePolicy::new(Iso4217::USD, "$").try_with_grouping(&[]).unwrap();
     assert_eq!(ungrouped.render(big).unwrap(), "$12345678.00");
 }
 
 /// Symbol placement and separator choice are the locale's, not the currency's.
 #[test]
 fn the_symbol_may_follow_the_amount() {
-    let m = Money::<EUR>::from_units(1_234_500_000_000_000_000_000).unwrap();
+    let m = Money::<EUR>::try_from_units(1_234_500_000_000_000_000_000).unwrap();
     assert_eq!(m.to_string(), "EUR 1234.50", "canonical is unaffected");
     assert_eq!(DE_EUR.render(m).unwrap(), "1.234,50 €");
     assert_eq!(DE_EUR.symbol_position(), SymbolPosition::Suffix);
@@ -144,12 +146,12 @@ fn the_symbol_may_follow_the_amount() {
 /// minimum is the ISO exponent, so JPY simply arrives at 0.
 #[test]
 fn a_zero_exponent_currency_needs_no_special_case() {
-    let m = Money::<JPY>::from_major(1_234).unwrap();
+    let m = Money::<JPY>::try_from_major(1_234).unwrap();
     assert_eq!(m.to_string(), "JPY 1234");
     assert_eq!(JA_JPY.render(m).unwrap(), "￥1,234");
 
     // ...and a fractional yen still shows every digit it has.
-    let odd = Money::<JPY>::from_units(1_234 * POW10_SCALE + 250_000_000_000_000_000).unwrap();
+    let odd = Money::<JPY>::try_from_units(1_234 * POW10_SCALE + 250_000_000_000_000_000).unwrap();
     assert_eq!(JA_JPY.render(odd).unwrap(), "￥1,234.25");
 }
 
@@ -158,8 +160,8 @@ fn a_zero_exponent_currency_needs_no_special_case() {
 fn a_currency_with_no_minor_unit_defaults_to_no_fraction() {
     let policy = LocalePolicy::new(Iso4217::XAU, "XAU");
     assert_eq!(Iso4217::XAU.exponent(), None, "gold has no cents");
-    assert_eq!(policy.min_fraction_digits(), 0);
-    let gold = Money::<XAU>::from_units(10_500_000_000_000_000_000).unwrap();
+    assert_eq!(policy.min_fraction_digits(), FractionDigits::ZERO);
+    let gold = Money::<XAU>::try_from_units(10_500_000_000_000_000_000).unwrap();
     assert_eq!(gold.to_string(), "XAU 10.5");
     // Prefix is the default position, so the alpha-3 used as a symbol leads.
     assert_eq!(policy.render(gold).unwrap(), "XAU10.5");
@@ -170,10 +172,10 @@ fn a_currency_with_no_minor_unit_defaults_to_no_fraction() {
 /// mislabelled number reaching a human — the failure this whole crate is organised around.
 #[test]
 fn a_policy_refuses_a_currency_that_is_not_its_own() {
-    let usd = Money::<USD>::from_major(10).unwrap();
+    let usd = Money::<USD>::try_from_major(10).unwrap();
     assert_eq!(
         ID_IDR.render(usd),
-        Err(MoneyError::WrongCurrency { expected: Iso4217::IDR, found: Iso4217::USD })
+        Err(LocaleError::WrongCurrency { expected: Iso4217::IDR, found: Iso4217::USD })
     );
     // Same check on the runtime path, where the currency is a value rather than a type.
     assert!(ID_IDR.render_units(1, Iso4217::USD).is_err());
@@ -183,23 +185,39 @@ fn a_policy_refuses_a_currency_that_is_not_its_own() {
 /// The sign is outermost, ahead of a prefixed symbol and ahead of the digits either way.
 #[test]
 fn the_sign_sits_outside_the_symbol() {
-    let owed = Money::<USD>::from_units(-1_234_500_000_000_000_000_000).unwrap();
+    let owed = Money::<USD>::try_from_units(-1_234_500_000_000_000_000_000).unwrap();
     assert_eq!(EN_USD.render(owed).unwrap(), "-$1,234.50");
 
-    let owed_eur = Money::<EUR>::from_units(-1_234_500_000_000_000_000_000).unwrap();
+    let owed_eur = Money::<EUR>::try_from_units(-1_234_500_000_000_000_000_000).unwrap();
     assert_eq!(DE_EUR.render(owed_eur).unwrap(), "-1.234,50 €");
 }
 
-/// A minimum past [`SCALE`] asks for digits the type cannot hold. It saturates rather than
-/// inventing them: padding to 25 places would claim a precision the value does not have,
-/// which is §0.1's second number wearing yet another costume.
 #[test]
-fn a_minimum_past_the_scale_cannot_invent_precision() {
-    let policy = LocalePolicy::new(Iso4217::USD, "$").with_min_fraction_digits(25);
-    let m = Money::<USD>::from_major(1).unwrap();
-    let rendered = policy.render(m).unwrap();
-    assert_eq!(rendered, "$1.000000000000000000");
-    assert_eq!(rendered.split('.').nth(1).unwrap().len(), 18, "SCALE places, not 25");
+fn a_minimum_past_the_scale_is_rejected() {
+    assert_eq!(FractionDigits::try_new(19), Err(LocaleError::FractionDigitsOutOfRange { digits: 19 }));
+    let maximum = FractionDigits::try_new(18).unwrap();
+    let policy = LocalePolicy::new(Iso4217::USD, "$").with_min_fraction_digits(maximum);
+    assert_eq!(maximum.get(), 18);
+    assert_eq!(policy.min_fraction_digits(), maximum);
+}
+
+#[test]
+fn degenerate_locale_policies_are_rejected() {
+    assert_eq!(
+        LocalePolicy::new(Iso4217::USD, "$").try_with_grouping(&[3, 0]),
+        Err(LocaleError::ZeroGroupingWidth { index: 1 })
+    );
+    assert_eq!(
+        LocalePolicy::new(Iso4217::USD, "$").try_with_separators(".", "."),
+        Err(LocaleError::AmbiguousSeparators)
+    );
+    assert_eq!(
+        LocalePolicy::new(Iso4217::USD, "$").try_with_separators(",", ""),
+        Err(LocaleError::EmptyDecimalSeparator)
+    );
+
+    let ungrouped = LocalePolicy::new(Iso4217::USD, "$").try_with_separators("", ".").unwrap();
+    assert_eq!(ungrouped.render(Money::<USD>::try_from_major(1_000).unwrap()).unwrap(), "$1000.00");
 }
 
 /// One digit engine, not two. A policy configured to match the canonical form's choices must
@@ -214,8 +232,10 @@ fn a_canonical_shaped_policy_reproduces_the_canonical_digits() {
     for &code in Iso4217::EVERY {
         let policy = LocalePolicy::new(code, code.alpha3())
             .with_symbol_position(SymbolPosition::Prefix)
-            .with_grouping(&[])
-            .with_separators("", ".");
+            .try_with_grouping(&[])
+            .unwrap()
+            .try_with_separators("", ".")
+            .unwrap();
         for units in [0, 1, -1, DOMAIN_MAX, -DOMAIN_MAX, 10_500_000_000_000_000_000] {
             let via_policy = policy.render_units(units, code).unwrap().replace(code.alpha3(), "");
             let canonical = text::render(units, code)
@@ -258,5 +278,23 @@ proptest! {
         let flat = grouped.replace(['$', ','], "");
         let canonical = text::render(units, Iso4217::USD).unwrap().replace("USD ", "");
         prop_assert_eq!(flat, canonical);
+    }
+
+    #[test]
+    fn every_valid_grouping_policy_terminates_and_preserves_digits(
+        units in -DOMAIN_MAX..=DOMAIN_MAX,
+        grouping in prop::collection::vec(1u8..=8, 0..6),
+        grouping_enabled in any::<bool>(),
+    ) {
+        let group_separator = if grouping_enabled { "," } else { "" };
+        let policy = LocalePolicy::new(Iso4217::USD, "")
+            .try_with_grouping(&grouping)
+            .unwrap()
+            .try_with_separators(group_separator, ".")
+            .unwrap();
+
+        let rendered = policy.render_units(units, Iso4217::USD).unwrap();
+        let plain = rendered.replace(group_separator, "");
+        prop_assert_eq!(text::parse_amount(&plain).unwrap(), units);
     }
 }

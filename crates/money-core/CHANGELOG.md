@@ -27,17 +27,20 @@ Initial release.
   can otherwise create a transient overflow that the inputs and the output do
   not explain.
 - `Division` and `Residue` — lossy division yields a `Division` that will not
-  release its quotient until the caller either absorbs the residue or discards
-  it deliberately. Dropping a nonzero unacknowledged residue panics in every
-  profile, and returns quietly during an already-active unwind so it cannot turn
-  a panic into a process abort.
+  release its quotient until the caller takes the residue or discards it
+  deliberately. A bare residue is a `#[must_use]` accounting obligation; its
+  `Drop` never panics.
 - `Rate<Base, Quote>`, strictly positive, rejecting zero and negative values at
   every ingress. There is deliberately no `inverse()` and no `compose()`.
-- `allocate` — conserving splits by integer weight.
-- `LocalePolicy` — symbol, grouping and a *minimum* fraction width, as a
-  separate entry point rather than through `Display`, which is frozen because
-  it backs the wire form and the stored form at once. Display pads; it never
-  rounds.
+- Result-based `try_from_units` and `try_from_major` constructors. Narrow
+  `AmountError`, `ParseMoneyError`, `AllocationError`, `RateError`,
+  `LocaleError`, and `WireError` contracts replace one catch-all error.
+- Fallible `allocate` for conserving integer-weight distributions. `split`
+  yields an allocation-free iterator; `split_collect` makes eager allocation
+  explicit and reports reservation failure.
+- Validated `LocalePolicy` configuration and `FractionDigits`. Empty decimal
+  separators, equal non-empty separators, zero grouping widths, and widths
+  above the fixed scale are rejected. Display pads; it never rounds.
 - `stable_hash` — a hash of the canonical payload whose value is fixed by this
   crate rather than by a toolchain, for anything that persists it.
 - Optional `serde` (structured, plus a transparent-string adapter), `postgres`

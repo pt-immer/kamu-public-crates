@@ -40,15 +40,14 @@
 //!
 //! # What deliberately has NO codec
 //!
-//! `MoneyError`, `Rounding`, `Residue` and `Division`. The first two are this crate's own
-//! vocabulary, and a wire form for them ships house style to every consumer of a published
-//! crate. The last two are stronger than style: **`Residue` is a drop-bomb**, so deserializing
-//! one would materialise a panic-on-drop from an attacker-controlled field — a remote denial
-//! of service, not a preference. `Division` holds money that has not been accounted for and
-//! has no meaning outside the call that produced it.
+//! Error types, [`Rounding`](crate::Rounding), [`Residue`](crate::Residue), and
+//! [`Division`](crate::Division). Errors and rounding policy are application
+//! vocabulary. A residue is an accounting obligation tied to an operation, and
+//! a division is unresolved local state; neither is a durable value to recreate
+//! from untrusted input.
 
 use crate::currency::StaticCurrency;
-use crate::domain::MoneyError;
+use crate::error::WireError;
 use crate::iso::Iso4217;
 use crate::money::Money;
 use crate::rate::Rate;
@@ -119,13 +118,12 @@ impl<'de> Deserialize<'de> for Iso4217 {
 // Shared helpers
 // ---------------------------------------------------------------------------------------
 
-fn to_de_error<E: de::Error>(e: &MoneyError) -> E {
+fn to_de_error<E: de::Error>(e: &impl fmt::Display) -> E {
     E::custom(format_args!("{e}"))
 }
 
 fn money_from_units<C: StaticCurrency, E: de::Error>(units: i128) -> Result<Money<C>, E> {
-    Money::<C>::from_units(units)
-        .ok_or_else(|| to_de_error(&MoneyError::DomainOverflow { attempted_units: units }))
+    Money::<C>::try_from_units(units).map_err(|error| to_de_error(&error))
 }
 
 // Unlike its `Money` twin above, this cannot synthesise the error: a `Rate` is refused for two
@@ -153,7 +151,7 @@ fn money_to_binary<C: StaticCurrency, S: Serializer>(m: Money<C>, s: S) -> Resul
 fn money_from_binary<'de, C: StaticCurrency, D: Deserializer<'de>>(d: D) -> Result<Money<C>, D::Error> {
     let (code, units) = <(Iso4217, i128)>::deserialize(d)?;
     if code != C::CODE {
-        return Err(to_de_error(&MoneyError::WrongCurrency { expected: C::CODE, found: code }));
+        return Err(to_de_error(&WireError::WrongCurrency { expected: C::CODE, found: code }));
     }
     money_from_units(units)
 }
@@ -172,10 +170,10 @@ fn rate_from_binary<'de, Base: StaticCurrency, Quote: StaticCurrency, D: Deseria
     // Both ends are checked, in declaration order, because a refactor moves a rate's pair far
     // more easily than its magnitude.
     if base != Base::CODE {
-        return Err(to_de_error(&MoneyError::WrongCurrency { expected: Base::CODE, found: base }));
+        return Err(to_de_error(&WireError::WrongCurrency { expected: Base::CODE, found: base }));
     }
     if quote != Quote::CODE {
-        return Err(to_de_error(&MoneyError::WrongCurrency { expected: Quote::CODE, found: quote }));
+        return Err(to_de_error(&WireError::WrongCurrency { expected: Quote::CODE, found: quote }));
     }
     rate_from_units(units)
 }
@@ -228,7 +226,7 @@ impl<'de, C: StaticCurrency> Deserialize<'de> for Money<C> {
         let raw = MoneyIn::deserialize(d)?;
         // The redundancy is the point: it catches an IDR amount in a USD field.
         if raw.currency != C::CODE {
-            return Err(to_de_error(&MoneyError::WrongCurrency { expected: C::CODE, found: raw.currency }));
+            return Err(to_de_error(&WireError::WrongCurrency { expected: C::CODE, found: raw.currency }));
         }
         // Reuse the ONE parser. A second decimal reader would be a second set of rules, and
         // the two would drift on exactly the inputs nobody tests.
@@ -253,10 +251,10 @@ impl<'de, Base: StaticCurrency, Quote: StaticCurrency> Deserialize<'de> for Rate
         }
         let raw = RateIn::deserialize(d)?;
         if raw.base != Base::CODE {
-            return Err(to_de_error(&MoneyError::WrongCurrency { expected: Base::CODE, found: raw.base }));
+            return Err(to_de_error(&WireError::WrongCurrency { expected: Base::CODE, found: raw.base }));
         }
         if raw.quote != Quote::CODE {
-            return Err(to_de_error(&MoneyError::WrongCurrency { expected: Quote::CODE, found: raw.quote }));
+            return Err(to_de_error(&WireError::WrongCurrency { expected: Quote::CODE, found: raw.quote }));
         }
         Self::from_str(&format!("{}/{}/{}", Base::CODE.alpha3(), Quote::CODE.alpha3(), raw.rate))
             .map_err(|e| to_de_error(&e))

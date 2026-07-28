@@ -6,7 +6,7 @@ use kamu_money_core::iso::{IDR, USD};
 use kamu_money_core::money::Money;
 
 fn main() {
-    let usd = Money::<USD>::from_units(1).unwrap();
-    let idr = Money::<IDR>::from_units(1).unwrap();
+    let usd = Money::<USD>::try_from_units(1).unwrap();
+    let idr = Money::<IDR>::try_from_units(1).unwrap();
     let _ = usd + idr;
 }

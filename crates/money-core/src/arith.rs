@@ -1,7 +1,7 @@
 //! Exact arithmetic. Rounding is not merely discouraged here — it is unrepresentable.
 
 use crate::currency::StaticCurrency;
-use crate::domain::MoneyError;
+use crate::error::AmountError;
 use crate::money::Money;
 use crate::residue::{Division, UntaggedDivision};
 use crate::rounding::{Rounding, div_round_i256};
@@ -14,11 +14,10 @@ impl<C: StaticCurrency> Money<C> {
     #[inline]
     #[must_use]
     pub const fn checked_add(self, o: Self) -> Option<Self> {
-        // Delegates to the non-generic `add_units` kernel `kamu-money-pg`'s `kmoney_add` also uses, so
-        // the Rust and SQL layers cannot disagree about addition. `from_units` re-checks the
-        // domain (cheap, always `Some` here) rather than introduce an unchecked constructor.
+        // The shared raw kernel validates both operands and the result, so its `Some` arm
+        // justifies the crate-private unchecked constructor.
         match add_units(self.units(), o.units()) {
-            Some(v) => Self::from_units(v),
+            Some(units) => Some(Self::from_units_unchecked(units)),
             None => None,
         }
     }
@@ -28,20 +27,7 @@ impl<C: StaticCurrency> Money<C> {
     #[must_use]
     pub const fn checked_sub(self, o: Self) -> Option<Self> {
         match sub_units(self.units(), o.units()) {
-            Some(v) => Self::from_units(v),
-            None => None,
-        }
-    }
-
-    /// Exact negation. `None` iff the result leaves the domain.
-    ///
-    /// `i128::MIN.checked_neg()` is `None` (two's-complement asymmetry), but `i128::MIN` is
-    /// already outside the domain, so this only ever returns `None` for a corrupted value.
-    #[inline]
-    #[must_use]
-    pub const fn checked_neg(self) -> Option<Self> {
-        match self.units().checked_neg() {
-            Some(v) => Self::from_units(v),
+            Some(units) => Some(Self::from_units_unchecked(units)),
             None => None,
         }
     }
@@ -57,10 +43,9 @@ impl<C: StaticCurrency> Add for Money<C> {
     #[inline]
     fn add(self, o: Self) -> Self {
         self.checked_add(o).unwrap_or_else(|| {
-            // `wrapping_add` cannot actually wrap here: both operands are in-domain, so the
-            // sum is at most 2e36 — ~85x below i128::MAX. It is used only to satisfy
-            // clippy::arithmetic_side_effects while reporting the TRUE attempted value.
-            panic!("{}", MoneyError::DomainOverflow { attempted_units: self.units().wrapping_add(o.units()) })
+            let attempted =
+                self.units().checked_add(o.units()).expect("two in-domain amounts cannot overflow i128");
+            panic!("{}", AmountError::out_of_domain(attempted))
         })
     }
 }
@@ -70,7 +55,9 @@ impl<C: StaticCurrency> Sub for Money<C> {
     #[inline]
     fn sub(self, o: Self) -> Self {
         self.checked_sub(o).unwrap_or_else(|| {
-            panic!("{}", MoneyError::DomainOverflow { attempted_units: self.units().wrapping_sub(o.units()) })
+            let attempted =
+                self.units().checked_sub(o.units()).expect("two in-domain amounts cannot overflow i128");
+            panic!("{}", AmountError::out_of_domain(attempted))
         })
     }
 }
@@ -79,9 +66,8 @@ impl<C: StaticCurrency> Neg for Money<C> {
     type Output = Self;
     #[inline]
     fn neg(self) -> Self {
-        self.checked_neg().unwrap_or_else(|| {
-            panic!("{}", MoneyError::DomainOverflow { attempted_units: self.units().wrapping_neg() })
-        })
+        // The domain excludes `i128::MIN`, so negation is total for every valid `Money`.
+        Self::from_units_unchecked(self.units().wrapping_neg())
     }
 }
 
@@ -106,20 +92,16 @@ impl<C: StaticCurrency> Money<C> {
     /// it drops in wherever `iter().sum()` stood without a `.copied()` dance.
     ///
     /// # Errors
-    /// [`MoneyError::DomainOverflow`] if the total is outside the domain.
+    /// [`AmountError`] if the total is outside the domain.
     ///
-    /// # Panics
-    /// Never, for any realistic input. The single internal `expect` guards the `I256`
-    /// accumulator, which would need ~5.7e40 domain-max terms to overflow — ~10^30 times more
-    /// values than any machine can hold. An out-of-domain *total* is an `Err`, not a panic.
-    pub fn try_sum<B, I>(iter: I) -> Result<Self, MoneyError>
+    pub fn try_sum<B, I>(iter: I) -> Result<Self, AmountError>
     where
         B: core::borrow::Borrow<Self>,
         I: IntoIterator<Item = B>,
     {
         let units = sum_units(iter.into_iter().map(|m| m.borrow().units()))?;
         // `sum_units` returns an in-domain total, so this constructor cannot fail.
-        Ok(Self::from_units(units).expect("sum_units guarantees an in-domain total"))
+        Ok(Self::from_units_unchecked(units))
     }
 }
 
@@ -188,29 +170,15 @@ pub const fn sub_units(a: i128, b: i128) -> Option<i128> {
 /// what made `Sum` order-dependent (R2-F4). This is a function of the values, not their order.
 ///
 /// # Errors
-/// [`MoneyError::DomainOverflow`] if **any term** is outside the domain, or if the total is.
-/// A bad term names itself in `attempted_units`, so a caller is told which input was not money
-/// rather than handed a plausible total computed from one that never was.
+/// [`AmountError::OutOfDomain`] if any term or exact `i128` total leaves the domain;
+/// [`AmountError::ArithmeticOverflow`] if the wide total cannot be represented as `i128`.
 ///
-/// # Panics
-/// Never, for any realistic input — the internal `expect` guards an `I256` accumulator that
-/// would need ~5.7e40 domain-max terms to overflow.
-pub fn sum_units<I: IntoIterator<Item = i128>>(units: I) -> Result<i128, MoneyError> {
+pub fn sum_units<I: IntoIterator<Item = i128>>(units: I) -> Result<i128, AmountError> {
     let mut acc = UnitSum::ZERO;
     for u in units {
         acc = acc.add_units(u)?;
     }
     acc.finish()
-}
-
-/// Narrow an accumulator for REPORTING, saturating rather than wrapping.
-///
-/// A total that fits `i128` but leaves the domain (e.g. `2 * MAX = 2e36`) reports its true value;
-/// a total too large even for `i128` (~170 domain-max terms) saturates to the `i128` bound of its
-/// sign — still read as "far past the domain", never a wrong exact number. `try_from`, never
-/// `as`: a silent truncation here would turn an impossible total into a plausible one.
-fn narrow_saturating(acc: I256) -> i128 {
-    i128::try_from(acc).unwrap_or(if acc > I256::ZERO { i128::MAX } else { i128::MIN })
 }
 
 /// The wide accumulator behind [`sum_units`] and PostgreSQL's `sum(kmoney)` aggregate.
@@ -264,20 +232,20 @@ impl UnitSum {
     /// Add one term, enforcing the domain on **that term**.
     ///
     /// # Errors
-    /// [`MoneyError::DomainOverflow`] naming the offending term. Enforced per term, not assumed
+    /// [`AmountError`] naming the offending term. Enforced per term, not assumed
     /// of the caller: checking only the total lets terms that were never money cancel into a
     /// plausible one — `[i128::MAX, -i128::MAX]` would otherwise sum to `Ok(0)`.
     ///
     /// Also if the accumulator itself leaves `I256`. Unreachable for a state this type built —
     /// each term is below 1e36 and `I256::MAX` is ~5.7e76, so that needs ~5.7e40 in-domain terms
     /// — but reachable for one that arrived through [`Self::from_le_bytes`].
-    pub fn add_units(self, units: i128) -> Result<Self, MoneyError> {
+    pub fn add_units(self, units: i128) -> Result<Self, AmountError> {
         if !crate::domain::in_domain(units) {
-            return Err(MoneyError::DomainOverflow { attempted_units: units });
+            return Err(AmountError::out_of_domain(units));
         }
         match self.0.checked_add(I256::from(units)) {
             Some(acc) => Ok(Self(acc)),
-            None => Err(MoneyError::DomainOverflow { attempted_units: narrow_saturating(self.0) }),
+            None => Err(AmountError::ArithmeticOverflow),
         }
     }
 
@@ -287,26 +255,26 @@ impl UnitSum {
     /// partials in whatever order its workers happen to finish and still produce one answer.
     ///
     /// # Errors
-    /// [`MoneyError::DomainOverflow`] if the combined accumulator leaves `I256`. Unreachable for
+    /// [`AmountError`] if the combined accumulator leaves `I256`. Unreachable for
     /// states this type built; reachable for one decoded from arbitrary bytes.
-    pub fn merge(self, other: Self) -> Result<Self, MoneyError> {
+    pub fn merge(self, other: Self) -> Result<Self, AmountError> {
         match self.0.checked_add(other.0) {
             Some(acc) => Ok(Self(acc)),
-            None => Err(MoneyError::DomainOverflow { attempted_units: narrow_saturating(self.0) }),
+            None => Err(AmountError::ArithmeticOverflow),
         }
     }
 
     /// Narrow once, and check the domain once.
     ///
     /// # Errors
-    /// [`MoneyError::DomainOverflow`] if the total is outside the domain, reporting the true
-    /// figure where `i128` can hold it and a saturated bound where it cannot.
-    pub fn finish(self) -> Result<i128, MoneyError> {
-        let attempted = narrow_saturating(self.0);
+    /// [`AmountError::OutOfDomain`] when an exact `i128` total leaves the domain, or
+    /// [`AmountError::ArithmeticOverflow`] when the total cannot be represented as `i128`.
+    pub fn finish(self) -> Result<i128, AmountError> {
+        let attempted = i128::try_from(self.0).map_err(|_| AmountError::ArithmeticOverflow)?;
         if crate::domain::in_domain(attempted) {
             Ok(attempted)
         } else {
-            Err(MoneyError::DomainOverflow { attempted_units: attempted })
+            Err(AmountError::out_of_domain(attempted))
         }
     }
 
@@ -382,11 +350,7 @@ impl<C: StaticCurrency> Money<C> {
     /// whole. Use [`Money::allocate`] for that.
     ///
     /// # Panics
-    /// Never, here. The internal `expect`s cannot fire for any in-domain input — the quotient
-    /// cannot exceed the dividend and the residue cannot reach the divisor. If one ever did,
-    /// the domain invariant would already be broken, which is not a condition a caller can
-    /// provoke. A [`Residue`](crate::Residue) taken via [`Division::take_residue`] does still detonate if it
-    /// is dropped unabsorbed, in every profile — that is its contract, not this one's.
+    /// Panics only if the shared raw kernel rejects a typed, in-domain amount.
     pub fn div_int(self, n: NonZeroU32, mode: Rounding) -> Division<C> {
         let (q, r) = div_int_units(self.units(), n, mode)
             // Unreachable: `Money<C>` is in-domain by construction, which is the precondition
@@ -403,18 +367,18 @@ impl<C: StaticCurrency> Money<C> {
 /// not the API a Rust program should reach for.
 ///
 /// # Errors
-/// [`MoneyError::DomainOverflow`] if `units` is outside the domain.
+/// [`AmountError`] if `units` is outside the domain.
 ///
 /// This arm replaces a doc comment that stated the precondition and left it unenforced —
 /// "never, **for any in-domain** `units`" was a caller obligation nothing checked, and the
 /// function accepted `i128::MAX` and returned a quotient outside the domain.
 ///
 /// # Panics
-/// Never, now that the domain is checked rather than assumed: the quotient cannot exceed the
-/// dividend and the residue cannot reach the divisor, so neither narrowing can fail.
-pub fn div_int_units(units: i128, n: NonZeroU32, mode: Rounding) -> Result<UntaggedDivision, MoneyError> {
+/// Panics only if the rounding kernel returns a quotient larger than the dividend or a
+/// residue at least as large as the divisor.
+pub fn div_int_units(units: i128, n: NonZeroU32, mode: Rounding) -> Result<UntaggedDivision, AmountError> {
     if !crate::domain::in_domain(units) {
-        return Err(MoneyError::DomainOverflow { attempted_units: units });
+        return Err(AmountError::out_of_domain(units));
     }
     let (q, r) = div_round_i256(I256::from(units), I256::from(i128::from(n.get())), mode);
     // |q| <= |units| <= DOMAIN_MAX and |r| < n, so both conversions are total.
@@ -426,12 +390,13 @@ pub fn div_int_units(units: i128, n: NonZeroU32, mode: Rounding) -> Result<Untag
 #[cfg(test)]
 mod tests {
     use crate::arith::{UnitSum, sum_units};
-    use crate::domain::{DOMAIN_MAX, MoneyError};
+    use crate::domain::DOMAIN_MAX;
+    use crate::error::AmountError;
     use crate::iso::USD;
     use crate::money::Money;
 
     fn m(u: i128) -> Money<USD> {
-        Money::<USD>::from_units(u).unwrap()
+        Money::<USD>::try_from_units(u).unwrap()
     }
 
     #[test]
@@ -473,7 +438,7 @@ mod tests {
         assert_eq!(sub_units(i128::MAX, i128::MAX), None, "cancels to 0");
         assert_eq!(
             sum_units([i128::MAX, -i128::MAX]),
-            Err(MoneyError::DomainOverflow { attempted_units: i128::MAX }),
+            Err(AmountError::out_of_domain(i128::MAX)),
             "the offending TERM names itself, not the total"
         );
 
@@ -498,7 +463,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "money domain overflow")]
+    #[should_panic(expected = "outside the supported range")]
     fn plus_panics_on_domain_overflow() {
         let _ = m(DOMAIN_MAX) + m(1);
     }
@@ -597,7 +562,7 @@ mod tests {
         // Without this, `[i128::MAX, -i128::MAX]` totals to a plausible `Ok(0)` out of two terms
         // that were never money.
         let e = UnitSum::ZERO.add_units(i128::MAX).unwrap_err();
-        assert!(matches!(e, MoneyError::DomainOverflow { attempted_units: i128::MAX }));
+        assert_eq!(e, AmountError::out_of_domain(i128::MAX));
     }
 
     #[test]
@@ -617,9 +582,9 @@ mod tests {
         // can hold a value no sequence of in-domain terms could reach. Inside a database backend
         // that has to be an error: a panic there is an ereport at best and an abort at worst.
         let huge = forged_max_state();
-        assert!(huge.add_units(1).is_err(), "accumulator overflow must be Err");
-        assert!(huge.merge(huge).is_err(), "merge overflow must be Err");
-        assert!(huge.finish().is_err(), "a total that far out is not money");
+        assert_eq!(huge.add_units(1), Err(AmountError::ArithmeticOverflow));
+        assert_eq!(huge.merge(huge), Err(AmountError::ArithmeticOverflow));
+        assert_eq!(huge.finish(), Err(AmountError::ArithmeticOverflow));
     }
 
     use crate::rounding::Rounding;

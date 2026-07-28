@@ -7,7 +7,7 @@ use proptest::prelude::*;
 proptest! {
     /// The bands are sampled EXPLICITLY rather than drawn from `i128::MIN..=i128::MAX`.
     /// The domain is ~1% of the i128 range, so a flat draw reaches "accepted" only by luck:
-    /// measured, a mutant whose `from_units` rejected EVERY value still passed this property
+    /// measured, a mutant whose `try_from_units` rejected EVERY value still passed this property
     /// on 1 run in 5 at proptest's default 256 cases, and needed 584 draws to be caught once.
     /// A property that reaches only one branch of its own condition is decoration for the
     /// other branch. The exact boundaries (±DOMAIN_MAX, ±DOMAIN_MAX+1, i128::MIN) are pinned
@@ -22,24 +22,24 @@ proptest! {
         ],
     ) {
         // Deliberately an INDEPENDENT oracle: a literal range, not a call to `in_domain`.
-        // Asserting `from_units` against the predicate it is implemented with would be the
+        // Asserting `try_from_units` against the predicate it is implemented with would be the
         // `assert_eq!(EXPR, EXPR)` shape that stayed green for seven tasks while checking nothing.
         let inside = (-DOMAIN_MAX..=DOMAIN_MAX).contains(&u);
-        prop_assert_eq!(Money::<USD>::from_units(u).is_some(), inside);
+        prop_assert_eq!(Money::<USD>::try_from_units(u).is_ok(), inside);
     }
 
     #[test]
     fn prop_add_never_rounds(a in -DOMAIN_MAX/2..=DOMAIN_MAX/2, b in -DOMAIN_MAX/2..=DOMAIN_MAX/2) {
         // Halving the range keeps the sum in-domain, so this is total.
         // The claim: the result is the EXACT integer sum. No scale games. (contrast DESIGN.md E3)
-        let s = Money::<USD>::from_units(a).unwrap() + Money::<USD>::from_units(b).unwrap();
+        let s = Money::<USD>::try_from_units(a).unwrap() + Money::<USD>::try_from_units(b).unwrap();
         prop_assert_eq!(s.units(), a + b);
     }
 
     #[test]
     fn prop_sub_is_the_inverse_of_add(a in -DOMAIN_MAX/2..=DOMAIN_MAX/2, b in -DOMAIN_MAX/2..=DOMAIN_MAX/2) {
-        let x = Money::<USD>::from_units(a).unwrap();
-        let y = Money::<USD>::from_units(b).unwrap();
+        let x = Money::<USD>::try_from_units(a).unwrap();
+        let y = Money::<USD>::try_from_units(b).unwrap();
         prop_assert_eq!((x + y - y).units(), a, "exactness means this is EXACT, not approximate");
     }
 
@@ -50,7 +50,7 @@ proptest! {
         // testing less. Same drift shape as the deleted `StaticCurrency::EXP`.
         use core::num::NonZeroU32;
         let mode = Rounding::ALL[mi];
-        let (q, r) = Money::<USD>::from_units(u)
+        let (q, r) = Money::<USD>::try_from_units(u)
             .unwrap()
             .div_int(NonZeroU32::new(n).unwrap(), mode)
             .take_residue();
@@ -62,7 +62,7 @@ proptest! {
     fn prop_try_sum_equals_fold(v in prop::collection::vec(-1_000_000_000i128..=1_000_000_000, 0..50)) {
         // At most 50 values in +/-1e9, so the total is at most 5e10 -- far inside the domain,
         // and `try_sum` cannot error here. Its VALUE must equal the plain i128 fold.
-        let ms: Vec<Money<USD>> = v.iter().map(|&u| Money::<USD>::from_units(u).unwrap()).collect();
+        let ms: Vec<Money<USD>> = v.iter().map(|&u| Money::<USD>::try_from_units(u).unwrap()).collect();
         prop_assert_eq!(Money::<USD>::try_sum(&ms).unwrap().units(), v.iter().sum::<i128>());
     }
 }

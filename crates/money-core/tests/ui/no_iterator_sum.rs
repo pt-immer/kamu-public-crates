@@ -10,8 +10,8 @@ use kamu_money_core::money::Money;
 
 fn main() {
     let balances = [
-        Money::<USD>::from_units(1).unwrap(),
-        Money::<USD>::from_units(2).unwrap(),
+        Money::<USD>::try_from_units(1).unwrap(),
+        Money::<USD>::try_from_units(2).unwrap(),
     ];
     // No `impl Sum for Money<C>`, so this does not resolve. Use `Money::try_sum(balances)`.
     let _total: Money<USD> = balances.into_iter().sum();

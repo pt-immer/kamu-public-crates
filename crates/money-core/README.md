@@ -9,8 +9,10 @@
 
 Exact monetary arithmetic: `i128` at a fixed scale of 18, with compile-time
 currency identity. Division withholds its quotient until the caller explicitly
-takes or discards the residue; a taken residue normally panics if abandoned,
-except while the thread is already unwinding.
+takes or discards the residue.
+
+The crate is intentionally ISO 4217-only. `StaticCurrency` is sealed so wire,
+database, and arithmetic identity all use the same generated register.
 
 Part of the [`kamu-public-crates`](https://github.com/pt-immer/kamu-public-crates) workspace.
 
@@ -58,8 +60,8 @@ the same choice `chrono` and `uuid` make.
 ```rust
 use kamu_money_core::{Money, iso::USD};
 
-let whole = Money::<USD>::from_major(10).unwrap();
-let parts = whole.allocate(&[1, 1, 1]);
+let whole = Money::<USD>::try_from_major(10).unwrap();
+let parts = whole.allocate(&[1, 1, 1]).unwrap();
 
 assert_eq!(parts.iter().map(|p| p.units()).sum::<i128>(), whole.units());
 ```
@@ -68,15 +70,15 @@ Ten split three ways loses nothing. The remainder is distributed, not discarded.
 
 ## A division has exactly two exits
 
-Lossy division returns a `Division`, not a number. You take the residue or you
-discard it on the record — there is no third path, and no way to drop it by
-accident.
+Lossy division returns a `Division`, not a number. Obtaining its quotient
+requires taking the residue or discarding it on the record. Dropping the
+unresolved `Division` is safe because no quotient escaped.
 
 ```rust
 use core::num::NonZeroU32;
 use kamu_money_core::{Money, Rounding, iso::USD};
 
-let whole = Money::<USD>::from_major(10).unwrap();
+let whole = Money::<USD>::try_from_major(10).unwrap();
 let three = NonZeroU32::new(3).unwrap();
 
 // Exit one: take it, and it is yours to place.
@@ -90,9 +92,9 @@ let same = whole
 assert_eq!(each, same, "the two exits agree on the quotient");
 ```
 
-Dropping a nonzero, unacknowledged `Residue` panics in every profile, including
-release. During an already-active unwind it returns quietly instead, so it can
-never turn a panic into a process abort.
+A taken `Residue` is `#[must_use]`, but Rust does not have linear types: callers
+can suppress that lint. It never panics in `Drop`, so cancellation and unwinding
+cannot turn an accounting mistake into a process abort.
 
 ## Currency data
 

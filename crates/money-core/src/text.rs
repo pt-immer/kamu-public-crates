@@ -31,7 +31,8 @@
 //! C7 originally claimed.
 
 use crate::currency::StaticCurrency;
-use crate::domain::{MoneyError, POW10_SCALE, SCALE, in_domain};
+use crate::domain::{POW10_SCALE, SCALE, in_domain};
+use crate::error::{AmountError, ParseMoneyError, RateError};
 use crate::iso::Iso4217;
 use crate::money::Money;
 use crate::rate::Rate;
@@ -93,7 +94,7 @@ fn render_fixed_point(units: i128, min_dp: usize) -> String {
 ///
 /// Refuses excess precision rather than rounding — the failure that disqualified
 /// `rust_decimal` (E2).
-fn parse_fixed_point(text: &str) -> Result<i128, MoneyError> {
+fn parse_fixed_point(text: &str) -> Result<i128, ParseMoneyError> {
     let (negative, digits) = match text.strip_prefix('-') {
         Some(rest) => (true, rest),
         None => (false, text),
@@ -106,53 +107,64 @@ fn parse_fixed_point(text: &str) -> Result<i128, MoneyError> {
     };
 
     if whole_text.is_empty() || !whole_text.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(MoneyError::MalformedText);
+        return Err(ParseMoneyError::InvalidSyntax);
     }
     if !frac_text.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(MoneyError::MalformedText);
+        return Err(ParseMoneyError::InvalidSyntax);
     }
 
-    let supplied = u32::try_from(frac_text.len()).map_err(|_| MoneyError::MalformedText)?;
+    let supplied = u32::try_from(frac_text.len()).map_err(|_| ParseMoneyError::InvalidSyntax)?;
     if supplied > SCALE {
-        return Err(MoneyError::ExcessPrecision { digits: supplied });
+        return Err(ParseMoneyError::ExcessPrecision { digits: supplied });
     }
 
     // Right-pad the fraction to the canonical scale, then read the whole thing as one
     // integer. Every step is checked: the text is untrusted, and an overflow here would
     // otherwise be the silent corruption this crate exists to prevent.
-    let mut units: i128 = 0;
+    let mut magnitude: u128 = 0;
     for byte in
         whole_text.bytes().chain(frac_text.bytes().chain(core::iter::repeat(b'0')).take(scale_usize()))
     {
         // Every byte here is either an ASCII digit (checked above) or a padding b'0', so the
         // subtraction cannot underflow. `checked_sub` states that rather than relying on it.
-        let digit = i128::from(
+        let digit = u128::from(
             byte.checked_sub(b'0').expect("bytes were verified as ASCII digits, or are padding zeros"),
         );
-        units = units.checked_mul(10).and_then(|shifted| shifted.checked_add(digit)).ok_or(
-            MoneyError::DomainOverflow {
-                // The true value does not fit an i128, so there is no honest number to
-                // report. DOMAIN_MAX + 1 says "past the top" without inventing a figure.
-                attempted_units: crate::domain::DOMAIN_MAX.saturating_add(1),
-            },
-        )?;
+        magnitude =
+            magnitude.checked_mul(10).and_then(|shifted| shifted.checked_add(digit)).ok_or(if negative {
+                ParseMoneyError::NegativeMagnitudeOverflow
+            } else {
+                ParseMoneyError::PositiveMagnitudeOverflow
+            })?;
     }
 
-    if negative {
-        units = units.checked_neg().ok_or(MoneyError::DomainOverflow { attempted_units: units })?;
+    if negative && magnitude == i128::MIN.unsigned_abs() {
+        return Ok(i128::MIN);
     }
-    Ok(units)
+
+    let units = i128::try_from(magnitude).map_err(|_| {
+        if negative {
+            ParseMoneyError::NegativeMagnitudeOverflow
+        } else {
+            ParseMoneyError::PositiveMagnitudeOverflow
+        }
+    })?;
+    if negative {
+        Ok(units.checked_neg().expect("positive i128 magnitude can always be negated"))
+    } else {
+        Ok(units)
+    }
 }
 
 /// Split `"<ISO> <amount>"` into its currency and its still-unparsed amount.
 ///
 /// Separate from [`parse`] so that [`Money`]'s `FromStr` can compare the code against `C`
 /// *before* reading the digits. Getting `WrongCurrency` back from `"IDR not-a-number"` is more
-/// use at an API boundary than `MalformedText`, and a single combined parser could not offer
+/// use at an API boundary than `InvalidSyntax`, and a single combined parser could not offer
 /// that ordering to one caller and the plain answer to the other.
-fn split_tagged(text: &str) -> Result<(Iso4217, &str), MoneyError> {
-    let (code_text, amount) = text.split_once(' ').ok_or(MoneyError::MalformedText)?;
-    let code = Iso4217::from_alpha3(code_text).ok_or(MoneyError::MalformedText)?;
+fn split_tagged(text: &str) -> Result<(Iso4217, &str), ParseMoneyError> {
+    let (code_text, amount) = text.split_once(' ').ok_or(ParseMoneyError::InvalidSyntax)?;
+    let code = Iso4217::from_alpha3(code_text).ok_or(ParseMoneyError::InvalidSyntax)?;
     Ok((code, amount))
 }
 
@@ -165,17 +177,17 @@ fn split_tagged(text: &str) -> Result<(Iso4217, &str), MoneyError> {
 /// C9's "thin over one codec" becomes a wish. Drift here is a *silent* wrong number in one
 /// system and a right one in another, which is the failure mode this crate exists to remove.
 /// # Errors
-/// [`MoneyError::DomainOverflow`] if `units` is outside the domain.
+/// [`AmountError`] if `units` is outside the domain.
 ///
 /// The check is not defensive padding. Without it this function emitted **canonical-looking
 /// text that its own [`parse`] refuses** — `render(i128::MAX, USD)` produced
-/// `"USD 170141183460469231731.687303715884105727"`, which round-trips to
-/// `Err(DomainOverflow)`. A renderer whose output its parser rejects is a silent corruption
+/// `"USD 170141183460469231731.687303715884105727"`, which the parser rejects as
+/// [`ParseMoneyError::Amount`]. A renderer whose output its parser rejects is a silent corruption
 /// waiting for a caller that trusts the pair, which is exactly what an adapter does.
 /// [`Money`]'s `Display` cannot reach this arm: `Money<C>` is in-domain by construction.
-pub fn render(units: i128, currency: Iso4217) -> Result<String, MoneyError> {
+pub fn render(units: i128, currency: Iso4217) -> Result<String, AmountError> {
     if !in_domain(units) {
-        return Err(MoneyError::DomainOverflow { attempted_units: units });
+        return Err(AmountError::out_of_domain(units));
     }
     // `None` means the currency genuinely has no minor unit (gold), which is 0 places, not
     // "unknown" — the same reading Display uses.
@@ -186,17 +198,20 @@ pub fn render(units: i128, currency: Iso4217) -> Result<String, MoneyError> {
 /// Parse a bare amount — no currency prefix — into domain-checked canonical units.
 ///
 /// # Errors
-/// [`MoneyError::MalformedText`] for anything that is not `<digits>[.<digits>]`,
-/// [`MoneyError::ExcessPrecision`] for more than [`SCALE`] fractional digits (**never**
-/// rounded — E2), and [`MoneyError::DomainOverflow`] outside `|units| <= DOMAIN_MAX`.
-pub fn parse_amount(text: &str) -> Result<i128, MoneyError> {
+/// [`ParseMoneyError::InvalidSyntax`] for malformed input,
+/// [`ParseMoneyError::ExcessPrecision`] above [`SCALE`] fractional digits,
+/// [`ParseMoneyError::PositiveMagnitudeOverflow`] or
+/// [`ParseMoneyError::NegativeMagnitudeOverflow`] when the signed canonical-unit
+/// value cannot fit `i128`,
+/// and [`ParseMoneyError::Amount`] outside the money domain.
+pub fn parse_amount(text: &str) -> Result<i128, ParseMoneyError> {
     let units = parse_fixed_point(text)?;
     // parse_fixed_point stops at what an i128 can hold; the DOMAIN is narrower. The generic
-    // path got this check from `Money::from_units`, so a caller taking raw units needs it
+    // path got this check from `Money::try_from_units`, so a caller taking raw units needs it
     // applied here or the two paths would not agree on what is in range. Same `in_domain`
-    // that `from_units` calls, rather than a restatement of the bound.
+    // that `try_from_units` calls, rather than a restatement of the bound.
     if !in_domain(units) {
-        return Err(MoneyError::DomainOverflow { attempted_units: units });
+        return Err(AmountError::out_of_domain(units).into());
     }
     Ok(units)
 }
@@ -210,9 +225,9 @@ pub fn parse_amount(text: &str) -> Result<i128, MoneyError> {
 /// storage type stores it.
 ///
 /// # Errors
-/// As [`parse_amount`], plus [`MoneyError::MalformedText`] if the string is not
+/// As [`parse_amount`], plus [`ParseMoneyError::InvalidSyntax`] if the string is not
 /// `<code> <amount>` or the code is not a known ISO 4217 alpha-3.
-pub fn parse(text: &str) -> Result<(Iso4217, i128), MoneyError> {
+pub fn parse(text: &str) -> Result<(Iso4217, i128), ParseMoneyError> {
     let (code, amount) = split_tagged(text)?;
     Ok((code, parse_amount(amount)?))
 }
@@ -238,7 +253,7 @@ impl<C: StaticCurrency> fmt::Display for Money<C> {
         // agreeing today is not the same property as one implementation.
         //
         // The `expect` is unreachable: `Money<C>` cannot hold out-of-domain units — every
-        // constructor goes through `from_units`, and the raw `i128` is not publicly reachable.
+        // constructor goes through `try_from_units`, and the raw `i128` is not publicly reachable.
         // That is precisely why `render` takes the check and `Display` does not need one.
         let rendered = render(self.units(), C::CODE).expect("Money<C> is in-domain by construction");
         pad_without_truncating(f, &rendered)
@@ -286,16 +301,15 @@ impl<Base: StaticCurrency, Quote: StaticCurrency> fmt::Display for Rate<Base, Qu
 }
 
 impl<Base: StaticCurrency, Quote: StaticCurrency> FromStr for Rate<Base, Quote> {
-    type Err = MoneyError;
+    type Err = RateError;
 
     /// Parse `"<BASE>/<QUOTE>/<rate>"`, checking **both** ends of the pair.
     ///
     /// # Errors
-    /// [`MoneyError::WrongCurrency`] if either end disagrees; the base is reported first,
+    /// [`ParseMoneyError::WrongCurrency`] if either end disagrees; the base is reported first,
     /// because accepting a reversed pair would invert the price — the one error a quote feed
     /// can make that still looks like a number.
-    /// [`MoneyError::MalformedText`], [`MoneyError::ExcessPrecision`],
-    /// [`MoneyError::DomainOverflow`] as for [`Money`].
+    /// Other parse failures are wrapped by [`RateError::Parse`].
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut parts = s.split('/');
         // The trailing `None` is load-bearing: it rejects "USD/IDR/1/2". Without it a fourth
@@ -303,54 +317,51 @@ impl<Base: StaticCurrency, Quote: StaticCurrency> FromStr for Rate<Base, Quote> 
         let (Some(base), Some(quote), Some(amount), None) =
             (parts.next(), parts.next(), parts.next(), parts.next())
         else {
-            return Err(MoneyError::MalformedText);
+            return Err(ParseMoneyError::InvalidSyntax.into());
         };
 
-        let base = Iso4217::from_alpha3(base).ok_or(MoneyError::MalformedText)?;
+        let base = Iso4217::from_alpha3(base).ok_or(ParseMoneyError::InvalidSyntax)?;
         if base != Base::CODE {
-            return Err(MoneyError::WrongCurrency { expected: Base::CODE, found: base });
+            return Err(ParseMoneyError::WrongCurrency { expected: Base::CODE, found: base }.into());
         }
-        let quote = Iso4217::from_alpha3(quote).ok_or(MoneyError::MalformedText)?;
+        let quote = Iso4217::from_alpha3(quote).ok_or(ParseMoneyError::InvalidSyntax)?;
         if quote != Quote::CODE {
-            return Err(MoneyError::WrongCurrency { expected: Quote::CODE, found: quote });
+            return Err(ParseMoneyError::WrongCurrency { expected: Quote::CODE, found: quote }.into());
         }
 
         let units = parse_fixed_point(amount)?;
-        // `try_from_units`, not `from_units(..).ok_or(DomainOverflow)`: this parser is one of
-        // the four feed adapters that made `Rate` enforce positivity at all, and reporting a
-        // zero or negative quote as a *domain overflow* would name the wrong defect at the one
-        // boundary where a human is reading the message to find out what the feed sent.
+        // Preserve the constructor's distinction between magnitude and sign failures.
         Self::try_from_units(units)
     }
 }
 
 impl<C: StaticCurrency> FromStr for Money<C> {
-    type Err = MoneyError;
+    type Err = ParseMoneyError;
 
     /// Parse `"<ISO> <amount>"`.
     ///
     /// Liberal in what it accepts — any exact decimal, canonical or not — and strict in what
     /// it refuses. In particular it **never rounds**: more fractional digits than [`SCALE`]
-    /// is [`MoneyError::ExcessPrecision`], not a quietly truncated value.
+    /// is [`ParseMoneyError::ExcessPrecision`], not a quietly truncated value.
     ///
     /// # Errors
-    /// [`MoneyError::WrongCurrency`] if the code does not match `C`. This redundancy is the
+    /// [`ParseMoneyError::WrongCurrency`] if the code does not match `C`. This redundancy is the
     /// point: it catches an IDR amount arriving in a USD field.
-    /// [`MoneyError::MalformedText`] for anything that is not `<code> <digits>[.<digits>]`.
-    /// [`MoneyError::ExcessPrecision`] for more than [`SCALE`] fractional digits.
-    /// [`MoneyError::DomainOverflow`] if the value is outside the domain.
+    /// [`ParseMoneyError::InvalidSyntax`] for malformed input;
+    /// [`ParseMoneyError::ExcessPrecision`] for more than [`SCALE`] fractional digits;
+    /// a sign-specific magnitude overflow when the canonical-unit value cannot fit `i128`;
+    /// and [`ParseMoneyError::Amount`] outside the fixed domain.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Split first, compare the currency, and only then read the digits — so
         // `"IDR not-a-number"` into a `Money<USD>` reports the currency, which is the useful
         // error at a boundary. Calling `parse` here instead would report the digits.
         let (code, amount) = split_tagged(s)?;
         if code != C::CODE {
-            return Err(MoneyError::WrongCurrency { expected: C::CODE, found: code });
+            return Err(ParseMoneyError::WrongCurrency { expected: C::CODE, found: code });
         }
 
         let units = parse_amount(amount)?;
-
-        Self::from_units(units).ok_or(MoneyError::DomainOverflow { attempted_units: units })
+        Self::try_from_units(units).map_err(ParseMoneyError::from)
     }
 }
 
@@ -376,14 +387,14 @@ mod tests {
         // back: it names the actual mistake at an API boundary.
         assert_eq!(
             Money::<USD>::from_str("IDR not-a-number"),
-            Err(MoneyError::WrongCurrency { expected: Iso4217::USD, found: Iso4217::IDR })
+            Err(ParseMoneyError::WrongCurrency { expected: Iso4217::USD, found: Iso4217::IDR })
         );
     }
 
     #[test]
     fn display_and_parse_agree_on_the_domain_edges() {
         for units in [crate::domain::DOMAIN_MAX, -crate::domain::DOMAIN_MAX, 0, 1, -1] {
-            let m = Money::<IDR>::from_units(units).unwrap();
+            let m = Money::<IDR>::try_from_units(units).unwrap();
             assert_eq!(Money::<IDR>::from_str(&m.to_string()).unwrap(), m, "{units}");
         }
     }

@@ -26,9 +26,9 @@ struct Invoice {
 
 fn main() {
     let invoice = Invoice {
-        total: Money::<IDR>::from_major(1_600_000).expect("in domain"),
-        tax: Money::<IDR>::from_units(176_000_500_000_000_000_000_000).expect("in domain"),
-        booked_at: Rate::<USD, IDR>::from_units(16_000 * POW10_SCALE).expect("in domain"),
+        total: Money::<IDR>::try_from_major(1_600_000).expect("in domain"),
+        tax: Money::<IDR>::try_from_units(176_000_500_000_000_000_000_000).expect("in domain"),
+        booked_at: Rate::<USD, IDR>::try_from_units(16_000 * POW10_SCALE).expect("in domain"),
     };
 
     println!("== JSON: structured by default, transparent where asked ==");
@@ -43,11 +43,11 @@ fn main() {
     let units = 10_500_000_000_000_000_000; // 10.5, whatever the currency
     println!(
         "  USD (settles 2dp)   {}",
-        serde_json::to_string(&Money::<USD>::from_units(units).unwrap()).expect("ok")
+        serde_json::to_string(&Money::<USD>::try_from_units(units).unwrap()).expect("ok")
     );
     println!(
         "  JPY (settles 0dp)   {}",
-        serde_json::to_string(&Money::<JPY>::from_units(units).unwrap()).expect("ok")
+        serde_json::to_string(&Money::<JPY>::try_from_units(units).unwrap()).expect("ok")
     );
     println!("  ^ one rule, one implementation — Display and the wire cannot disagree");
 
@@ -85,7 +85,7 @@ fn main() {
     println!("  A JSON suite CANNOT catch it — human-readable formats emit the NAME.");
 
     println!("\n== binary tags the currency, so a wrong type is REFUSED (R2-F2) ==");
-    let money = postcard::to_allocvec(&Money::<USD>::from_units(units).unwrap()).expect("ok");
+    let money = postcard::to_allocvec(&Money::<USD>::try_from_units(units).unwrap()).expect("ok");
     let bare = postcard::to_allocvec(&units).expect("ok");
     println!("  postcard(Money<USD>) = {} bytes", money.len());
     println!(

@@ -117,11 +117,11 @@ const SETUP_SQLX_WRITE: [&str; 3] = [
 /// values through SQL literals, so the literal parser was doing the work.
 fn write_cases() -> [(i32, Money<USD>); 5] {
     [
-        (1, Money::<USD>::from_units(0).expect("zero is in domain")),
-        (2, Money::<USD>::from_units(1).expect("one canonical unit")),
-        (3, Money::<USD>::from_units(-1).expect("one negative unit")),
-        (4, Money::<USD>::from_units(DOMAIN_MAX).expect("the top edge")),
-        (5, Money::<USD>::from_units(-DOMAIN_MAX).expect("the bottom edge")),
+        (1, Money::<USD>::try_from_units(0).expect("zero is in domain")),
+        (2, Money::<USD>::try_from_units(1).expect("one canonical unit")),
+        (3, Money::<USD>::try_from_units(-1).expect("one negative unit")),
+        (4, Money::<USD>::try_from_units(DOMAIN_MAX).expect("the top edge")),
+        (5, Money::<USD>::try_from_units(-DOMAIN_MAX).expect("the bottom edge")),
     ]
 }
 
@@ -152,7 +152,8 @@ fn postgres_types_reads_a_native_column_through_an_explicit_cast() {
     let got: Money<USD> = row.get(0);
     assert_eq!(
         got,
-        Money::<USD>::from_major(10).unwrap() + Money::<USD>::from_units(500_000_000_000_000_000).unwrap()
+        Money::<USD>::try_from_major(10).unwrap()
+            + Money::<USD>::try_from_units(500_000_000_000_000_000).unwrap()
     );
 
     // The domain edge survives the whole path: extension -> text -> driver.
@@ -272,7 +273,7 @@ fn postgres_types_writes_a_native_column_through_a_bound_parameter() {
     // UPDATE with SQL-side arithmetic on a bound parameter. `+` here is the extension's
     // operator over the shared Rust kernel, not a client-side add — which is the reason the
     // native type exists at all.
-    let ten = Money::<USD>::from_major(10).unwrap();
+    let ten = Money::<USD>::try_from_major(10).unwrap();
     client
         .execute("UPDATE write_pt SET amount = amount + (($1::text)::kmoney) WHERE id = $2", &[&ten, &2i32])
         .expect("the canonical update shape must work");
@@ -281,12 +282,12 @@ fn postgres_types_writes_a_native_column_through_a_bound_parameter() {
     let got: Money<USD> = row.get(0);
     assert_eq!(
         got,
-        ten + Money::<USD>::from_units(1).unwrap(),
+        ten + Money::<USD>::try_from_units(1).unwrap(),
         "the database added a bound parameter to a stored value and kept the unit"
     );
 
     // NEGATIVE: the typmod refuses a foreign currency, and the DATABASE is what refuses it.
-    let idr = Money::<IDR>::from_major(1).unwrap();
+    let idr = Money::<IDR>::try_from_major(1).unwrap();
     let refused =
         client.execute("INSERT INTO write_pt (id, amount) VALUES (99, ($1::text)::kmoney)", &[&idr]);
     let err = refused.expect_err("a Money<IDR> must not reach a kmoney('USD') column");
@@ -333,7 +334,7 @@ async fn sqlx_writes_a_native_column_through_a_bound_parameter() {
         assert_eq!(got, amount, "id={id} did not survive the parameter round trip");
     }
 
-    let ten = Money::<USD>::from_major(10).unwrap();
+    let ten = Money::<USD>::try_from_major(10).unwrap();
     sqlx::query("UPDATE write_sqlx SET amount = amount + (($1::text)::kmoney) WHERE id = $2")
         .bind(ten)
         .bind(2i32)
@@ -344,11 +345,11 @@ async fn sqlx_writes_a_native_column_through_a_bound_parameter() {
         .fetch_one(&pool)
         .await
         .expect("cast query decodes");
-    assert_eq!(got, ten + Money::<USD>::from_units(1).unwrap());
+    assert_eq!(got, ten + Money::<USD>::try_from_units(1).unwrap());
 
     // NEGATIVE, matching the sync driver: the typmod is the database's rule, so both drivers
     // must hit it identically. A contract only one driver enforces is not a contract.
-    let idr = Money::<IDR>::from_major(1).unwrap();
+    let idr = Money::<IDR>::try_from_major(1).unwrap();
     let refused = sqlx::query("INSERT INTO write_sqlx (id, amount) VALUES (99, ($1::text)::kmoney)")
         .bind(idr)
         .execute(&pool)

@@ -22,8 +22,8 @@ fn main() {
 
     // Two ways in. Both are checked: the domain is |units| <= 10^36 - 1, and nothing else
     // exists. There is no unchecked constructor to reach for.
-    let opening = Money::<IDR>::from_major(5_000_000).expect("in domain");
-    let fee = Money::<IDR>::from_units(1_500_000_000_000_000_000).expect("in domain"); // 1.5
+    let opening = Money::<IDR>::try_from_major(5_000_000).expect("in domain");
+    let fee = Money::<IDR>::try_from_units(1_500_000_000_000_000_000).expect("in domain"); // 1.5
 
     println!("  opening      {}", opening);
     println!("  fee          {}", fee);
@@ -41,7 +41,7 @@ fn main() {
     // ------------------------------------------------------------------------------------
     // WILL NOT COMPILE — the whole reason the currency lives in the type:
     //
-    //     let usd = Money::<USD>::from_major(1).unwrap();
+    //     let usd = Money::<USD>::try_from_major(1).unwrap();
     //     let _ = opening + usd;
     //     //      ^^^^^^^^^^^^^ expected `Money<IDR>`, found `Money<USD>`
     //
@@ -53,8 +53,8 @@ fn main() {
 
     // The classic 10.00 / 3 problem. allocate() distributes the remainder rather than
     // dropping it, so the parts sum back to the whole for ANY weights.
-    let bill = Money::<USD>::from_major(10).expect("in domain");
-    let parts = bill.allocate(&[1, 1, 1]);
+    let bill = Money::<USD>::try_from_major(10).expect("in domain");
+    let parts = bill.allocate(&[1, 1, 1]).expect("weights are valid");
     for (i, p) in parts.iter().enumerate() {
         println!("  share {}      {}", i + 1, *p);
     }
@@ -63,12 +63,12 @@ fn main() {
     assert_eq!(summed, bill, "allocate must conserve");
 
     // Uneven weights work the same way, on an amount that does not divide cleanly.
-    let pot = Money::<IDR>::from_units(1_000_000_000_000_000_001).expect("in domain");
-    let split = pot.allocate(&[30, 70]);
+    let pot = Money::<IDR>::try_from_units(1_000_000_000_000_000_001).expect("in domain");
+    let split = pot.allocate(&[30, 70]).expect("weights are valid");
     println!("  30/70 of {}\n            ->  {}  +  {}", pot, split[0], split[1]);
     assert_eq!(Money::<IDR>::try_sum(&split).expect("allocation conserves"), pot);
 
-    println!("\n== dividing: the residue cannot be dropped by accident ==");
+    println!("\n== dividing: the quotient requires a residue decision ==");
 
     // div_int returns ONE value. There is no tuple, so there is nothing to `let (x, _) =`.
     let three = NonZeroU32::new(3).expect("nonzero");
@@ -80,7 +80,7 @@ fn main() {
 
     // (b) throw it away, on purpose, on the record. No Residue is ever constructed here.
     let share = bill.div_int(three, Rounding::HalfEven).discard_deliberately();
-    println!("  discarded    {}  (residue acknowledged and dropped)", share);
+    println!("  discarded    {}  (residue explicitly discarded)", share);
 
     // (c) look without deciding. The Division is still undecided afterwards, and dropping it
     //     is safe precisely because no money escaped.
@@ -104,16 +104,16 @@ fn main() {
     let units = 10_500_000_000_000_000_000; // 10.5, whatever the currency
     println!(
         "  {}      {}       {}",
-        Money::<USD>::from_units(units).expect("in domain"), // exp 2
-        Money::<JPY>::from_units(units).expect("in domain"), // exp 0
-        Money::<KWD>::from_units(units).expect("in domain"), // exp 3
+        Money::<USD>::try_from_units(units).expect("in domain"), // exp 2
+        Money::<JPY>::try_from_units(units).expect("in domain"), // exp 0
+        Money::<KWD>::try_from_units(units).expect("in domain"), // exp 3
     );
     let whole = 10_000_000_000_000_000_000;
     println!(
         "  {}      {}         {}",
-        Money::<USD>::from_units(whole).expect("in domain"),
-        Money::<JPY>::from_units(whole).expect("in domain"),
-        Money::<KWD>::from_units(whole).expect("in domain"),
+        Money::<USD>::try_from_units(whole).expect("in domain"),
+        Money::<JPY>::try_from_units(whole).expect("in domain"),
+        Money::<KWD>::try_from_units(whole).expect("in domain"),
     );
     println!("  ^ trailing zeros trimmed, never below the settlement exponent, never rounded");
 }

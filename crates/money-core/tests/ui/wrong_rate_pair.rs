@@ -12,13 +12,13 @@ use kamu_money_core::rate::Rate;
 use kamu_money_core::rounding::Rounding;
 
 fn main() {
-    let usd = Money::<USD>::from_units(1).unwrap();
+    let usd = Money::<USD>::try_from_units(1).unwrap();
 
     // The FROM end: a EUR rate cannot convert USD.
-    let eur_idr = Rate::<EUR, IDR>::from_units(1).unwrap();
+    let eur_idr = Rate::<EUR, IDR>::try_from_units(1).unwrap();
     let _ = usd.convert(eur_idr, Rounding::HalfEven);
 
     // The TO end: a USD->IDR rate cannot produce Money<EUR>.
-    let usd_idr = Rate::<USD, IDR>::from_units(1).unwrap();
+    let usd_idr = Rate::<USD, IDR>::try_from_units(1).unwrap();
     let _: Result<Money<EUR>, _> = usd.convert(usd_idr, Rounding::HalfEven);
 }

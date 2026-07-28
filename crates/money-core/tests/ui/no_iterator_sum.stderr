@@ -20,8 +20,8 @@ note: the method call chain might not have had the expected associated types
    |
 12 |       let balances = [
    |  ____________________-
-13 | |         Money::<USD>::from_units(1).unwrap(),
-14 | |         Money::<USD>::from_units(2).unwrap(),
+13 | |         Money::<USD>::try_from_units(1).unwrap(),
+14 | |         Money::<USD>::try_from_units(2).unwrap(),
 15 | |     ];
    | |_____- this expression has type `[Money<USD>; 2]`
 16 |       // No `impl Sum for Money<C>`, so this does not resolve. Use `Money::try_sum(balances)`.

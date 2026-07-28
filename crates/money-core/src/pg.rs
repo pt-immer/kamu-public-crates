@@ -32,7 +32,7 @@
 //! # use kamu_money_core::{Money, iso::USD};
 //! # fn f(client: &mut postgres::Client) -> Result<(), Box<dyn std::error::Error>> {
 //! client.execute("CREATE TABLE ledger (amount text NOT NULL)", &[])?;
-//! let paid = Money::<USD>::from_major(10).unwrap();
+//! let paid = Money::<USD>::try_from_major(10).unwrap();
 //! client.execute("INSERT INTO ledger VALUES ($1)", &[&paid])?;
 //!
 //! let row = client.query_one("SELECT amount FROM ledger", &[])?;
@@ -59,7 +59,7 @@
 //! // bound `Money<IDR>` is refused by the DATABASE rather than by a convention.
 //! client.execute("CREATE TABLE ledger_native (id int primary key, amount kmoney('USD'))", &[])?;
 //!
-//! let paid = Money::<USD>::from_major(10).unwrap();
+//! let paid = Money::<USD>::try_from_major(10).unwrap();
 //! client.execute(
 //!     "INSERT INTO ledger_native (id, amount) VALUES ($1, ($2::text)::kmoney)",
 //!     &[&1i32, &paid],

@@ -67,9 +67,9 @@ struct Payment {
 #[test]
 fn a_struct_can_mix_both_modes_per_field() {
     let p = Payment {
-        amount: Money::<USD>::from_major(10).unwrap(),
-        fee: Money::<USD>::from_units(1_500_000_000_000_000_000).unwrap(),
-        rate: Rate::<USD, IDR>::from_units(16_000 * kamu_money_core::POW10_SCALE).unwrap(),
+        amount: Money::<USD>::try_from_major(10).unwrap(),
+        fee: Money::<USD>::try_from_units(1_500_000_000_000_000_000).unwrap(),
+        rate: Rate::<USD, IDR>::try_from_units(16_000 * kamu_money_core::POW10_SCALE).unwrap(),
     };
     let json = serde_json::to_string(&p).unwrap();
     assert_eq!(
@@ -81,10 +81,10 @@ fn a_struct_can_mix_both_modes_per_field() {
 
 #[test]
 fn structured_is_the_default_for_money_and_rate() {
-    let m = Money::<USD>::from_units(10_500_000_000_000_000_000).unwrap();
+    let m = Money::<USD>::try_from_units(10_500_000_000_000_000_000).unwrap();
     assert_eq!(serde_json::to_string(&m).unwrap(), r#"{"currency":"USD","amount":"10.50"}"#);
 
-    let r = Rate::<USD, IDR>::from_units(16_000 * kamu_money_core::POW10_SCALE).unwrap();
+    let r = Rate::<USD, IDR>::try_from_units(16_000 * kamu_money_core::POW10_SCALE).unwrap();
     assert_eq!(serde_json::to_string(&r).unwrap(), r#"{"base":"USD","quote":"IDR","rate":"16000"}"#);
 }
 
@@ -94,12 +94,12 @@ fn structured_is_the_default_for_money_and_rate() {
 fn the_wire_amount_uses_the_same_trim_rule_as_display() {
     let units = 10_500_000_000_000_000_000;
     assert_eq!(
-        serde_json::to_string(&Money::<JPY>::from_units(units).unwrap()).unwrap(),
+        serde_json::to_string(&Money::<JPY>::try_from_units(units).unwrap()).unwrap(),
         r#"{"currency":"JPY","amount":"10.5"}"#,
         "JPY settles at 0dp"
     );
     assert_eq!(
-        serde_json::to_string(&Money::<USD>::from_units(units).unwrap()).unwrap(),
+        serde_json::to_string(&Money::<USD>::try_from_units(units).unwrap()).unwrap(),
         r#"{"currency":"USD","amount":"10.50"}"#,
         "USD settles at 2dp"
     );
@@ -173,7 +173,7 @@ fn out_of_domain_and_over_precise_payloads_are_refused_not_rounded() {
 #[test]
 fn binary_carries_the_iso_numeric_tag_before_the_units() {
     let units = 10_500_000_000_000_000_000i128;
-    let bytes = postcard::to_allocvec(&Money::<USD>::from_units(units).unwrap()).unwrap();
+    let bytes = postcard::to_allocvec(&Money::<USD>::try_from_units(units).unwrap()).unwrap();
 
     // The tag is exactly what the standalone `Iso4217` codec emits (USD = numeric 840), never
     // the enum ordinal — so it inherits `binary_encodes_the_iso_numeric_never_the_variant_position`.
@@ -189,7 +189,7 @@ fn binary_carries_the_iso_numeric_tag_before_the_units() {
 /// `Money<IDR>`. Before R2-F2 this succeeded, unit-for-unit, silently redenominating the money.
 #[test]
 fn binary_refuses_a_cross_currency_reinterpretation() {
-    let m = Money::<USD>::from_units(10 * kamu_money_core::POW10_SCALE).unwrap();
+    let m = Money::<USD>::try_from_units(10 * kamu_money_core::POW10_SCALE).unwrap();
     let bytes = postcard::to_allocvec(&m).unwrap();
 
     assert!(postcard::from_bytes::<Money<IDR>>(&bytes).is_err(), "a USD payload must not decode as IDR");
@@ -202,7 +202,7 @@ fn binary_refuses_a_cross_currency_reinterpretation() {
 #[test]
 fn binary_refuses_a_rate_pair_reinterpretation() {
     use kamu_money_core::iso::{EUR, JPY};
-    let r = Rate::<USD, IDR>::from_units(16_000 * kamu_money_core::POW10_SCALE).unwrap();
+    let r = Rate::<USD, IDR>::try_from_units(16_000 * kamu_money_core::POW10_SCALE).unwrap();
     let bytes = postcard::to_allocvec(&r).unwrap();
 
     assert!(postcard::from_bytes::<Rate<EUR, JPY>>(&bytes).is_err(), "both ends changed");
@@ -224,21 +224,21 @@ fn transparent_binary_also_refuses_a_cross_currency_reinterpretation() {
         Money<IDR>,
     );
 
-    let bytes = postcard::to_allocvec(&U(Money::<USD>::from_major(10).unwrap())).unwrap();
+    let bytes = postcard::to_allocvec(&U(Money::<USD>::try_from_major(10).unwrap())).unwrap();
     assert!(
         postcard::from_bytes::<I>(&bytes).is_err(),
         "transparent binary must reject a mismatched currency too"
     );
-    assert_eq!(postcard::from_bytes::<U>(&bytes).unwrap(), U(Money::<USD>::from_major(10).unwrap()));
+    assert_eq!(postcard::from_bytes::<U>(&bytes).unwrap(), U(Money::<USD>::try_from_major(10).unwrap()));
 }
 
 #[test]
 fn binary_round_trips_in_both_modes() {
-    let m = Money::<USD>::from_units(-10_500_000_000_000_000_000).unwrap();
+    let m = Money::<USD>::try_from_units(-10_500_000_000_000_000_000).unwrap();
     let bytes = postcard::to_allocvec(&m).unwrap();
     assert_eq!(postcard::from_bytes::<Money<USD>>(&bytes).unwrap(), m);
 
-    let r = Rate::<USD, IDR>::from_units(DOMAIN_MAX).unwrap();
+    let r = Rate::<USD, IDR>::try_from_units(DOMAIN_MAX).unwrap();
     let bytes = postcard::to_allocvec(&r).unwrap();
     assert_eq!(postcard::from_bytes::<Rate<USD, IDR>>(&bytes).unwrap(), r);
 }
@@ -254,14 +254,14 @@ fn a_binary_payload_outside_the_domain_is_refused() {
 proptest! {
     #[test]
     fn prop_money_round_trips_through_json(units in -DOMAIN_MAX..=DOMAIN_MAX) {
-        let m = Money::<USD>::from_units(units).unwrap();
+        let m = Money::<USD>::try_from_units(units).unwrap();
         let json = serde_json::to_string(&m).unwrap();
         prop_assert_eq!(serde_json::from_str::<Money<USD>>(&json).unwrap(), m);
     }
 
     #[test]
     fn prop_money_round_trips_through_binary(units in -DOMAIN_MAX..=DOMAIN_MAX) {
-        let m = Money::<IDR>::from_units(units).unwrap();
+        let m = Money::<IDR>::try_from_units(units).unwrap();
         let bytes = postcard::to_allocvec(&m).unwrap();
         prop_assert_eq!(postcard::from_bytes::<Money<IDR>>(&bytes).unwrap(), m);
     }
@@ -272,7 +272,7 @@ proptest! {
         #[derive(Serialize, Deserialize, PartialEq, Debug)]
         struct T(#[serde(with = "kamu_money_core::wire::transparent")] Money<USD>);
 
-        let m = Money::<USD>::from_units(units).unwrap();
+        let m = Money::<USD>::try_from_units(units).unwrap();
         let via_structured: Money<USD> =
             serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
         let via_transparent: T =
@@ -289,7 +289,7 @@ proptest! {
         #[derive(Serialize, Deserialize, PartialEq, Debug)]
         struct T(#[serde(with = "kamu_money_core::wire::transparent")] Rate<USD, IDR>);
 
-        let r = Rate::<USD, IDR>::from_units(units).unwrap();
+        let r = Rate::<USD, IDR>::try_from_units(units).unwrap();
         let structured: Rate<USD, IDR> =
             serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
         let transparent: T = serde_json::from_str(&serde_json::to_string(&T(r)).unwrap()).unwrap();

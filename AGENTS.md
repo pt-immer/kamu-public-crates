@@ -24,8 +24,8 @@ publishing small, focused Rust crates — libraries and CLI apps — to crates.i
   `actix-web` request spans, and OpenTelemetry/OTLP export (`with-otlp`).
 - **`kamu-money-core`** (`crates/money-core`) — exact monetary arithmetic:
   `i128` at a fixed scale of 18, compile-time currency identity, and an explicit
-  residue decision before division releases its quotient. A taken residue's
-  runtime backstop is suppressed during an existing unwind. Its ISO 4217 register is **generated at
+  residue decision before division releases its quotient. A taken residue is a
+  `#[must_use]` obligation and never panics in `Drop`. Its ISO 4217 register is **generated at
   build time** from a vendored XML list, the same way `kamu-iso3166` builds its
   tables. The `postgres` / `sqlx` adapters live in the crate itself because
   `impl ToSql` for its type from elsewhere is `E0117`.

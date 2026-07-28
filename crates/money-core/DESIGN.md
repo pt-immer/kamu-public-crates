@@ -343,7 +343,7 @@ that simply is not the one that was sent. A `DOMAIN` behaves identically — it 
 the cast.
 
 **Consequence, and it retroactively justifies a decision that was argued only on taste.**
-`kamu-money-core` refusing over-precise input (`MoneyError::ExcessPrecision`) is not merely the
+`kamu-money-core` refusing over-precise input (`ParseMoneyError::ExcessPrecision`) is not merely the
 safer choice: the application boundary is **the only place this loss can be caught at all**.
 The database cannot protect itself, and every write path that bypasses `kamu-money-core` — an
 ad-hoc `INSERT`, a migration, an ETL job, another service on the same column — can silently
@@ -920,10 +920,10 @@ every operation, which is where `Decimal` spends its time — and E3 records tha
 is not merely slow but *lossy*. The domain check costs ~3× a raw `i128` add and is the whole reason
 E2/E3's silent-corruption class cannot occur here.
 
-Two rows flatter `Decimal` and should not be read as losses. `div_int` **forces the caller to
-handle the residue** (C5); `Decimal::checked_div` discards it silently — the benchmark panicked on
-its first run because it dropped the `Residue`, which is the drop-bomb doing its job. And
-`text::parse` resolves an ISO currency that `Decimal` never has to.
+Two rows flatter `Decimal` and should not be read as losses. `div_int` returns a
+bundled residue decision (C5), while `Decimal::checked_div` discards its
+remainder. `text::parse` also resolves an ISO currency that `Decimal` never has
+to.
 
 #### PostgreSQL: `kmoney` versus `numeric(36,18)`
 
@@ -1157,10 +1157,10 @@ decision, and no per-row length to read — and the same property that makes it 
 `numeric` holding `12.34`. The trade is bounded and it does not move with the row count in any
 surprising way, because it does not depend on the data at all, only on its shape.
 
-It also does not change the design. §0.1's axiom is that truth is stored and the residue cannot
-be silently dropped, which is a correctness requirement; four bytes a row is a price, and the two
-are not commensurable. Recorded because a design record that only lists the comparisons its
-subject wins is an advertisement.
+It also does not change the design. §0.1's axiom is that truth is stored and division requires a
+named residue decision before the quotient escapes. That is a correctness requirement; four bytes
+a row is a price, and the two are not commensurable. Recorded because a design record that only
+lists the comparisons its subject wins is an advertisement.
 
 #### On YugabyteDB, which is where this deploys
 
@@ -1326,7 +1326,7 @@ pub struct Money<C: StaticCurrency> { units: i128, _c: PhantomData<C> }   // exa
 - **Invariant: one scale for every fixed-point type in the crate**, money and rates alike. Not for arithmetic reasons — money's scale *cancels* in `Money × Rate` (the result is `m*r / 10^(rate scale)`, so the divisor is the rate's scale alone and the formula is identical at 12 or 18). The reason is that a schema holding both `numeric(36,12)` and `numeric(36,18)` requires a human to remember which column is which, where a mistake is a **silent factor of `10^6`** and no type system reaches a migration, an ad-hoc query, or a BI tool. One scale makes that error unrepresentable rather than documented — the same move that deleted `StaticCurrency::EXP`.
 - **Note:** `|units| < 10^36` does **not** move with the scale, because it counts units. The `i128` checking margin is ~170x at 12 and ~170x at 18, identically. Widening the scale cost integer range (`|v| < 10^18` rather than `< 10^24`), not headroom.
 - **Invariant:** the raw `i128` is never publicly reachable. A caller holding one could reintroduce an unchecked construction path.
-- **Failure:** construction outside the domain → `Err(DomainOverflow)`. Never truncation, never saturation.
+- **Failure:** construction outside the domain → `AmountError::OutOfDomain`. Never truncation, never saturation.
 - **Evidence:** E3 (Decimal cannot hold this invariant), E4, E5, E6.
 
 **Why `i128` and not `Decimal`:** the schema *defines what money is*. `NUMERIC(36,18)` declares money to be a multiple of `1e-18` up to `10^18`. `i128@18` represents that set exactly and totally; `Decimal` represents 0.000008% of it (E5) and cannot survive addition within it (E3). That percentage is unchanged by the scale: both sides of it are counts of **units**, and the domain is `10^36` units at any scale.
@@ -1384,10 +1384,9 @@ pub struct Money<C: StaticCurrency> { units: i128, _c: PhantomData<C> }
 > to discourage exactly that — which is the design conceding the type was a hazard while keeping
 > it. A boundary is a place you pass through, not a place you work.
 >
-> Nothing replaces it yet, deliberately. The decoder that would need a boundary form does not
-> exist until phase 4, and a fallible surface no caller can reach is the same speculative
-> complexity that got `from_parts_unchecked` deleted (§0.3). `MoneyError` is `#[non_exhaustive]`,
-> so re-adding its "expected `C`, found `X`" arm costs nothing when there is a caller.
+> Nothing replaced it until the decoder existed. That boundary now reports
+> `WireError::WrongCurrency`; the top-level `MoneyError` only wraps the narrow wire error for
+> applications that choose one catch-all boundary.
 >
 > The earlier E0119 correction under this contract stands as history and is preserved in E11: it
 > recorded that `impl<C: StaticCurrency> CurrencyRepr for C` alongside `impl CurrencyRepr for Dyn`
@@ -1410,64 +1409,32 @@ pub struct Money<C: StaticCurrency> { units: i128, _c: PhantomData<C> }
 
 **Correction on the record:** "Add is exact and total" was claimed during design and is **false** (E7). Add is *exact* — it never rounds — but it is *not total*; it can overflow. The property that matters is **detectability**: `i128` overflow is `None`; `Decimal` scale-drop is `Some` (E3). Loud versus silent, not total versus partial.
 
-### C5 — Residue: the "loses no money" mechanism
+### C5 — Division and residue
+
+`div_int` returns one `Division<C>` containing quotient and residue. The
+quotient is available only through two named exits:
 
 ```rust
-#[must_use = "a Division holds money. Decide the residue: .take_residue() or .discard_deliberately()."]
-pub struct Division<C> { quotient: i128, residue: i128 }   // private fields, no public accessor
-
-impl<C: StaticCurrency> Division<C> {
-    fn take_residue(self) -> (Money<C>, Residue<C>);       // opt IN to holding the obligation
-    fn discard_deliberately(self) -> Money<C>;             // no Residue is ever constructed
-}
-
-#[must_use = "this residue is MONEY. absorb it: .take_units() and post it, add it back, or .discard_deliberately()."]
-pub struct Residue<C> { units: i128, ack: bool }
+fn take_residue(self) -> (Money<C>, Residue<C>);
+fn discard_deliberately(self) -> Money<C>;
 ```
 
-- **Invariant: a lossy operation returns ONE value, never a tuple.** `div_int` yields a `Division`,
-  which bundles the quotient and the residue so they cannot be separated. There is no way to reach
-  the money without choosing what happens to the residue, and therefore **dropping an undecided
-  `Division` is safe**: nothing was handed out, so nothing left the ledger.
+Dropping an unresolved `Division` is safe because no quotient escaped.
+`tests/ui/residue_wildcard_destructure.rs` proves that callers cannot use tuple
+destructuring to keep only the quotient.
 
-  | Caller writes | Old tuple API | Now |
-  |---|---|---|
-  | `let (share, _) = m.div_int(..)` | nothing warns; drop-bomb at runtime | **does not compile** — there is no tuple |
-  | `m.div_int(3, HalfEven);` | `#[must_use]` warns | `#[must_use]` warns |
-  | `Division` dropped mid-unwind | silent loss (see the hole below) | nothing was produced |
-  | `let (share, _) = div.take_residue();` | — | **nothing warns.** The drop-bomb, at runtime |
+A taken `Residue<C>` is a `#[must_use]` accounting obligation. Consume it with
+`take_units()` and post those units, or call `discard_deliberately()` to record
+intentional loss. Rust has no linear types, so `#[must_use]` can be suppressed;
+the API does not claim otherwise.
 
-- **Correction (2026-07-22), and it invalidates this contract's central claim.** Three revisions of
-  C5 argued about `#[must_use]`, drop-bombs, panic-versus-count, and unwind safety. Every one of
-  them was **downstream of a signature that did not need to exist**: `-> (Money<C>, Residue<C>)`.
-  A tuple hands the caller two independent values, so one can be kept and the other dropped, and
-  each guard was policing that separation rather than removing it. C5 concluded *"a `Drop` impl
-  cannot be forbidden, only made loud — this is the strongest enforcement the language permits."*
-  **That is false.** Bundling is stronger, and it is ordinary Rust. Verified by compilation: the
-  quotient is unreachable except through a method that also decides the residue, and
-  `let (_share, _) = m.div_int(..)` now fails with *"expected `Division<USD>`, found `(_, _)`"*.
-  Pinned by `tests/ui/residue_wildcard_destructure`.
+`Residue` deliberately has no panic-on-drop policy. Panicking from `Drop` turns
+ordinary cancellation or a second unwind into an operational failure, while
+still providing no compile-time guarantee. The bundle is the enforcement
+mechanism; `#[must_use]` is the remaining signal after a caller explicitly
+takes the residue.
 
-  **The general form is worth more than the fix:** if two values must be handled together, never
-  return them as a tuple. A tuple is a promise that the parts are independent. Where that promise
-  is false, the tuple *is* the defect, and every guard bolted onto it treats a symptom.
-- **Invariant: `Residue` survives, and keeps its bomb, but its role is now a backstop.** It is
-  reachable only through `take_residue()` — an explicit request to hold the obligation yourself.
-  The other exit never constructs one, so two of the three former hazards became *unconstructible*
-  rather than guarded. The last row of the table above is why the bomb stays: once deliberately
-  taken out of the bundle, a `Residue` is a free-standing value again, and Rust has no linear
-  types to stop you dropping it.
-- **Note, accidental but load-bearing:** `const fn` and `Drop` are mutually exclusive (E0493).
-  Keeping `take_residue`/`discard_deliberately` `const` therefore makes it a **compile error** for
-  `Division` to ever grow a drop-bomb of its own. The property is enforced by the compiler rather
-  than by anyone remembering it.
-- **Invariant:** dropping a **nonzero, unabsorbed** `Residue` panics — in **every profile**, release included. In a ledger the residue must be *absorbed*: carried forward, posted to a rounding account, or handed to a party. Absorbing it means consuming the value (`.take_units()` and posting it, adding it back, or `.discard_deliberately()`). Letting it fall out of scope is money leaving the ledger, and it stops the program.
-- **Rejected: counting the loss in release instead of panicking.** An earlier revision panicked in debug and incremented a process-global counter in release. Three things were wrong with it. It made the crate's central invariant **depend on the build profile**, so the release binary — the one handling real money — was the permissive one. The counter could not say *which* currency or *which* call site, so it was an alarm that could not be acted on. And reporting a loss after the fact is not a remedy: either the residue was absorbed, or there is a bug that must stop the program. The counter also carried its own defect, which is what exposed the design: it saturated the individual residue and then `fetch_add`ed, and **every** `Atomic*::fetch_add` wraps, so two individually in-range magnitudes could drive the counter to **exactly zero with money lost** (measured: `fetch_add(u64::MAX - 10)` then `fetch_add(100)` reads `89`). `AtomicU128` does not exist on stable, so a canonical-unit magnitude could not have been held losslessly anyway.
-- **Invariant:** discarding requires `.discard_deliberately()` — explicit, greppable, auditable. Strictly this is an acknowledged **loss**, not an absorption: the money does not reach the ledger, the caller has accepted that. It is the one door this contract leaves open, deliberately and by name.
-- **Failure:** Rust has no linear types, so a `Drop` impl cannot be *forbidden* — only made loud. That limit is real, but it now binds a **much smaller surface** than this contract used to claim: it applies only to a `Residue` the caller deliberately took out of a `Division`, not to the ordinary path. What the language does permit is making the *unwanted state unreachable*, which is what the bundle does.
-- **Failure — the one hole, now narrowed:** the bomb must not fire while the thread is already unwinding, because a panic inside `Drop` during a panic **aborts the process**, destroying the original panic's diagnostics and preventing any rollback. So a residue dropped during an unwind still vanishes silently. Aborting is not failing *harder*, it is failing *worse*. The hole is unchanged in nature but much rarer in practice: it can only be reached by a caller who has already opted into holding the residue, since no other path constructs one.
-
-**Restating the requirement honestly.** "Loses no money" is **literally unsatisfiable**: `10.00 / 3` is unrepresentable in any finite decimal at any width in any backing type. No canonical repr fixes that. The achievable property is **conservation** — rounding may occur, but residue is never *discarded* silently, and `allocate` sums back to the whole exactly. That is what this contract delivers.
+Allocation has no residue: its returned parts always sum exactly to the input.
 
 ### C6 — FX conversion, compile-time and runtime
 
@@ -1476,11 +1443,11 @@ pub struct Rate<Base, Quote> { units: i128, /* PhantomData<(Base, Quote)> */ }  
 
 impl<C: StaticCurrency> Money<C> {
     fn convert<Quote: StaticCurrency>(self, rate: Rate<C, Quote>, mode: Rounding)
-        -> Result<Money<Quote>, MoneyError>;                // NO residue — see below
+        -> Result<Money<Quote>, RateError>;                 // NO residue — see below
 
     fn convert_via<Bridge: StaticCurrency, Quote: StaticCurrency>(
         self, first: Rate<C, Bridge>, second: Rate<Bridge, Quote>, mode: Rounding)
-        -> Result<Money<Quote>, MoneyError>;
+        -> Result<Money<Quote>, RateError>;
 }
 
 ```
@@ -1496,7 +1463,7 @@ impl QuoteTable {
 ```
 
 - **Invariant: a rate's two currencies are its BASE and its QUOTE**, which are the domain's words, not `from`/`to`, which were this crate's. The **base** is the currency a rate prices one unit of; the **quote** (or counter) is the currency that price is expressed in. `EUR/USD 1.2500` means one EUR buys 1.2500 USD. The same rule that governs C2's exponent and C7's alpha-3 governs this: where the domain has already named a thing, the crate uses that name rather than inventing a parallel one.
-- **Invariant (2026-07-27, BREAKING, pre-1.0): a rate's units are STRICTLY POSITIVE.** `Rate::from_units` refuses zero and negatives as well as anything outside `DOMAIN_MAX`; `Rate::try_from_units` reports **which** rule was broken — `MoneyError::NonPositiveRate` or `MoneyError::DomainOverflow`, magnitude tested first so `i128::MIN` is reported as the magnitude bug it is while an in-domain `-2` is reported as the sign bug it is. The invariant has exactly one owner and every ingress reaches it: the text parser and both serde forms land on `try_from_units`, and `postgres-types` and sqlx land on the text parser. `kamu-money-core/tests/rate_ingress.rs` proves that funnel at each surface rather than arguing it, because an adapter that grew its own parse would enforce a weaker rule and nothing else in the tree would notice.
+- **Invariant (2026-07-27, BREAKING, pre-1.0): a rate's units are STRICTLY POSITIVE.** `Rate::try_from_units` refuses zero and negatives as well as anything outside `DOMAIN_MAX`; it reports **which** rule was broken — `RateError::NonPositive` or `RateError::Amount`, magnitude tested first so `i128::MIN` is reported as the magnitude bug it is while an in-domain `-2` is reported as the sign bug it is. The invariant has exactly one owner and every ingress reaches it: the text parser and both serde forms land on `try_from_units`, and `postgres-types` and sqlx land on the text parser. `kamu-money-core/tests/rate_ingress.rs` proves that funnel at each surface rather than arguing it, because an adapter that grew its own parse would enforce a weaker rule and nothing else in the tree would notice.
 
 > **Correction (2026-07-27), and it reverses a decision this document recorded as settled.** C6 previously bounded a rate's MAGNITUDE and was silent on its sign, and on 2026-07-21 the operator chose that reading deliberately from an explicit two-option fork — full signed domain over a positive-only constructor — so that `Rate` would stay a plain fixed-point number exactly like `Money` rather than acquire an invariant the contract had not asked for. Sign was the quote feed's responsibility. The cost was documented **on the type** instead of enforced: a negative rate flips the sign of the money passing through it and a zero rate sends it to zero, both silently, both ordinary arithmetic on in-domain values with no overflow and no residue. A test (`a_negative_rate_flips_sign_and_a_zero_rate_sends_to_zero`) pinned that behaviour precisely so a later "defensive" guard could not be added without something going red.
 >
@@ -1504,7 +1471,7 @@ impl QuoteTable {
 >
 > The compile-time half was never in question and is unchanged. A phantom pair proves `Rate<USD, IDR>` is not `Rate<IDR, USD>`; it cannot prove a runtime number is positive, and runtime construction is what finishes that proof. If a signed scaling factor is ever wanted it is a different thing from a price and gets its own name — weakening `Rate` to obtain one would hand back the silent sign flip.
 
-- **Note, because the distinction is load-bearing and currently invisible:** `MoneyError::ConversionOverflow { from, to }` keeps *direction* words deliberately. It names a **conversion**, which is an operation; `base`/`quote` name a **rate**, which is a price. They coincide here only because C6 omits `inverse()` and therefore stores every pair in both directions — hold a `USD/IDR` rate and convert `IDR → USD` and the base would be `USD` while the conversion's `from` would be `IDR`. Under this contract they cannot diverge, which is exactly why the wrong word was harmless, and why it would not have stayed harmless.
+- **Note, because the distinction is load-bearing and currently invisible:** `RateError::ConversionOverflow { from, to }` keeps *direction* words deliberately. It names a **conversion**, which is an operation; `base`/`quote` name a **rate**, which is a price. They coincide here only because C6 omits `inverse()` and therefore stores every pair in both directions — hold a `USD/IDR` rate and convert `IDR → USD` and the base would be `USD` while the conversion's `from` would be `IDR`. Under this contract they cannot diverge, which is exactly why the wrong word was harmless, and why it would not have stayed harmless.
 - **Correction (2026-07-22), and the reason it is written down:** the wire form for a pair was first proposed as `"USD/IDR …"` on the stated grounds that it is *"the standard's, not this crate's"* — the identical justification C7 uses for alpha-3 and ISO numeric. **That was false and was asserted without checking.** ISO 4217 standardises the codes; it does **not** standardise pair notation. A pair is conventionally written with a slash, but the slash "may be omitted, or replaced by either a dot or a dash." So the delimiter is this crate's choice and must be defended as a choice. What the check *did* establish is the vocabulary above, which the crate was getting wrong independently. Three corrections in this document now share one shape — E0119, E0207, and this — and all three were memory presented as fact.
 
 > **Correction (2026-07-21), found by compiling it.** The block above previously read
@@ -1524,7 +1491,7 @@ impl QuoteTable {
 - **Invariant:** `Money<USD>` converted by `Rate<USD, IDR>` yields `Money<IDR>`. The pair is **type-checked at compile time**; a mismatched pair does not compile.
 - **Invariant: `Rate` shares `Money`'s scale.** It is not separately "scale 18" — there is one `SCALE` in the crate (C1), and a rate is a fixed-point number at it like everything else. `Rate` reuses `DOMAIN_MAX` unchanged.
 - **Invariant: conversion is FALLIBLE and returns `Result`, and there is deliberately no `impl Mul`.** Domain overflow here is a *condition*, not a bug, which is precisely what separates it from `Add`. Measured against real pairs: `USD→IRR` at today's rate leaves the domain at a balance of **$2.38 trillion**, and `USD→ZWL` at the 2008 rate leaves it at a balance of **$100,000**. C4 rejects `Add for Money<Dyn>` because *"a `+` that can fail on currency mismatch is a lie"*; a `*` that fails on an ordinary hundred-thousand-dollar conversion is the same lie about a different failure. `Result` rather than `Option` so the error names which conversion overflowed.
-- **Invariant: conversion returns NO `Residue`, and this is not an oversight.** A conversion divides by `POW10_SCALE`, so its remainder is *always* strictly less than one canonical unit — measured over 200,000 random pairs, worst loss `0.499999` money units, which is `0` as an integer count. A `Residue<T>` here would be `Residue::new(0, ())` in every case: it drops silently, the bomb never fires, `take_units()` always returns zero. `convert_via` divides by `POW10_SCALE²` and is the same.
+- **Invariant: conversion returns NO `Residue`, and this is not an oversight.** A conversion divides by `POW10_SCALE`, so its remainder is *always* strictly less than one canonical unit — measured over 200,000 random pairs, worst loss `0.499999` money units, which is `0` as an integer count. A `Residue<T>` here would carry zero units in every case, and `take_units()` would always return zero. `convert_via` divides by `POW10_SCALE²` and is the same.
 - **Failure this prevents:** an always-empty `Residue` is worse than none. `#[must_use]` would force every caller of the crate's *most common* operation to absorb a value that is always nothing, training the reflex `let (m, _) = …` or a habitual `.discard_deliberately()` — and that reflex then carries to `div_int`, where the residue is real money. A safety device that cries wolf degrades itself everywhere it is used. The loss is real but **unrepresentable**: below `1e-18` of a currency unit, which the ledger cannot express, so there is nothing to absorb. That is what distinguishes it from `div_int`, whose small divisor leaves whole units behind.
 - **Invariant: `convert_via` never materialises the intermediate.** `A → B → C` rounds **once**, at the end. This is not a precision optimisation — measured at realistic magnitudes, doing it as two sequential conversions is off by `4.885e-14` currency units, ten orders below anything a currency can express. It is a **ledger** requirement: two sequential conversions materialise an intermediate `Money<B>` balance that the holder never held, quantising it to a whole canonical unit on the way through. `convert_via` never creates that balance, so there is no moment at which a party appears to hold a currency they do not.
 - **Invariant: `convert_via` needs one `checked_mul`, not staged rounding.** Verified analytically and over 300,000 full-domain trials: an in-domain result implies `m·r₁·r₂ ≤ 1e72 < I256::MAX`, so every valid result fits, and there were **zero** false rejects. An overflow can only occur when the result would have left the domain anyway, so rejecting it is correct rather than conservative.
@@ -1537,8 +1504,8 @@ impl QuoteTable {
 > **The measurement is real; the conclusion drawn from it is not.** It shows you cannot *enumerate* pairs as types. It does not show the runtime form must be a `Rate`. A private map behind a generic accessor satisfies the same requirement, refuses arithmetic entirely, and never lets a caller hold a rate whose pair the compiler does not know. The same 32,220 figure was then reused to argue for a runtime *money* type, where the relevant count is n = ~180 rather than n² — a second error, from the same number.
 
 - **~~Decided: `Rate` keeps the full SIGNED domain, and the consequence is named rather than fixed.~~ SUPERSEDED 2026-07-27 — see the C6 correction.** Kept, not deleted, because the reasoning is what makes the reversal legible. Settled 2026-07-21 against the alternative of refusing `units <= 0` at construction. The contract bounds *magnitude* and says nothing about sign, so `Rate` stays a plain fixed-point number exactly like `Money` rather than acquiring an invariant this document never asked for. The cost is real and belongs on the record: a negative rate **flips the sign** of the money passing through it, and a zero rate sends it to **zero** — both silently, with no overflow and no residue, because both are ordinary arithmetic on in-domain values. Nothing in the type system reaches this; the sign of a quote is the quote feed's responsibility, and the crate documents it at `Rate` rather than pretending otherwise. **Revisit if a feed is ever ingested without validation.** — That last sentence is what closed it. The crate ships four such feeds (`FromStr`, serde, `postgres-types`, sqlx), each decoding untrusted bytes with no positivity check of its own, so the responsibility had been delegated to adapters that live in this repository and do not perform it. A rate is now strictly positive.
-- **Note:** `Rate::from_units` is the only constructor phase 2 needs. Every real quote measured uses ≤13 decimal places against the 18 available, so decimal text is exact and needs no rounding mode; text ingestion is C7 wire work regardless.
-- **Failure this prevents, measured 2026-07-21 while testing the above:** the narrowing from the `I256` quotient to `i128` must stay **checked**, and the domain check behind it does *not* cover it. Substituting a truncating `as_i128()` left the entire suite green, because the cases tried happened to wrap to values that were *still* out of domain, so `from_units` refused them anyway and the two gates were indistinguishable. They are not: a quotient of exactly `2^128` — reachable from an in-domain amount at an in-domain rate — truncates to **exactly zero**, and the conversion returns `Ok($0.00)` with the money simply gone. Pinned by `a_quotient_that_would_truncate_back_into_the_domain_is_still_refused`.
+- **Note:** `Rate::try_from_units` is the only constructor phase 2 needs. Every real quote measured uses ≤13 decimal places against the 18 available, so decimal text is exact and needs no rounding mode; text ingestion is C7 wire work regardless.
+- **Failure this prevents, measured 2026-07-21 while testing the above:** the narrowing from the `I256` quotient to `i128` must stay **checked**, and the domain check behind it does *not* cover it. Substituting a truncating `as_i128()` left the entire suite green, because the cases tried happened to wrap to values that were *still* out of domain, so `try_from_units` refused them anyway and the two gates were indistinguishable. They are not: a quotient of exactly `2^128` — reachable from an in-domain amount at an in-domain rate — truncates to **exactly zero**, and the conversion returns `Ok($0.00)` with the money simply gone. Pinned by `a_quotient_that_would_truncate_back_into_the_domain_is_still_refused`.
 - **The small end, MEASURED 2026-07-22 — the estimate was right.** A rate is a count of `1e-18`, so its magnitude *is* its precision budget. Pinned by `tests/rate_small_end.rs`:
 
   | rate | units behind it | significant digits |
@@ -1549,7 +1516,7 @@ impl QuoteTable {
   | `1e-17` | `10` | 2 |
   | `1e-18` | `1` | 1 |
 
-  At `1e-13` the resolution is one part in `100000` — the seventh digit is not imprecise, it **does not exist**, and `from_units` cannot round to it. Because there is no `inverse()`, **every pair is stored in both directions**, so the tiny counter-direction of a hyperinflation quote is mandatory rather than hypothetical; a `USD→IDR` of `3e6` has a reverse of `3.33e-7` that still carries 12 digits, and a measured round trip drifts under `1e-6` of a major unit.
+  At `1e-13` the resolution is one part in `100000` — the seventh digit is not imprecise, it **does not exist**, and `try_from_units` cannot round to it. Because there is no `inverse()`, **every pair is stored in both directions**, so the tiny counter-direction of a hyperinflation quote is mandatory rather than hypothetical; a `USD→IDR` of `3e6` has a reverse of `3.33e-7` that still carries 12 digits, and a measured round trip drifts under `1e-6` of a major unit.
 
   The floor behaves, and is named rather than hidden: at a rate of `1e-18`, `1.0` converts to exactly one unit, and **anything below `1.0` converts to zero** — the rate has no digits left to carry it. That is ordinary truncation at the bottom of the domain, not a defect, but it is the point past which a quote should be rejected upstream rather than stored.
 
@@ -1582,8 +1549,11 @@ Runnable: `cargo run -p kamu-money-core --example wire --features serde`.
 - **Invariant: `Iso4217`'s codec is hand-written, never derived, and carries no `rename_all`.** Human-readable emits the alpha-3 code (`"IDR"`); binary emits the **ISO numeric** as `u16` (`360`). Both are assigned by the standard, so neither is this crate's choice to make.
 - **Failure this prevents (measured, and the reason it is hand-written):** `#[derive(Serialize)]` encodes an enum variant by its **ordinal position**, not its discriminant. Inserting a currency mid-table shifts every later position, and stored `IDR` decoded as `GBP` — silently, with `#[repr(u16)]` and `IDR = 360` unchanged in both versions. `#[repr]` governs memory layout, not the wire. Human-readable formats emit the *name* and are unaffected, so a JSON test suite cannot catch this; it surfaces only when old binary data meets a newer build. The ISO numeric is immune because a standards body assigns it permanently.
 - **Failure this prevents (measured):** `#[serde(rename_all = "SCREAMING_SNAKE_CASE")]` on `Iso4217` emits `"I_D_R"`. The trap is that it reads *more* correct than no attribute — "currency codes are screaming caps" is true, and the attribute asserting it corrupts every value. `UPPERCASE` happens to be correct, but hand-writing the codec removes the question entirely.
-- **Invariant: no `Serialize`/`Deserialize` on `MoneyError`, `Rounding`, `Residue` or `Division`.** The first two are this crate's own vocabulary: a wire form for them is *our* house style shipped to every consumer, who would need a newtype to escape it. This crate promises a wire format for **money**, and for nothing else.
-  - The last two are a stronger objection than style. **`Residue` is a drop-bomb**, so a `Deserialize` impl would let an attacker-controlled field materialise a panic-on-drop — a remote denial of service, not a preference. `Division` holds money that has not yet been accounted for and has no meaning outside the call that produced it.
+- **Invariant: no `Serialize`/`Deserialize` on errors, `Rounding`, `Residue`, or
+  `Division`.** Errors and rounding policy are application vocabulary. A
+  residue is an accounting obligation tied to an operation, and a division is
+  unresolved local state; neither is a durable value to recreate from
+  untrusted input.
 - **Invariant: one parser, not two.** The wire's human-readable form goes through the same `text` module that backs `Display`/`FromStr`, which is **not** feature-gated. A second decimal reader would be a second set of rules, and the two would drift on exactly the inputs nobody tests.
 - **Invariant: excess precision is REFUSED, never rounded**, and it has its own error variant so the refusal is greppable. This is the failure that disqualified `rust_decimal` for this crate (E2): its `from_str` silently rounded out-of-domain input and returned `Ok`.
 - **Invariant:** two named modes, selected per field by `#[serde(with = ...)]` — `wire::transparent` (one scalar) and `wire::structured` (an object with named fields). **Structured is the default**, so the common case needs no attribute at all. Measured: a `with`-path typo is `E0433: cannot find module` at **compile** time, so per-field selection is already compile-checked and a proc-macro derive would buy nothing for a syn/quote dependency.
@@ -1669,7 +1639,7 @@ reviewer can approve behaviour the code does not provide.
 - **Provenance.** E9 measured PG stating the bound for `numeric(36,12)`; **E13 has now measured `numeric(36,18)` directly**, and PG states it verbatim: *"A field with precision 36, scale 18 must round to an absolute value less than 10^18."* The derived rule was correct. No longer an open item.
 - **Failure, measured, and the database CANNOT defend against it (E13):** PostgreSQL **silently rounds** over-precise input on the way into a `numeric(36,18)` column. `'0.0000000000000000004'` is stored as **zero**, with `INSERT 0 1` and no warning — the verbatim `rust_decimal` failure (E2) that this design rejected a dependency over, reproduced by the source of truth itself.
   - **No `CHECK` or `DOMAIN` can catch it**, because both run *after* the cast: the constraint is shown the already-rounded value (`DETAIL: Failing row contains (0.000000000000000000)`). A `CHECK (v <> 0)` rejects the round-to-zero case only by accident, and `5e-19 → 1e-18` passes every constraint while not being the value that was sent.
-  - **Therefore the application boundary is the only place the loss is catchable**, which retroactively justifies `MoneyError::ExcessPrecision` as necessary rather than merely strict. Any write path bypassing `kamu-money-core` — an ad-hoc `INSERT`, a migration, an ETL job, another service on the same column — can silently alter an amount.
+  - **Therefore the application boundary is the only place the loss is catchable**, which retroactively justifies `ParseMoneyError::ExcessPrecision` as necessary rather than merely strict. Any write path bypassing `kamu-money-core` — an ad-hoc `INSERT`, a migration, an ETL job, another service on the same column — can silently alter an amount.
   - This is a **bounded exception to §0.1**: Rust and PG agree on arithmetic and disagree on ingestion of values that were never representable. Rust refuses; PG rounds.
 - **Evidence:** E9.
 
@@ -1695,7 +1665,7 @@ reviewer can approve behaviour the code does not provide.
 
 - **Invariant: widening is implicit and infallible.** `From` / `i128::from`. Never `as`.
 - **Invariant: narrowing is explicit and loud.** Three permitted shapes, in order of preference:
-  1. return `Option`/`Result` — the caller must handle it (`Money::from_units`);
+  1. return `Option`/`Result` — the caller must handle it (`Money::try_from_units`);
   2. `try_from(..).expect(<the proof>)` where a local invariant makes it total, **with the proof written at the site** (`allocate`, `div_int`);
   3. saturate **plus an observable signal** — only where the call site structurally cannot fail. As of C5's revision no site in the crate qualifies, and the one that did was deleted rather than fixed.
 - **Invariant: re-encoding is not narrowing.** `i128 -> [u8; 16]` is a lossless bijection and must be **total and infallible** — no `Option`, no residue. (The `i128 -> i16` PG-limb half of this example died with the limb codec; the invariant did not, and `kmoney`'s little-endian payload is now its live instance.) `to_bytes` returns a fixed-size array, never `Vec<u8>`. Wrapping a lossless re-encoding in a fallible signature is its own lie, and it trains callers to `.unwrap()` the ones that matter.
@@ -1707,7 +1677,7 @@ reviewer can approve behaviour the code does not provide.
   - `kamu-money-pg` `kmoney_typmod_out` allows `as_conversions` / `cast_possible_truncation` / `cast_possible_wrap` on **one statement**: PostgreSQL stores "no typmod" as the sentinel `-1`, which arrives as `0xFFFF_FFFF_FFFF_FFFF` in the `Datum`'s `usize`. `as` reinterprets the low 32 bits and recovers `-1` exactly, while `i32::try_from` would *reject* it — the rare cast where the lint's suggested "safe" fix would be the bug. Removable never, short of PostgreSQL abandoning the sentinel.
   - `kamu-money-pg` `kmoney_typmod_in` allows `cast_ptr_alignment` on the `varlena -> ArrayType` cast: `pg_detoast_datum` returns palloc'd memory and palloc is MAXALIGN'd, so the pointer is **over**-aligned, never under. It is the same cast PostgreSQL's own `DatumGetArrayTypeP` performs. Removable if pgrx ever models the alignment.
   - `kamu-money-pg` `kmoney_sum` allows `needless_pass_by_value`: pgrx's `#[pg_extern]` ABI takes the owned `VariadicArray` to build the SQL wrapper. Removable if pgrx grows a by-reference form.
-- **Failure: a width chosen against one end of a range quietly loses at the other.** `from_major(i64)` capped construction at ~9.2e18 against a domain of ~1e24 major units — **5.04 orders unreachable** — and its `Option` could never be `None`, which the doc presented as a virtue. The `Option` is the tell: a fallible signature that cannot fail is usually a range amputated to make it total.
+- **Failure: a width chosen against one end of a range quietly loses at the other.** `try_from_major(i64)` capped construction at ~9.2e18 against a domain of ~1e24 major units — **5.04 orders unreachable** — and its `Option` could never be `None`, which the doc presented as a virtue. The `Option` is the tell: a fallible signature that cannot fail is usually a range amputated to make it total.
 - **Failure: a saturating guard on the individual value does not protect the accumulator.** Measured: `AtomicU64::fetch_add(u64::MAX - 10)` then `fetch_add(100)` reads `89`, and a counter can be driven to **exactly zero**. **Every** `Atomic*::fetch_add` wraps; none has a checked or saturating variant. Clamping into an accumulator needs a guard at *both* sites, and the justification comment naturally attaches to only one of them.
 - **Failure: metadata asserting facts about the world has no compiler.** A fabricated `repository` URL builds, tests green, and ships; reviewers check config for format, not truth. Every such value — `repository`, `homepage`, `readme`, `authors`, `license` — is a claim to be verified with a command (`git remote -v`, `ls`) or escalated. Never invent one to satisfy a lint; omit the field, allow the lint, record why.
 - **Evidence:** implemented across `d315e1d`..`f2f829f`; the phase-2a design record it was written from has been removed as archaeology.

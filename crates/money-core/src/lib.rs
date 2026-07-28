@@ -42,6 +42,7 @@ pub mod allocate;
 pub mod arith;
 pub mod currency;
 pub mod domain;
+pub mod error;
 pub mod iso;
 pub mod locale;
 pub mod money;
@@ -61,7 +62,10 @@ pub mod text;
 pub mod wire;
 
 pub use currency::StaticCurrency;
-pub use domain::{DOMAIN_MAX, MoneyError, POW10_SCALE, SCALE};
+pub use domain::{DOMAIN_MAX, POW10_SCALE, SCALE};
+pub use error::{
+    AllocationError, AmountError, LocaleError, MoneyError, ParseMoneyError, RateError, WireError,
+};
 pub use iso::Iso4217;
 pub use money::Money;
 pub use rate::Rate;

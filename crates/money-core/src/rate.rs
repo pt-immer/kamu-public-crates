@@ -1,7 +1,8 @@
 //! FX conversion: rates, and the money that passes through them. (DESIGN.md C6)
 
 use crate::currency::StaticCurrency;
-use crate::domain::{MoneyError, POW10_SCALE, in_domain};
+use crate::domain::{POW10_SCALE, in_domain};
+use crate::error::{AmountError, RateError};
 use crate::money::Money;
 use crate::rounding::{Rounding, div_round_i256};
 use core::marker::PhantomData;
@@ -130,27 +131,6 @@ impl<Base: StaticCurrency, Quote: StaticCurrency> core::fmt::Debug for Rate<Base
 }
 
 impl<Base: StaticCurrency, Quote: StaticCurrency> Rate<Base, Quote> {
-    /// Construct from canonical units, enforcing the domain **and positivity**.
-    ///
-    /// Returns `None` for zero, for negatives, and for anything outside the domain. Reach for
-    /// [`try_from_units`](Self::try_from_units) when the caller needs to know *which* — every
-    /// ingress in this crate does, because the two are different mistakes.
-    ///
-    /// The only constructor phase 2 needs: every real quote measured uses <=13 decimal places
-    /// against the 18 available, so decimal text is exact and needs no rounding mode. Text
-    /// ingestion is wire work (C7) regardless.
-    #[inline]
-    #[must_use]
-    pub const fn from_units(units: i128) -> Option<Self> {
-        // `Result::ok` is not const-stable, so this matches rather than delegating prettily.
-        // The duplication that matters — the invariant itself — still lives in exactly one
-        // place below.
-        match Self::try_from_units(units) {
-            Ok(rate) => Some(rate),
-            Err(_) => None,
-        }
-    }
-
     /// Construct from canonical units, reporting **why** a value was refused.
     ///
     /// This is the single owner of `Rate`'s invariant. Every ingress — the text parser, both
@@ -160,17 +140,17 @@ impl<Base: StaticCurrency, Quote: StaticCurrency> Rate<Base, Quote> {
     /// boundary: five copies of an invariant is five chances to have four.
     ///
     /// # Errors
-    /// [`MoneyError::DomainOverflow`] if the magnitude leaves the domain, and
-    /// [`MoneyError::NonPositiveRate`] if `units <= 0`. The domain is tested **first**, so
+    /// [`RateError::Amount`] if the magnitude leaves the domain, and
+    /// [`RateError::NonPositive`] if `units <= 0`. The domain is tested **first**, so
     /// `i128::MIN` is reported as the magnitude bug it is rather than as a sign bug, while an
     /// in-domain `-2` is reported as the sign bug it is.
     #[inline]
-    pub const fn try_from_units(units: i128) -> Result<Self, MoneyError> {
+    pub const fn try_from_units(units: i128) -> Result<Self, RateError> {
         if !in_domain(units) {
-            return Err(MoneyError::DomainOverflow { attempted_units: units });
+            return Err(RateError::Amount(AmountError::out_of_domain(units)));
         }
         if units <= 0 {
-            return Err(MoneyError::NonPositiveRate { attempted_units: units });
+            return Err(RateError::NonPositive { attempted_units: units });
         }
         Ok(Self { units, _pair: PhantomData })
     }
@@ -204,7 +184,7 @@ impl<C: StaticCurrency> Money<C> {
     /// balance.
     ///
     /// # Errors
-    /// [`MoneyError::ConversionOverflow`] if the converted amount leaves the domain. That is a
+    /// [`RateError::ConversionOverflow`] if the converted amount leaves the domain. That is a
     /// *condition*, not a bug: it is reachable at ordinary balances for high-magnitude pairs.
     ///
     /// # Panics
@@ -215,13 +195,11 @@ impl<C: StaticCurrency> Money<C> {
         self,
         rate: Rate<C, Quote>,
         mode: Rounding,
-    ) -> Result<Money<Quote>, MoneyError> {
-        apply_rate(self.units(), rate.units(), mode)
-            .and_then(Money::<Quote>::from_units)
-            // `from`/`to` here name the CONVERSION's direction, not the rate's pair. They
-            // coincide only because C6 omits `inverse()`: with every pair stored in both
-            // directions, a conversion always runs base -> quote and the two never diverge.
-            .ok_or(MoneyError::ConversionOverflow { from: C::CODE, to: Quote::CODE })
+    ) -> Result<Money<Quote>, RateError> {
+        let units = apply_rate(self.units(), rate.units(), mode)
+            .ok_or(RateError::ConversionOverflow { from: C::CODE, to: Quote::CODE })?;
+        Money::<Quote>::try_from_units(units)
+            .map_err(|_| RateError::ConversionOverflow { from: C::CODE, to: Quote::CODE })
     }
 
     /// Convert through a bridge currency, rounding **once**, at the end.
@@ -238,7 +216,7 @@ impl<C: StaticCurrency> Money<C> {
     /// *linearly with the amount*; the intermediate quantisation avoided here is absolute.
     ///
     /// # Errors
-    /// [`MoneyError::ConversionOverflow`] if the conversion leaves the domain — including when
+    /// [`RateError::ConversionOverflow`] if the conversion leaves the domain — including when
     /// the three-way product exceeds `I256`. That rejection is **correct, not conservative**:
     /// verified analytically and over 300 000 full-domain trials, an in-domain result implies
     /// `m*r1*r2 <= 1e72 < I256::MAX`, with zero false rejects.
@@ -251,16 +229,18 @@ impl<C: StaticCurrency> Money<C> {
         first: Rate<C, Bridge>,
         second: Rate<Bridge, Quote>,
         mode: Rounding,
-    ) -> Result<Money<Quote>, MoneyError> {
-        apply_rate_pair(self.units(), first.units(), second.units(), mode)
-            .and_then(Money::<Quote>::from_units)
-            .ok_or(MoneyError::ConversionOverflow { from: C::CODE, to: Quote::CODE })
+    ) -> Result<Money<Quote>, RateError> {
+        let units = apply_rate_pair(self.units(), first.units(), second.units(), mode)
+            .ok_or(RateError::ConversionOverflow { from: C::CODE, to: Quote::CODE })?;
+        Money::<Quote>::try_from_units(units)
+            .map_err(|_| RateError::ConversionOverflow { from: C::CODE, to: Quote::CODE })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::domain::{DOMAIN_MAX, MoneyError, POW10_SCALE};
+    use crate::domain::{DOMAIN_MAX, POW10_SCALE};
+    use crate::error::{AmountError, RateError};
     use crate::iso::{EUR, IDR, Iso4217, USD};
     use crate::money::Money;
     use crate::rate::Rate;
@@ -271,15 +251,15 @@ mod tests {
     fn rate<Base: crate::currency::StaticCurrency, Quote: crate::currency::StaticCurrency>(
         major: i128,
     ) -> Rate<Base, Quote> {
-        Rate::from_units(major.checked_mul(POW10_SCALE).unwrap()).unwrap()
+        Rate::try_from_units(major.checked_mul(POW10_SCALE).unwrap()).unwrap()
     }
 
     #[test]
     fn converting_yields_the_target_currency_at_the_quoted_price() {
         // $10.00 at 16 000 IDR/USD is Rp160 000.00 — exactly, no rounding involved.
-        let usd = Money::<USD>::from_major(10).unwrap();
+        let usd = Money::<USD>::try_from_major(10).unwrap();
         let got = usd.convert(rate::<USD, IDR>(16_000), Rounding::HalfEven).unwrap();
-        assert_eq!(got, Money::<IDR>::from_major(160_000).unwrap());
+        assert_eq!(got, Money::<IDR>::try_from_major(160_000).unwrap());
     }
 
     /// THE INVERSION OF A TEST THAT USED TO PIN THE OPPOSITE, and the history is the point.
@@ -300,23 +280,22 @@ mod tests {
     fn a_zero_or_negative_rate_is_refused_at_construction() {
         assert_eq!(
             Rate::<USD, IDR>::try_from_units(0),
-            Err(MoneyError::NonPositiveRate { attempted_units: 0 }),
+            Err(RateError::NonPositive { attempted_units: 0 }),
             "a zero rate would send the money to zero, silently and with no residue"
         );
         assert_eq!(
             Rate::<USD, IDR>::try_from_units(-2 * POW10_SCALE),
-            Err(MoneyError::NonPositiveRate { attempted_units: -2 * POW10_SCALE }),
+            Err(RateError::NonPositive { attempted_units: -2 * POW10_SCALE }),
             "a negative rate would flip the sign of the money passing through it"
         );
 
-        // The `Option` twin agrees, because it is the same function with the reason discarded.
-        assert!(Rate::<USD, IDR>::from_units(0).is_none());
-        assert!(Rate::<USD, IDR>::from_units(-1).is_none());
+        assert!(Rate::<USD, IDR>::try_from_units(0).is_err());
+        assert!(Rate::<USD, IDR>::try_from_units(-1).is_err());
 
         // The smallest representable rate is still constructible: this refuses non-positive
         // values, NOT small ones. A guard written as `units < POW10_SCALE` would pass every
         // assertion above and quietly outlaw every sub-unit quote in existence.
-        assert!(Rate::<USD, IDR>::from_units(1).is_some(), "1e-18 is positive and in domain");
+        assert!(Rate::<USD, IDR>::try_from_units(1).is_ok(), "1e-18 is positive and in domain");
     }
 
     /// The two refusals are DIFFERENT ERRORS, and a caller has to be able to tell them apart:
@@ -327,12 +306,12 @@ mod tests {
     fn the_two_rate_refusals_are_reported_separately() {
         assert_eq!(
             Rate::<USD, IDR>::try_from_units(i128::MIN),
-            Err(MoneyError::DomainOverflow { attempted_units: i128::MIN }),
+            Err(RateError::Amount(AmountError::out_of_domain(i128::MIN))),
             "out of domain AND negative: the magnitude is the useful fact"
         );
         assert_eq!(
             Rate::<USD, IDR>::try_from_units(-DOMAIN_MAX),
-            Err(MoneyError::NonPositiveRate { attempted_units: -DOMAIN_MAX }),
+            Err(RateError::NonPositive { attempted_units: -DOMAIN_MAX }),
             "in domain, so the sign is the only thing wrong with it"
         );
     }
@@ -350,9 +329,9 @@ mod tests {
     /// Mutation-check: make `convert_via` call `convert` twice; this test must go red.
     #[test]
     fn convert_via_rounds_once_where_two_conversions_would_destroy_the_money() {
-        let m = Money::<USD>::from_units(1).unwrap();
-        let usd_eur = Rate::<USD, EUR>::from_units(POW10_SCALE / 2).unwrap();
-        let eur_idr = Rate::<EUR, IDR>::from_units(2 * POW10_SCALE).unwrap();
+        let m = Money::<USD>::try_from_units(1).unwrap();
+        let usd_eur = Rate::<USD, EUR>::try_from_units(POW10_SCALE / 2).unwrap();
+        let eur_idr = Rate::<EUR, IDR>::try_from_units(2 * POW10_SCALE).unwrap();
 
         let sequential =
             m.convert(usd_eur, Rounding::HalfEven).unwrap().convert(eur_idr, Rounding::HalfEven).unwrap();
@@ -368,12 +347,12 @@ mod tests {
     /// anyway. (DESIGN.md C6)
     #[test]
     fn convert_via_refuses_a_product_that_cannot_fit_the_intermediate() {
-        let m = Money::<USD>::from_units(DOMAIN_MAX).unwrap();
-        let huge_a = Rate::<USD, EUR>::from_units(DOMAIN_MAX).unwrap();
-        let huge_b = Rate::<EUR, IDR>::from_units(DOMAIN_MAX).unwrap();
+        let m = Money::<USD>::try_from_units(DOMAIN_MAX).unwrap();
+        let huge_a = Rate::<USD, EUR>::try_from_units(DOMAIN_MAX).unwrap();
+        let huge_b = Rate::<EUR, IDR>::try_from_units(DOMAIN_MAX).unwrap();
         assert_eq!(
             m.convert_via(huge_a, huge_b, Rounding::HalfEven),
-            Err(MoneyError::ConversionOverflow { from: Iso4217::USD, to: Iso4217::IDR }),
+            Err(RateError::ConversionOverflow { from: Iso4217::USD, to: Iso4217::IDR }),
             "1e108 does not fit I256, and the result would not have fit the domain either"
         );
     }
@@ -387,8 +366,8 @@ mod tests {
     /// `i128` outright. A caller cannot tell those apart and should not have to.
     #[test]
     fn conversion_overflow_names_the_pair_from_both_gates() {
-        let m = Money::<USD>::from_units(DOMAIN_MAX).unwrap();
-        let expected = MoneyError::ConversionOverflow { from: Iso4217::USD, to: Iso4217::IDR };
+        let m = Money::<USD>::try_from_units(DOMAIN_MAX).unwrap();
+        let expected = RateError::ConversionOverflow { from: Iso4217::USD, to: Iso4217::IDR };
 
         // q = 1e37: outside DOMAIN_MAX (1e36), still inside i128 (~1.7e38).
         assert_eq!(
@@ -410,7 +389,7 @@ mod tests {
     /// claimed to cover "both gates", and did not: replacing `i128::try_from(quotient)` with a
     /// truncating `as_i128()` — the exact silent-wrap bug C10 forbids — left all five tests in
     /// this module GREEN. Both of its cases wrap to a value that is *still* outside the domain,
-    /// so `from_units` refuses them anyway and the two gates are indistinguishable.
+    /// so `try_from_units` refuses them anyway and the two gates are indistinguishable.
     ///
     /// This case is the dangerous one: `2^64 * 10^9` units at a rate of `2^64 * 10^9` gives a
     /// quotient of exactly `2^128`, which truncates to **exactly zero**. A truncating narrowing
@@ -423,12 +402,12 @@ mod tests {
     fn a_quotient_that_would_truncate_back_into_the_domain_is_still_refused() {
         // 2^64 * 10^9, comfortably in domain, chosen so the product is 2^128 * 10^18.
         let units = 18_446_744_073_709_551_616_000_000_000;
-        let m = Money::<USD>::from_units(units).unwrap();
-        let r = Rate::<USD, IDR>::from_units(units).unwrap();
+        let m = Money::<USD>::try_from_units(units).unwrap();
+        let r = Rate::<USD, IDR>::try_from_units(units).unwrap();
 
         assert_eq!(
             m.convert(r, Rounding::HalfEven),
-            Err(MoneyError::ConversionOverflow { from: Iso4217::USD, to: Iso4217::IDR }),
+            Err(RateError::ConversionOverflow { from: Iso4217::USD, to: Iso4217::IDR }),
             "truncation would have made this a silent, perfectly plausible ZERO"
         );
     }
@@ -438,7 +417,7 @@ mod tests {
         ///
         /// The argument is that a conversion divides by `POW10_SCALE`, so whatever rounding
         /// moves is always strictly less than one canonical unit — which is `0` as an integer
-        /// count, so a `Residue` here would be `Residue::new(0, ())` every single time. That
+        /// count, so a residue here would carry zero units every single time. That
         /// reasoning is the *only* thing standing between this design and silently leaking
         /// money, and until now it lived exclusively in prose.
         ///
@@ -457,9 +436,9 @@ mod tests {
             units in -100_000_000_000_000_000_000_000_000i128..=100_000_000_000_000_000_000_000_000,
             rate_units in 1i128..=100_000_000_000_000_000_000_000_000,
         ) {
-            let rate = Rate::<USD, IDR>::from_units(rate_units).unwrap();
+            let rate = Rate::<USD, IDR>::try_from_units(rate_units).unwrap();
             for mode in Rounding::ALL {
-                let out = Money::<USD>::from_units(units).unwrap().convert(rate, *mode).unwrap();
+                let out = Money::<USD>::try_from_units(units).unwrap().convert(rate, *mode).unwrap();
 
                 // exact: what the conversion was asked for, minus what it returned
                 let product = I256::from(units)
@@ -488,12 +467,12 @@ mod tests {
     /// types, and it differs because only one of them is a price.
     #[test]
     fn rate_construction_enforces_the_same_magnitude_bound_as_money() {
-        assert!(Rate::<USD, IDR>::from_units(DOMAIN_MAX).is_some());
-        assert!(Rate::<USD, IDR>::from_units(DOMAIN_MAX + 1).is_none());
-        assert!(Rate::<USD, IDR>::from_units(i128::MIN).is_none(), "i128::MIN must not sneak in");
+        assert!(Rate::<USD, IDR>::try_from_units(DOMAIN_MAX).is_ok());
+        assert!(Rate::<USD, IDR>::try_from_units(DOMAIN_MAX + 1).is_err());
+        assert!(Rate::<USD, IDR>::try_from_units(i128::MIN).is_err(), "i128::MIN must not sneak in");
         // The upper bound is shared with `Money`; the lower bound is not, and this is the pair
         // that says so.
-        assert!(Money::<USD>::from_units(-DOMAIN_MAX).is_some(), "money is signed");
-        assert!(Rate::<USD, IDR>::from_units(-DOMAIN_MAX).is_none(), "a rate is not");
+        assert!(Money::<USD>::try_from_units(-DOMAIN_MAX).is_ok(), "money is signed");
+        assert!(Rate::<USD, IDR>::try_from_units(-DOMAIN_MAX).is_err(), "a rate is not");
     }
 }

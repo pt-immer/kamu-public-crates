@@ -31,10 +31,9 @@
 //! non-positive quote off a real server there.
 
 use core::str::FromStr;
-use kamu_money_core::POW10_SCALE;
-use kamu_money_core::domain::MoneyError;
 use kamu_money_core::iso::{IDR, USD};
 use kamu_money_core::rate::Rate;
+use kamu_money_core::{POW10_SCALE, RateError};
 
 /// `-2.0`, as canonical units. A plain, plausible-looking quote — not an edge case, which is
 /// the point: the dangerous input here is the one that looks like a price.
@@ -46,18 +45,18 @@ fn minus_two() -> i128 {
 
 #[test]
 fn the_raw_constructor_refuses_zero_and_negatives() {
-    assert_eq!(Rate::<USD, IDR>::try_from_units(0), Err(MoneyError::NonPositiveRate { attempted_units: 0 }));
+    assert_eq!(Rate::<USD, IDR>::try_from_units(0), Err(RateError::NonPositive { attempted_units: 0 }));
     assert_eq!(
         Rate::<USD, IDR>::try_from_units(minus_two()),
-        Err(MoneyError::NonPositiveRate { attempted_units: minus_two() })
+        Err(RateError::NonPositive { attempted_units: minus_two() })
     );
-    assert!(Rate::<USD, IDR>::from_units(0).is_none());
-    assert!(Rate::<USD, IDR>::from_units(minus_two()).is_none());
+    assert!(Rate::<USD, IDR>::try_from_units(0).is_err());
+    assert!(Rate::<USD, IDR>::try_from_units(minus_two()).is_err());
 
     // A positive rate still constructs, including the smallest representable one. Without this
     // the three assertions above are also satisfied by a constructor that refuses everything.
-    assert!(Rate::<USD, IDR>::from_units(1).is_some());
-    assert!(Rate::<USD, IDR>::from_units(2 * POW10_SCALE).is_some());
+    assert!(Rate::<USD, IDR>::try_from_units(1).is_ok());
+    assert!(Rate::<USD, IDR>::try_from_units(2 * POW10_SCALE).is_ok());
 }
 
 // --- ingress 2: the text parser --------------------------------------------------------------
@@ -66,34 +65,31 @@ fn the_raw_constructor_refuses_zero_and_negatives() {
 fn the_text_parser_refuses_a_non_positive_quote() {
     assert_eq!(
         Rate::<USD, IDR>::from_str("USD/IDR/0"),
-        Err(MoneyError::NonPositiveRate { attempted_units: 0 }),
+        Err(RateError::NonPositive { attempted_units: 0 }),
         "a zero quote is not a malformed literal -- it parses, and then it is refused"
     );
     assert_eq!(
         Rate::<USD, IDR>::from_str("USD/IDR/-2"),
-        Err(MoneyError::NonPositiveRate { attempted_units: minus_two() }),
+        Err(RateError::NonPositive { attempted_units: minus_two() }),
     );
     // `-0` is a distinct spelling that reaches the same units, and a parser that special-cased a
     // leading `-` rather than testing the value would let it through.
     assert_eq!(
         Rate::<USD, IDR>::from_str("USD/IDR/-0.000000000000000000"),
-        Err(MoneyError::NonPositiveRate { attempted_units: 0 }),
+        Err(RateError::NonPositive { attempted_units: 0 }),
     );
 
     assert!(Rate::<USD, IDR>::from_str("USD/IDR/16000").is_ok());
 }
 
 /// The parser reports the SIGN, not a domain overflow — which is what it would have reported had
-/// `from_str` kept calling `from_units(..).ok_or(DomainOverflow)`. At a feed boundary the error
+/// `from_str` once collapsed every constructor refusal into a domain overflow. At a feed boundary the error
 /// string is the thing a human reads to find out what the counterparty sent, so naming the wrong
 /// defect there costs an investigation.
 #[test]
 fn the_parser_names_the_sign_rather_than_blaming_the_domain() {
     let err = Rate::<USD, IDR>::from_str("USD/IDR/-2").unwrap_err();
-    assert!(
-        !matches!(err, MoneyError::DomainOverflow { .. }),
-        "-2 is comfortably in domain; only its sign is wrong"
-    );
+    assert!(!matches!(err, RateError::Amount(_)), "-2 is comfortably in domain; only its sign is wrong");
     let rendered = err.to_string();
     assert!(rendered.contains("strictly positive"), "the message must say what the rule is, got: {rendered}");
 }
@@ -133,7 +129,10 @@ mod wire {
         // ...and still accepts a real quote. This also reads `T.0`, which is what proves the
         // refusal above came from the value rather than from a shape that never decodes.
         let accepted: T = serde_json::from_str(r#""USD/IDR/16000""#).unwrap();
-        assert_eq!(accepted.0, Rate::<USD, IDR>::from_units(16_000 * kamu_money_core::POW10_SCALE).unwrap());
+        assert_eq!(
+            accepted.0,
+            Rate::<USD, IDR>::try_from_units(16_000 * kamu_money_core::POW10_SCALE).unwrap()
+        );
 
         // The positive control, so this cannot pass by refusing everything.
         assert!(
@@ -164,7 +163,7 @@ mod wire {
                 .unwrap();
         assert_eq!(
             postcard::from_bytes::<Rate<USD, IDR>>(&good).unwrap(),
-            Rate::<USD, IDR>::from_units(16_000 * kamu_money_core::POW10_SCALE).unwrap()
+            Rate::<USD, IDR>::try_from_units(16_000 * kamu_money_core::POW10_SCALE).unwrap()
         );
     }
 }

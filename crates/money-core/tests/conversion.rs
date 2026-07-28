@@ -18,7 +18,8 @@
 //! matching. If the range is ever wrong, the `unwrap` fails loudly instead of the test quietly
 //! testing the other branch. The overflow path gets its own test, which asserts `Err`.
 
-use kamu_money_core::domain::{DOMAIN_MAX, MoneyError, POW10_SCALE, in_domain};
+use kamu_money_core::RateError;
+use kamu_money_core::domain::{DOMAIN_MAX, POW10_SCALE, in_domain};
 use kamu_money_core::iso::{EUR, IDR, Iso4217, USD};
 use kamu_money_core::money::Money;
 use kamu_money_core::rate::Rate;
@@ -33,7 +34,7 @@ const IN_DOMAIN_OPERAND: i128 = 100_000_000_000_000_000_000_000_000;
 const IN_DOMAIN_OPERAND_VIA: i128 = 100_000_000_000_000_000_000_000;
 
 fn usd(units: i128) -> Money<USD> {
-    Money::<USD>::from_units(units).unwrap()
+    Money::<USD>::try_from_units(units).unwrap()
 }
 
 proptest! {
@@ -53,13 +54,16 @@ proptest! {
         units in -DOMAIN_MAX..=DOMAIN_MAX,
         rate_units in 1..=DOMAIN_MAX,
     ) {
-        let rate = Rate::<USD, IDR>::from_units(rate_units).unwrap();
+        let rate = Rate::<USD, IDR>::try_from_units(rate_units).unwrap();
         for mode in Rounding::ALL {
             match usd(units).convert(rate, *mode) {
                 Ok(out) => prop_assert!(in_domain(out.units()), "{mode:?}"),
                 Err(e) => prop_assert_eq!(
                     e,
-                    MoneyError::ConversionOverflow { from: Iso4217::USD, to: Iso4217::IDR },
+                    RateError::ConversionOverflow {
+                        from: Iso4217::USD,
+                        to: Iso4217::IDR,
+                    },
                     "{:?}", mode
                 ),
             }
@@ -74,11 +78,14 @@ proptest! {
         units in (DOMAIN_MAX / 1_000)..=DOMAIN_MAX,
         rate_units in (DOMAIN_MAX / 1_000)..=DOMAIN_MAX,
     ) {
-        let rate = Rate::<USD, IDR>::from_units(rate_units).unwrap();
+        let rate = Rate::<USD, IDR>::try_from_units(rate_units).unwrap();
         for mode in Rounding::ALL {
             prop_assert_eq!(
                 usd(units).convert(rate, *mode),
-                Err(MoneyError::ConversionOverflow { from: Iso4217::USD, to: Iso4217::IDR }),
+                Err(RateError::ConversionOverflow {
+                    from: Iso4217::USD,
+                    to: Iso4217::IDR,
+                }),
                 "{:?}", mode
             );
         }
@@ -93,7 +100,7 @@ proptest! {
     fn prop_a_unit_rate_moves_the_currency_and_nothing_else(
         units in -DOMAIN_MAX..=DOMAIN_MAX,
     ) {
-        let one = Rate::<USD, IDR>::from_units(POW10_SCALE).unwrap();
+        let one = Rate::<USD, IDR>::try_from_units(POW10_SCALE).unwrap();
         for mode in Rounding::ALL {
             let out = usd(units).convert(one, *mode).unwrap();
             prop_assert_eq!(out.units(), units, "{:?}", mode);
@@ -113,7 +120,7 @@ proptest! {
         units in -IN_DOMAIN_OPERAND..=IN_DOMAIN_OPERAND,
         rate_major in 1i128..=1_000_000_000,
     ) {
-        let rate = Rate::<USD, IDR>::from_units(
+        let rate = Rate::<USD, IDR>::try_from_units(
             rate_major.checked_mul(POW10_SCALE).unwrap()).unwrap();
         let expected = units.checked_mul(rate_major).unwrap();
         for mode in Rounding::ALL {
@@ -130,9 +137,9 @@ proptest! {
         first_major in 1i128..=1_000,
         second_major in 1i128..=1_000,
     ) {
-        let first = Rate::<USD, EUR>::from_units(
+        let first = Rate::<USD, EUR>::try_from_units(
             first_major.checked_mul(POW10_SCALE).unwrap()).unwrap();
-        let second = Rate::<EUR, IDR>::from_units(
+        let second = Rate::<EUR, IDR>::try_from_units(
             second_major.checked_mul(POW10_SCALE).unwrap()).unwrap();
         let expected = units
             .checked_mul(first_major).unwrap()
@@ -158,9 +165,9 @@ proptest! {
         second_major in 1i128..=1_000,
     ) {
         let money = usd(major.checked_mul(POW10_SCALE).unwrap());
-        let first = Rate::<USD, EUR>::from_units(
+        let first = Rate::<USD, EUR>::try_from_units(
             first_major.checked_mul(POW10_SCALE).unwrap()).unwrap();
-        let second = Rate::<EUR, IDR>::from_units(
+        let second = Rate::<EUR, IDR>::try_from_units(
             second_major.checked_mul(POW10_SCALE).unwrap()).unwrap();
 
         for mode in Rounding::ALL {

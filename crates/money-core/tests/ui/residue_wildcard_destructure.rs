@@ -13,7 +13,7 @@ use kamu_money_core::money::Money;
 use kamu_money_core::rounding::Rounding;
 
 fn main() {
-    let m = Money::<USD>::from_units(10_000_000_000_000_000_000).unwrap();
+    let m = Money::<USD>::try_from_units(10_000_000_000_000_000_000).unwrap();
     // 10.000000000000000000 / 3 leaves one unit over. `_` used to throw it away silently.
     let (_share, _) = m.div_int(NonZeroU32::new(3).unwrap(), Rounding::TowardZero);
 }

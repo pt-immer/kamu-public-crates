@@ -130,12 +130,12 @@ fn money_survives_yugabytedb_exactly_as_it_survives_postgresql() {
 
     // --- the domain edges round-trip -----------------------------------------------------
     let values = [
-        Money::<USD>::from_units(0).unwrap(),
-        Money::<USD>::from_units(10_500_000_000_000_000_000).unwrap(),
-        Money::<USD>::from_units(1).unwrap(),
-        Money::<USD>::from_units(-1).unwrap(),
-        Money::<USD>::from_units(DOMAIN_MAX).unwrap(),
-        Money::<USD>::from_units(-DOMAIN_MAX).unwrap(),
+        Money::<USD>::try_from_units(0).unwrap(),
+        Money::<USD>::try_from_units(10_500_000_000_000_000_000).unwrap(),
+        Money::<USD>::try_from_units(1).unwrap(),
+        Money::<USD>::try_from_units(-1).unwrap(),
+        Money::<USD>::try_from_units(DOMAIN_MAX).unwrap(),
+        Money::<USD>::try_from_units(-DOMAIN_MAX).unwrap(),
     ];
     for (i, value) in values.iter().enumerate() {
         yb.client
@@ -155,9 +155,9 @@ fn money_survives_yugabytedb_exactly_as_it_survives_postgresql() {
         .execute(
             "INSERT INTO shapes VALUES (1, $1), (2, $2), (3, $3)",
             &[
-                &Money::<USD>::from_units(half).unwrap(),
-                &Money::<JPY>::from_units(half).unwrap(),
-                &Money::<KWD>::from_units(half).unwrap(),
+                &Money::<USD>::try_from_units(half).unwrap(),
+                &Money::<JPY>::try_from_units(half).unwrap(),
+                &Money::<KWD>::try_from_units(half).unwrap(),
             ],
         )
         .expect("inserted");
@@ -177,12 +177,12 @@ fn money_survives_yugabytedb_exactly_as_it_survives_postgresql() {
     // --- the currency cross-check still fires --------------------------------------------
     let idr_row = yb
         .client
-        .query_one("SELECT $1::text", &[&Money::<IDR>::from_major(16_000).unwrap()])
+        .query_one("SELECT $1::text", &[&Money::<IDR>::try_from_major(16_000).unwrap()])
         .expect("query ran");
     assert!(idr_row.try_get::<_, Money<USD>>(0).is_err(), "IDR must not decode as USD, on YugabyteDB too");
 
     // --- rates, both ends of the pair ----------------------------------------------------
-    let rate = Rate::<USD, IDR>::from_units(16_000 * POW10_SCALE).unwrap();
+    let rate = Rate::<USD, IDR>::try_from_units(16_000 * POW10_SCALE).unwrap();
     let rate_row = yb.client.query_one("SELECT $1::text", &[&rate]).expect("query ran");
     assert_eq!(rate_row.get::<_, String>(0), "USD/IDR/16000");
     assert_eq!(rate_row.get::<_, Rate<USD, IDR>>(0), rate);
@@ -192,7 +192,8 @@ fn money_survives_yugabytedb_exactly_as_it_survives_postgresql() {
     yb.client
         .execute("CREATE TABLE wrong_type (id int PRIMARY KEY, amount numeric(36,18))", &[])
         .expect("table created");
-    let refused =
-        yb.client.execute("INSERT INTO wrong_type VALUES (1, $1)", &[&Money::<USD>::from_major(10).unwrap()]);
+    let refused = yb
+        .client
+        .execute("INSERT INTO wrong_type VALUES (1, $1)", &[&Money::<USD>::try_from_major(10).unwrap()]);
     assert!(refused.is_err(), "a numeric column must not accept Money");
 }

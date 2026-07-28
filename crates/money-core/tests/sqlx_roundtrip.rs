@@ -41,12 +41,12 @@ async fn money_round_trips_through_sqlx() {
     sqlx::query("CREATE TABLE ledger (amount text NOT NULL)").execute(&pool).await.expect("table created");
 
     let values = [
-        Money::<USD>::from_units(0).unwrap(),
-        Money::<USD>::from_units(10_500_000_000_000_000_000).unwrap(),
-        Money::<USD>::from_units(1).unwrap(),
-        Money::<USD>::from_units(-1).unwrap(),
-        Money::<USD>::from_units(DOMAIN_MAX).unwrap(),
-        Money::<USD>::from_units(-DOMAIN_MAX).unwrap(),
+        Money::<USD>::try_from_units(0).unwrap(),
+        Money::<USD>::try_from_units(10_500_000_000_000_000_000).unwrap(),
+        Money::<USD>::try_from_units(1).unwrap(),
+        Money::<USD>::try_from_units(-1).unwrap(),
+        Money::<USD>::try_from_units(DOMAIN_MAX).unwrap(),
+        Money::<USD>::try_from_units(-DOMAIN_MAX).unwrap(),
     ];
 
     for value in values {
@@ -68,7 +68,7 @@ async fn a_row_cannot_be_read_as_the_wrong_currency() {
     let pool = PgPoolOptions::new().connect(&url).await.expect("connects");
     sqlx::query("CREATE TABLE mixed (amount text NOT NULL)").execute(&pool).await.expect("table created");
 
-    let idr = Money::<IDR>::from_major(16_000).unwrap();
+    let idr = Money::<IDR>::try_from_major(16_000).unwrap();
     sqlx::query("INSERT INTO mixed VALUES ($1)").bind(idr).execute(&pool).await.expect("inserted");
 
     let row = sqlx::query("SELECT amount FROM mixed").fetch_one(&pool).await.unwrap();
@@ -118,7 +118,7 @@ async fn sqlx_refuses_a_non_positive_rate_from_a_column() {
         .expect("the query itself is valid SQL");
     assert_eq!(
         row.get::<Rate<USD, IDR>, _>(0),
-        Rate::<USD, IDR>::from_units(16_000 * POW10_SCALE).unwrap(),
+        Rate::<USD, IDR>::try_from_units(16_000 * POW10_SCALE).unwrap(),
         "a real quote still decodes, so the refusals above are about the value"
     );
 }
@@ -135,9 +135,9 @@ async fn the_two_drivers_agree_byte_for_byte() {
         .await
         .expect("table created");
 
-    let value = Money::<USD>::from_units(10_500_000_000_000_000_000).unwrap();
-    let jpy = Money::<JPY>::from_units(10_500_000_000_000_000_000).unwrap();
-    let rate = Rate::<USD, IDR>::from_units(16_000 * POW10_SCALE).unwrap();
+    let value = Money::<USD>::try_from_units(10_500_000_000_000_000_000).unwrap();
+    let jpy = Money::<JPY>::try_from_units(10_500_000_000_000_000_000).unwrap();
+    let rate = Rate::<USD, IDR>::try_from_units(16_000 * POW10_SCALE).unwrap();
 
     // sqlx writes.
     sqlx::query("INSERT INTO shared VALUES ('usd', $1)").bind(value).execute(&pool).await.unwrap();
@@ -149,7 +149,7 @@ async fn the_two_drivers_agree_byte_for_byte() {
     // the sync client blocks and blocking on a runtime thread panics with "Cannot start a
     // runtime from within a runtime". Same trap as SyncRunner above, mirrored.
     let sync_url = url.clone();
-    let written_back = Money::<USD>::from_units(-1).unwrap();
+    let written_back = Money::<USD>::try_from_units(-1).unwrap();
     tokio::task::spawn_blocking(move || {
         let mut client = postgres::Client::connect(&sync_url, postgres::NoTls).expect("connects");
 

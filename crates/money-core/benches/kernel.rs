@@ -36,8 +36,7 @@
 //!
 //! And `div_int` forces the caller to deal with the residue (C5) where `Decimal::checked_div`
 //! discards it silently. That is a correctness difference showing up as a time difference; the
-//! first draft of this benchmark panicked because it dropped a `Residue`, which is the drop-bomb
-//! doing its job.
+//! benchmark resolves that obligation explicitly.
 
 use std::hint::black_box;
 use std::num::NonZeroU32;
@@ -139,8 +138,8 @@ fn main() {
     // VALUES INSIDE BOTH DOMAINS. E4 established that `Money` and `Decimal` are incomparable at
     // the edges, so a benchmark over `Money`'s full domain would be timing `rust_decimal`'s
     // failure path and reporting it as a win.
-    let a = Money::<USD>::from_units(10_500_000_000_000_000_000).expect("in domain");
-    let b = Money::<USD>::from_units(250_000_000_000_000_000).expect("in domain");
+    let a = Money::<USD>::try_from_units(10_500_000_000_000_000_000).expect("in domain");
+    let b = Money::<USD>::try_from_units(250_000_000_000_000_000).expect("in domain");
     let da = Decimal::from_f64(10.5).expect("representable");
     let db = Decimal::from_f64(0.25).expect("representable");
     let three = NonZeroU32::new(3).expect("nonzero");
@@ -170,7 +169,7 @@ fn main() {
     // Summation, per element. Built once outside the timed closure: allocating the input inside
     // it would time the allocator.
     let money_terms: Vec<Money<USD>> = (0..1000)
-        .map(|i| Money::<USD>::from_units(i128::from(i) * 1_000_000_000_000_000).expect("in domain"))
+        .map(|i| Money::<USD>::try_from_units(i128::from(i) * 1_000_000_000_000_000).expect("in domain"))
         .collect();
     let decimal_terms: Vec<Decimal> = (0..1000).map(Decimal::from).collect();
     let n = money_terms.len();
@@ -198,7 +197,7 @@ fn main() {
 
     // ASYMMETRIC, AND THE ASYMMETRY IS THE POINT: `div_int` hands back a `Residue` the caller
     // must absorb, `checked_div` throws it away. `discard_deliberately()` is how a caller says
-    // "yes, really" — dropping it undecided detonates, in every profile.
+    // "yes, really" — benchmark accounting policy must be explicit.
     rows.push(bench(
         "Money::div_int + take_residue",
         "returns a Residue the caller MUST handle (C5)",

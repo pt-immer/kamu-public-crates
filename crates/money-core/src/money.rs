@@ -2,6 +2,7 @@
 
 use crate::currency::StaticCurrency;
 use crate::domain::in_domain;
+use crate::error::AmountError;
 use crate::iso::Iso4217;
 use core::marker::PhantomData;
 
@@ -108,14 +109,27 @@ impl<C: StaticCurrency> Money<C> {
     /// Zero.
     pub const ZERO: Self = Self { units: 0, _c: PhantomData };
 
-    /// Construct from canonical units, enforcing the domain.
+    /// Construct from canonical units.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AmountError`] when `units` lies outside the fixed domain.
     #[inline]
-    #[must_use]
-    pub const fn from_units(units: i128) -> Option<Self> {
-        if in_domain(units) { Some(Self { units, _c: PhantomData }) } else { None }
+    pub const fn try_from_units(units: i128) -> Result<Self, AmountError> {
+        if in_domain(units) {
+            Ok(Self { units, _c: PhantomData })
+        } else {
+            Err(AmountError::out_of_domain(units))
+        }
     }
 
-    /// Construct from whole currency units (e.g. `from_major(10)` is 10.000000000000000000).
+    #[inline]
+    pub(crate) const fn from_units_unchecked(units: i128) -> Self {
+        Self { units, _c: PhantomData }
+    }
+
+    /// Construct from whole currency units (for example, `10` means
+    /// `10.000000000000000000`).
     ///
     /// Takes `i128` rather than a narrower integer because C10 says accept FROM lower precision
     /// freely and never narrow a parameter. Callers holding an `i8`/`i16`/`i32`/`i64` widen for
@@ -127,14 +141,15 @@ impl<C: StaticCurrency> Money<C> {
     /// entirely, so that argument no longer applies — a reminder that a bound derived from a
     /// constant silently stops being true when the constant moves.
     ///
-    /// Returns `None` when `major` lies outside the domain measured in major units. That arm is
-    /// reachable and is pinned by `from_major_spans_the_domain_and_rejects_beyond_it`.
+    /// # Errors
+    ///
+    /// Returns [`AmountError::OutOfDomain`] when the scaled value fits `i128` but leaves the
+    /// money domain, or [`AmountError::MajorScaleOverflow`] when scaling itself overflows.
     #[inline]
-    #[must_use]
-    pub const fn from_major(major: i128) -> Option<Self> {
+    pub const fn try_from_major(major: i128) -> Result<Self, AmountError> {
         match major.checked_mul(crate::domain::POW10_SCALE) {
-            Some(u) => Self::from_units(u),
-            None => None,
+            Some(units) => Self::try_from_units(units),
+            None => Err(AmountError::MajorScaleOverflow { attempted_major: major }),
         }
     }
 }
@@ -147,12 +162,12 @@ mod tests {
 
     #[test]
     fn construction_enforces_the_domain() {
-        assert!(Money::<USD>::from_units(0).is_some());
-        assert!(Money::<USD>::from_units(DOMAIN_MAX).is_some());
-        assert!(Money::<USD>::from_units(-DOMAIN_MAX).is_some());
-        assert!(Money::<USD>::from_units(DOMAIN_MAX + 1).is_none());
-        assert!(Money::<USD>::from_units(-DOMAIN_MAX - 1).is_none());
-        assert!(Money::<USD>::from_units(i128::MIN).is_none(), "i128::MIN must not sneak in");
+        assert!(Money::<USD>::try_from_units(0).is_ok());
+        assert!(Money::<USD>::try_from_units(DOMAIN_MAX).is_ok());
+        assert!(Money::<USD>::try_from_units(-DOMAIN_MAX).is_ok());
+        assert!(Money::<USD>::try_from_units(DOMAIN_MAX + 1).is_err());
+        assert!(Money::<USD>::try_from_units(-DOMAIN_MAX - 1).is_err());
+        assert!(Money::<USD>::try_from_units(i128::MIN).is_err(), "i128::MIN must not sneak in");
     }
 
     /// The compile-time currency is FREE: a `Money<USD>` is exactly an `i128`.
@@ -172,23 +187,23 @@ mod tests {
     /// equality, which any `Eq` impl passes. (DESIGN.md C1)
     #[test]
     fn the_same_amount_reached_by_different_routes_is_the_same_value() {
-        let direct = Money::<USD>::from_units(10_500_000_000_000_000_000).unwrap();
-        let built = Money::<USD>::from_major(10).unwrap()
-            + Money::<USD>::from_units(500_000_000_000_000_000).unwrap();
+        let direct = Money::<USD>::try_from_units(10_500_000_000_000_000_000).unwrap();
+        let built = Money::<USD>::try_from_major(10).unwrap()
+            + Money::<USD>::try_from_units(500_000_000_000_000_000).unwrap();
         assert_eq!(direct, built);
         assert_eq!(direct.units(), built.units());
     }
 
     #[test]
     fn code_comes_from_the_type() {
-        assert_eq!(Money::<USD>::from_units(1).unwrap().code(), Iso4217::USD);
-        assert_eq!(Money::<IDR>::from_units(1).unwrap().code(), Iso4217::IDR);
+        assert_eq!(Money::<USD>::try_from_units(1).unwrap().code(), Iso4217::USD);
+        assert_eq!(Money::<IDR>::try_from_units(1).unwrap().code(), Iso4217::IDR);
     }
 
     #[test]
     fn from_major_scales_by_pow10() {
-        assert_eq!(Money::<USD>::from_major(10).unwrap().units(), 10 * crate::domain::POW10_SCALE);
-        assert_eq!(Money::<USD>::from_major(-3).unwrap().units(), -3 * crate::domain::POW10_SCALE);
+        assert_eq!(Money::<USD>::try_from_major(10).unwrap().units(), 10 * crate::domain::POW10_SCALE);
+        assert_eq!(Money::<USD>::try_from_major(-3).unwrap().units(), -3 * crate::domain::POW10_SCALE);
         assert_eq!(Money::<USD>::ZERO.units(), 0);
     }
 
@@ -203,48 +218,40 @@ mod tests {
     fn is_zero_asks_only_about_magnitude() {
         assert!(Money::<USD>::ZERO.is_zero());
         assert!(Money::<IDR>::ZERO.is_zero());
-        assert!(!Money::<USD>::from_units(1).unwrap().is_zero());
+        assert!(!Money::<USD>::try_from_units(1).unwrap().is_zero());
     }
 
-    /// `from_major`'s `Option` is REACHABLE, and the constructor spans the whole domain.
-    ///
-    /// HISTORY, because it reversed inside one day and the reversal is instructive. An earlier
-    /// signature took `i64`. At `SCALE = 12` the domain permitted ~1e24 major units, so `i64`
-    /// left 5.04 orders unreachable and the `None` arm could never be taken — and the doc
-    /// presented that totality as a virtue when it was totality bought by amputating range.
-    /// At `SCALE = 18` the major range is only ~1e18, which `i64::MAX` (~9.2e18) fully covers,
-    /// so that specific argument no longer holds. `i128` is still correct, for a different and
-    /// better reason: C10 says accept FROM lower precision freely and never narrow a parameter.
-    ///
-    /// The lesson is not about `i64`. It is that a bound derived from one constant becomes
-    /// wrong the moment that constant moves, and nothing tells you — the code still compiles
-    /// and the doc still reads plausibly.
-    ///
-    /// Mutation-check: force `from_major` to always return `Some`; this test must go red.
+    /// The constructor spans the domain and distinguishes domain rejection from scaling
+    /// overflow.
     #[test]
     fn from_major_spans_the_domain_and_rejects_beyond_it() {
         // DERIVED from the constants, never a literal, precisely so it survives a scale change.
         const MAX_MAJOR: i128 = DOMAIN_MAX / crate::domain::POW10_SCALE; // 10^18 - 1 at SCALE 18
 
-        assert!(Money::<USD>::from_major(MAX_MAJOR).is_some(), "top of the domain");
-        assert!(Money::<USD>::from_major(-MAX_MAJOR).is_some(), "bottom of the domain");
+        assert!(Money::<USD>::try_from_major(MAX_MAJOR).is_ok(), "top of the domain");
+        assert!(Money::<USD>::try_from_major(-MAX_MAJOR).is_ok(), "bottom of the domain");
         assert!(
-            Money::<USD>::from_major(MAX_MAJOR + 1).is_none(),
+            Money::<USD>::try_from_major(MAX_MAJOR + 1).is_err(),
             "one major unit above the domain must be refused"
         );
         assert!(
-            Money::<USD>::from_major(-MAX_MAJOR - 1).is_none(),
+            Money::<USD>::try_from_major(-MAX_MAJOR - 1).is_err(),
             "one major unit below the domain must be refused"
         );
+        assert_eq!(
+            Money::<USD>::try_from_major(i128::MAX),
+            Err(AmountError::MajorScaleOverflow { attempted_major: i128::MAX })
+        );
+        assert_eq!(
+            Money::<USD>::try_from_major(i128::MIN),
+            Err(AmountError::MajorScaleOverflow { attempted_major: i128::MIN })
+        );
 
-        // The whole major range now fits an i64, so there is no "range i64 cannot reach" to
-        // assert. Pin the relationship that replaced it instead: MAX_MAJOR is derived from
-        // SCALE, so this stays true at any scale and would have caught the 12 -> 18 move.
         assert_eq!(
             MAX_MAJOR,
             10i128.pow(crate::domain::PRECISION - crate::domain::SCALE) - 1,
             "major range is 10^(PRECISION-SCALE) - 1, whatever SCALE happens to be"
         );
-        assert!(Money::<USD>::from_major(0).is_some());
+        assert!(Money::<USD>::try_from_major(0).is_ok());
     }
 }
