@@ -73,11 +73,11 @@ axum = { version = "0.8", default-features = false, features = ["json"] }
 base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 hex = "0.4"
-# hmac / sha2 / rand_core are pinned to the digest-0.10 generation: sha2 types
-# flow into `rsa` generics (`rsa::pkcs1v15::SigningKey<sha2::Sha256>`), and the
-# latest stable rsa (0.9.x) is built on digest 0.10 + rand_core 0.6. Bump the
-# whole stack together (hmac 0.13, sha2 0.11, rand_core 0.10) when rsa 0.10
-# leaves release-candidate status — don't split digest generations here.
+# hmac / sha2 stay on the digest-0.10 generation because sha2 types flow into
+# `rsa` generics (`rsa::pkcs1v15::SigningKey<sha2::Sha256>`). `rand_core` 0.6
+# is test-only and matches rsa's key-generation API. Move all three together
+# when rsa 0.10 leaves release-candidate status; do not split digest generations
+# in this security-sensitive crate.
 # Re-checked 2026-07-25: rsa max_stable is still 0.9.10 (0.10.0-rc.18 is the
 # newest, still a release candidate), so the pin stands.
 hmac = { version = "0.12", features = ["reset", "std"] }
@@ -87,9 +87,9 @@ rsa = { version = "0.9", features = ["getrandom", "sha2"] }
 sha2 = { version = "0.10", features = ["asm", "compress", "oid"] }
 # Internal SNAP BI crates — independent versions; caret reqs so a future bump
 # of one never force-bumps its dependents (decoupled per-crate releases).
-kamu-snap-crypto = { path = "crates/snap-crypto", version = "2" }
-kamu-snap-crypto-actix = { path = "crates/snap-crypto-actix", version = "2" }
-kamu-snap-crypto-axum = { path = "crates/snap-crypto-axum", version = "2" }
+kamu-snap-crypto = { path = "crates/snap-crypto", version = "3" }
+kamu-snap-crypto-actix = { path = "crates/snap-crypto-actix", version = "3" }
+kamu-snap-crypto-axum = { path = "crates/snap-crypto-axum", version = "3" }
 kamu-snap-response = { path = "crates/snap-response", version = "2" }
 kamu-snap-response-actix = { path = "crates/snap-response-actix", version = "2" }
 kamu-snap-response-axum = { path = "crates/snap-response-axum", version = "3" }

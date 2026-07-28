@@ -1835,7 +1835,7 @@ dependencies = [
 
 [[package]]
 name = "kamu-snap-crypto"
-version = "2.3.0"
+version = "3.0.0"
 dependencies = [
  "base64 0.23.0",
  "chrono",
@@ -1852,7 +1852,7 @@ dependencies = [
 
 [[package]]
 name = "kamu-snap-crypto-actix"
-version = "2.2.0"
+version = "3.0.0"
 dependencies = [
  "actix-web",
  "http 1.4.2",
@@ -1861,10 +1861,12 @@ dependencies = [
 
 [[package]]
 name = "kamu-snap-crypto-axum"
-version = "2.2.0"
+version = "3.0.0"
 dependencies = [
+ "axum",
  "http 1.4.2",
  "kamu-snap-crypto",
+ "tokio",
 ]
 
 [[package]]

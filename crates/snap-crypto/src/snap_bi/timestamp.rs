@@ -30,19 +30,18 @@ fn jakarta() -> FixedOffset {
 
 /// Current Jakarta time, millisecond precision.
 pub fn now_jakarta_ms() -> String {
-    format_jakarta(Utc::now().with_timezone(&jakarta()), Precision::Millis)
+    format_jakarta(Utc::now().fixed_offset(), Precision::Millis)
 }
 
 /// Current Jakarta time, second precision.
 pub fn now_jakarta_seconds() -> String {
-    format_jakarta(Utc::now().with_timezone(&jakarta()), Precision::Seconds)
+    format_jakarta(Utc::now().fixed_offset(), Precision::Seconds)
 }
 
-/// Format an arbitrary fixed-offset `DateTime` using the selected precision.
-///
-/// `dt` is rendered in its own offset; pass a Jakarta-localised value if the
-/// SNAP BI partner expects `+07:00`.
+/// Convert an arbitrary fixed-offset `DateTime` to Jakarta (`+07:00`) and
+/// format it using the selected precision.
 pub fn format_jakarta(dt: DateTime<FixedOffset>, precision: Precision) -> String {
+    let dt = dt.with_timezone(&jakarta());
     match precision {
         Precision::Seconds => dt.format("%Y-%m-%dT%H:%M:%S%:z").to_string(),
         Precision::Millis => dt.format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string(),

@@ -7,40 +7,50 @@
 [![License][badge-license]][link-license]
 [![MSRV][badge-msrv]][link-msrv]
 
-axum / `http` inbound-verify glue for Bank Indonesia SNAP BI service signatures —
-the framework adapter for [`kamu-snap-crypto`](https://crates.io/crates/kamu-snap-crypto).
+`http::request::Parts` translation for `kamu-snap-crypto`. The runtime crate
+depends on `http`, not Axum or Tower.
 
-Part of the [`kamu-public-crates`](https://github.com/pt-immer/kamu-public-crates) workspace.
-
-## What this crate is
-
-A single function, [`verify_request`], operating on `http::request::Parts` + body
-bytes. `Parts` gives clean access to method/headers without consuming the body, so
-consumers extract the body via `axum::body::Bytes` (or `axum::body::to_bytes`) and
-then call this function inside an extractor / handler. The crate depends only on
-`http` and `kamu-snap-crypto` — no axum/tower dependency.
-
-> A full `tower::Layer` wrapper is intentionally deferred to a future release;
-> layered body extraction needs careful buffer-and-replay best designed against a
-> production caller.
-
-## Quickstart
+`verify_request` extracts SNAP BI authentication headers and delegates
+authorization parsing, canonicalization, and HMAC verification to the core
+crate.
 
 ```rust,no_run
-use axum::{body::Bytes, extract::Request};
+use axum::{body, extract::Request, http::StatusCode};
 use kamu_snap_crypto_axum::verify_request;
 
-async fn check(req: Request) -> Result<(), kamu_snap_crypto::Error> {
-    let (parts, body) = req.into_parts();
-    let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap_or_default();
+const MAX_SNAP_BODY_BYTES: usize = 1024 * 1024;
+
+async fn check(request: Request) -> Result<(), StatusCode> {
+    let (parts, body) = request.into_parts();
+    let bytes = body::to_bytes(body, MAX_SNAP_BODY_BYTES)
+        .await
+        .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE)?;
+
     verify_request(&parts, &bytes, "client-secret")
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    // Deserialize `bytes` here. Do not read or normalize the body again.
+    Ok(())
 }
 ```
+
+Never replace a body-read error with empty bytes. Set a finite limit, propagate
+the read failure, then verify and deserialize the same buffer.
+
+BRI excludes URI queries from `stringToSign`; the adapter deliberately passes
+`parts.uri.path()`.
+
+## 3.0 changes
+
+- Raw, Basic, empty, and multi-token authorization values are rejected.
+- `Bearer` scheme matching is ASCII case-insensitive.
+- Errors use `ServiceVerificationError`.
+- Canonicalization and signature decoding now live in `kamu-snap-crypto`.
 
 ## License
 
 Dual-licensed under either [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at
-your option (`MIT OR Apache-2.0`). Previously MIT-only in `pt-immer/lib-snap`.
+your option (`MIT OR Apache-2.0`).
 
 [badge-crates]: https://img.shields.io/crates/v/kamu-snap-crypto-axum?style=flat-square&logo=rust
 [badge-docs]: https://img.shields.io/docsrs/kamu-snap-crypto-axum?style=flat-square&logo=docs.rs&label=docs.rs

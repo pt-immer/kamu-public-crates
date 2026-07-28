@@ -1,5 +1,22 @@
 # Changelog — `kamu-snap-crypto-actix`
 
+## 3.0.0 — 2026-07-28
+
+### Breaking
+
+- `verify_request` returns the structured
+  `kamu_snap_crypto::snap_bi::ServiceVerificationError`.
+- Authorization now requires exactly one Bearer credential. Raw, Basic, empty,
+  and multi-token values no longer reach signature verification.
+
+### Changed
+
+- Header extraction and Actix method conversion are the adapter's only policy;
+  authorization, canonicalization, signature decoding, and HMAC verification
+  delegate to `kamu-snap-crypto`.
+- Added behavior tests for valid mixed-case Bearer schemes, invalid
+  authorization shapes, and missing headers.
+
 ## 2.2.0 — 2026-07-27
 
 Toolchain maintenance only. No code or public API changes.

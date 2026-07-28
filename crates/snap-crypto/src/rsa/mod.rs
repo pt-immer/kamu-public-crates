@@ -1,70 +1,63 @@
-//! RSA signing and verification, generic over [`SignatureScheme`].
+//! SNAP BI RSA-SHA256 signing and verification.
 //!
-//! [`RsaSigner`] and [`RsaVerifier`] are both generic over the chosen scheme.
-//! Four built-in schemes are shipped:
-//!
-//! | Scheme           | Padding         | Hash       | SNAP BI default |
-//! |------------------|-----------------|------------|-----------------|
-//! | [`Pkcs1v15Sha256`] | PKCS#1-v1.5     | SHA-256    | ✓              |
-//! | [`Pkcs1v15Sha512`] | PKCS#1-v1.5     | SHA-512    |                |
-//! | [`PssSha256`]      | PSS (random salt) | SHA-256  |                |
-//! | [`PssSha512`]      | PSS (random salt) | SHA-512  |                |
-//!
-//! The [`SignatureScheme`] trait is *sealed* — third-party crates cannot add
-//! schemes — so the algorithm surface stays auditable. Future SNAP BI variants
-//! that mandate new schemes will extend this enum upstream.
-//!
-//! All signers and verifiers take `&self` and clone the underlying key as
-//! needed, allowing a single instance to be shared across threads without
-//! external locking.
+//! The crate exposes only the protocol-mandated PKCS#1 v1.5 + SHA-256 scheme.
 
-mod scheme;
+use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
+use rsa::signature::{SignatureEncoding, Signer, Verifier};
+use rsa::traits::PublicKeyParts;
 
-pub use scheme::{Pkcs1v15Sha256, Pkcs1v15Sha512, PssSha256, PssSha512, SignatureScheme};
-
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::signature::Signature;
 
-/// RSA signer parameterised by [`SignatureScheme`] (defaults to
-/// [`Pkcs1v15Sha256`], the SNAP BI default).
+/// PKCS#1 v1.5 + SHA-256 signer for SNAP BI OAuth requests.
 #[derive(Clone)]
-pub struct RsaSigner<S: SignatureScheme = Pkcs1v15Sha256> {
-    inner: S::SigningKey,
+pub struct RsaSigner {
+    inner: rsa::pkcs1v15::SigningKey<sha2::Sha256>,
 }
 
-impl<S: SignatureScheme> RsaSigner<S> {
+impl RsaSigner {
     /// Parse a PKCS#8-encoded private key PEM.
     ///
     /// Legacy PKCS#1 PEMs are rejected by upstream — convert to PKCS#8 with
     /// `openssl pkcs8 -topk8 -nocrypt -in pkcs1.pem -out pkcs8.pem` first.
     pub fn from_pkcs8_pem(pem: &str) -> Result<Self> {
-        let inner = S::parse_private_pem(pem)?;
+        let inner = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::from_pkcs8_pem(pem)
+            .map_err(|error| Error::InvalidSecretKey(error.to_string()))?;
         Ok(Self { inner })
     }
 
-    /// Sign `payload` using the configured scheme. PSS schemes use
-    /// `rand_core::OsRng` for the salt; PKCS#1-v1.5 is deterministic.
+    /// Sign `payload`.
     pub fn sign(&self, payload: impl AsRef<[u8]>) -> Signature {
-        S::sign(&self.inner, payload.as_ref())
+        let signature = Signer::sign(&self.inner, payload.as_ref());
+        Signature::from_bytes(signature.to_bytes().into_vec())
     }
 }
 
-/// RSA verifier parameterised by [`SignatureScheme`] (defaults to
-/// [`Pkcs1v15Sha256`]).
+/// PKCS#1 v1.5 + SHA-256 verifier for SNAP BI OAuth requests.
 #[derive(Clone)]
-pub struct RsaVerifier<S: SignatureScheme = Pkcs1v15Sha256> {
-    inner: S::VerifyingKey,
+pub struct RsaVerifier {
+    inner: rsa::pkcs1v15::VerifyingKey<sha2::Sha256>,
 }
 
-impl<S: SignatureScheme> RsaVerifier<S> {
-    /// Parse a PKCS#8 / SPKI-encoded public key PEM.
-    pub fn from_pkcs8_public_pem(pem: &str) -> Result<Self> {
-        let inner = S::parse_public_pem(pem)?;
+impl RsaVerifier {
+    /// Parse a SubjectPublicKeyInfo (SPKI) public-key PEM.
+    pub fn from_spki_pem(pem: &str) -> Result<Self> {
+        let inner = rsa::pkcs1v15::VerifyingKey::<sha2::Sha256>::from_public_key_pem(pem)
+            .map_err(|error| Error::InvalidPublicKey(error.to_string()))?;
         Ok(Self { inner })
     }
 
-    /// Verify `sig` against `payload` using the configured scheme.
+    /// Verify `sig` against `payload`.
     pub fn verify(&self, sig: &Signature, payload: impl AsRef<[u8]>) -> Result<()> {
-        S::verify(&self.inner, payload.as_ref(), sig.as_bytes())
+        if sig.as_bytes().len() != self.inner.as_ref().size() {
+            return Err(Error::InvalidRawSignature(format!(
+                "expected {} bytes, got {}",
+                self.inner.as_ref().size(),
+                sig.as_bytes().len(),
+            )));
+        }
+        let signature = rsa::pkcs1v15::Signature::try_from(sig.as_bytes())
+            .map_err(|error| Error::InvalidRawSignature(error.to_string()))?;
+        Verifier::verify(&self.inner, payload.as_ref(), &signature).map_err(|_| Error::AsymmetricVerifyFailed)
     }
 }

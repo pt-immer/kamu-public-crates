@@ -30,8 +30,9 @@ publishing small, focused Rust crates — libraries and CLI apps — to crates.i
   tables. The `postgres` / `sqlx` adapters live in the crate itself because
   `impl ToSql` for its type from elsewhere is `E0117`.
 - **`kamu-snap-*`** (`crates/snap-*`) — Bank Indonesia **SNAP BI** plumbing, a
-  family of 6 independently-versioned crates. `kamu-snap-crypto` (HMAC/RSA
-  primitives, SNAP BI recipes, webhook verifier) and `kamu-snap-response`
+  family of 6 independently-versioned crates. `kamu-snap-crypto` (validated
+  request signing/verification, HMAC/RSA-SHA256 primitives, webhook verifiers)
+  and `kamu-snap-response`
   (response envelope + 61-variant error taxonomy) are framework-free leaves; the
   4 adapters `kamu-snap-{crypto,response}-{actix,axum}` bridge them to actix-web
   / axum. `kamu-snap-response` is wasm32-clean; `kamu-snap-crypto` is **not**
@@ -119,6 +120,10 @@ YugabyteDB harness); its own `DESIGN.md` and `Justfile` carry the detail.
   `deny.toml` with a rationale (SNAP BI uses RSA for signature
   generation/verification, not attacker-ciphertext decryption). Keep the ignore
   until a constant-time `rsa` ships, then drop it.
+- **BRI SNAP BI signatures exclude URI queries.** The provider vector in
+  `crates/snap-crypto/tests/snap_bi_recipes.rs` pins this contract. Adapters
+  pass an origin-form path (`req.path()` / `uri.path()`); do not change them to
+  `path_and_query` without a new provider contract and vector.
 
 ## Workflow (use `just`)
 
@@ -185,7 +190,8 @@ Cadence expectations:
   `kamu-snap-response` ≥ 70%); floors are **measured before they are set**, and
   a floor sitting below its measurement should say why in the recipe. Land tests with
   new code. The 4 thin `kamu-snap-*-{actix,axum}` adapter crates are
-  compile-only (framework glue, no tests) and intentionally not coverage-gated.
+  behavior-tested by the workspace suite but intentionally not
+  percentage-coverage-gated.
   `kamu-logging`'s global subscriber is a process-global one-shot — test its
   error variants by constructing them in isolated unit tests, never by re-calling
   `init()`.

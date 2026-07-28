@@ -1,5 +1,48 @@
 # Changelog — `kamu-snap-crypto`
 
+## 3.0.0 — 2026-07-28
+
+This release moves SNAP BI request policy into validated core types and removes
+algorithms outside the protocol contract.
+
+### Breaking
+
+- `AccessToken` now requires exactly one Bearer credential. Scheme matching is
+  ASCII case-insensitive; raw, Basic, empty, whitespace-ambiguous, and invalid
+  RFC 6750 credentials are rejected.
+- `ServiceStringToSign` and `OAuthStringToSign` fields are private. Their
+  constructors validate path, timestamp, token, and header-compatible values.
+- `ServiceHeaders::builder` is replaced by the
+  `ServiceRequest<Unsigned> -> ServiceRequest<Signed>` transition. Complete
+  headers exist only after signing.
+- `HmacSigner::new` and `sign_service` are infallible.
+- RSA is limited to SNAP BI's PKCS#1 v1.5 + SHA-256 scheme. The generic
+  `SignatureScheme`, SHA-512, and PSS types were removed.
+- `RsaVerifier::from_pkcs8_public_pem` is now `from_spki_pem`, matching the
+  public-key container it parses.
+- `WebhookVerifier` is split into `BodyWebhookVerifier` and
+  `RequestWebhookVerifier`. `BriVaPaidVerifier` now verifies full request
+  context instead of implementing an always-failing body-only contract.
+
+### Added
+
+- Framework-neutral `ServiceRequestParts` and `verify_service_request`.
+- Structured `AuthorizationError`, `InputError`, and
+  `ServiceVerificationError` taxonomies.
+- `BodyHmacVerifier`; the two Inacash names are discoverability aliases over
+  the same implementation.
+- A vector built from BRI's published field examples that pins body hashing and
+  confirms query parameters are excluded from the canonical path.
+
+### Fixed
+
+- `format_jakarta` now converts its input to `+07:00` before formatting.
+- Invalid service-signature encoding and length are rejected during request
+  construction. Invalid raw RSA signature length reports `InvalidRawSignature`,
+  not a base64 decoding failure.
+- Debug output for canonical requests, access tokens, signed headers, OAuth
+  headers, and secret-bearing provider verifiers is redacted.
+
 ## 2.3.0 — 2026-07-27
 
 Toolchain maintenance only. No code or public API changes.
