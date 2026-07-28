@@ -13,7 +13,7 @@ A Cargo workspace of small, focused Rust crates — libraries and CLI apps — p
 | [`kamu-logging`](crates/logging)     | Structured logging over the `tracing` ecosystem: systemd/journald, Cloudflare-Worker `wasm32`, `actix-web` spans, OpenTelemetry/OTLP | [![v](https://img.shields.io/crates/v/kamu-logging.svg)](https://crates.io/crates/kamu-logging) |
 | [`kamu-money-core`](crates/money-core) | Exact monetary arithmetic: fixed-scale `i128`, compile-time currency identity, and explicit residue decisions | [![v](https://img.shields.io/crates/v/kamu-money-core.svg)](https://crates.io/crates/kamu-money-core) |
 | [`kamu-snap-crypto`](crates/snap-crypto) | Validated SNAP BI request signing/verification, HMAC/RSA-SHA256, and webhook verifiers | [![v](https://img.shields.io/crates/v/kamu-snap-crypto.svg)](https://crates.io/crates/kamu-snap-crypto) |
-| [`kamu-snap-response`](crates/snap-response) | SNAP BI response envelope + 61-variant error taxonomy (framework-free leaf) | [![v](https://img.shields.io/crates/v/kamu-snap-response.svg)](https://crates.io/crates/kamu-snap-response) |
+| [`kamu-snap-response`](crates/snap-response) | Validated SNAP BI success, failure, and malformed responses + 61 error classes | [![v](https://img.shields.io/crates/v/kamu-snap-response.svg)](https://crates.io/crates/kamu-snap-response) |
 | [`kamu-snap-crypto-actix`](crates/snap-crypto-actix) | actix-web inbound-verify helper for `kamu-snap-crypto` | [![v](https://img.shields.io/crates/v/kamu-snap-crypto-actix.svg)](https://crates.io/crates/kamu-snap-crypto-actix) |
 | [`kamu-snap-crypto-axum`](crates/snap-crypto-axum) | axum/`http` inbound-verify helper for `kamu-snap-crypto` | [![v](https://img.shields.io/crates/v/kamu-snap-crypto-axum.svg)](https://crates.io/crates/kamu-snap-crypto-axum) |
 | [`kamu-snap-response-actix`](crates/snap-response-actix) | actix-web `Responder` adapter for `kamu-snap-response` | [![v](https://img.shields.io/crates/v/kamu-snap-response-actix.svg)](https://crates.io/crates/kamu-snap-response-actix) |
@@ -31,7 +31,7 @@ kamu-public-crates/
 │   ├── logging/          # kamu-logging
 │   ├── money-core/       # kamu-money-core (vendors the ISO 4217 register)
 │   ├── snap-crypto/      # kamu-snap-crypto (SNAP BI crypto, leaf)
-│   ├── snap-response/    # kamu-snap-response (SNAP BI envelope/errors, leaf)
+│   ├── snap-response/    # kamu-snap-response (validated SNAP BI responses, leaf)
 │   ├── snap-crypto-actix/    # actix-web verify adapter
 │   ├── snap-crypto-axum/     # axum/http verify adapter
 │   ├── snap-response-actix/  # actix-web Responder adapter

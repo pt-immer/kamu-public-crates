@@ -1,5 +1,39 @@
 # Changelog — `kamu-snap-response`
 
+## 3.0.0 — 2026-07-28
+
+### Breaking
+
+- Replaced the public `SnapEnvelope` fields and optional payload with
+  `SnapResponse::{Success, Failure, Malformed}`. Variant detail types keep their
+  fields private, so local code cannot build contradictory response states.
+- Replaced `SnapResponse::ok` / `err` with `success` / `failure`.
+  `success` validates the flattened payload and returns `Result`.
+- Split response-code handling into `ValidResponseCode`, `RawResponseCode`, and
+  the total `ResponseCode` parser. Accessors now derive from one full
+  `HHHSSCC` parse.
+- Added `CaseCode`; constructors now take validated components or return an
+  error instead of panicking.
+- Replaced inverse construction of contextual `Error` variants with
+  `ErrorClass`. Received responses no longer invent empty context strings.
+- Changed the `crypto` bridge to retain a redacted `CryptoFailureClass`.
+
+### Fixed
+
+- Reject top-level payload keys named `responseCode` or `responseMessage`
+  before any bytes are written.
+- Preserve `SnapResponse<()>` as a success state across a wire round trip.
+- Treat malformed service or case digits as a malformed response and force
+  framework adapters to HTTP 500.
+- Map local crypto key/configuration failures to an internal error; only
+  authentication failures map to HTTP 401.
+
+### Changed
+
+- Generate the 61 error variants, classifications, HTTP statuses, case codes,
+  categories, and inverse lookup from one declarative table.
+- Preserve extra fields on valid failures and malformed upstream responses.
+
 ## 2.3.0 — 2026-07-27
 
 Toolchain maintenance only. No code or public API changes.

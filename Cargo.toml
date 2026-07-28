@@ -90,9 +90,9 @@ sha2 = { version = "0.10", features = ["asm", "compress", "oid"] }
 kamu-snap-crypto = { path = "crates/snap-crypto", version = "3" }
 kamu-snap-crypto-actix = { path = "crates/snap-crypto-actix", version = "3" }
 kamu-snap-crypto-axum = { path = "crates/snap-crypto-axum", version = "3" }
-kamu-snap-response = { path = "crates/snap-response", version = "2" }
-kamu-snap-response-actix = { path = "crates/snap-response-actix", version = "2" }
-kamu-snap-response-axum = { path = "crates/snap-response-axum", version = "3" }
+kamu-snap-response = { path = "crates/snap-response", version = "3" }
+kamu-snap-response-actix = { path = "crates/snap-response-actix", version = "3" }
+kamu-snap-response-axum = { path = "crates/snap-response-axum", version = "4" }
 # --- kamu-money-core ---
 # `sqlx` is what sets this workspace's MSRV: 0.9 declares rust-version 1.94.0,
 # and it arrives through kamu-money-core's `sqlx` feature.

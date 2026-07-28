@@ -379,11 +379,12 @@ cov-logging:
 cov-snap-crypto:
     cargo llvm-cov nextest -p kamu-snap-crypto --all-features --fail-under-lines 70
 
-# Coverage gate for kamu-snap-response. Floor 70 (measured ~74%); `category.rs`
-# is currently untested upstream. The 4 thin actix/axum adapter crates have no
-# tests (framework-bound glue) and are intentionally compile-only, not gated.
+# Coverage gate for kamu-snap-response. Floor 85, measured 90.11% lines on
+# 2026-07-28 (687 regions, 465 lines). The five-point margin absorbs LLVM
+# instrumentation drift. Framework adapters are behavior-tested by the workspace
+# suite but intentionally not percentage-gated.
 cov-snap-response:
-    cargo llvm-cov nextest -p kamu-snap-response --all-features --fail-under-lines 70
+    cargo llvm-cov nextest -p kamu-snap-response --all-features --fail-under-lines 85
 
 # Coverage gate for kamu-money-core. Floor 80, measured 84.89% lines on
 # 2026-07-28 (2584 regions, 1370 lines).

@@ -33,7 +33,7 @@ publishing small, focused Rust crates — libraries and CLI apps — to crates.i
   family of 6 independently-versioned crates. `kamu-snap-crypto` (validated
   request signing/verification, HMAC/RSA-SHA256 primitives, webhook verifiers)
   and `kamu-snap-response`
-  (response envelope + 61-variant error taxonomy) are framework-free leaves; the
+  (validated response states + 61-variant error taxonomy) are framework-free leaves; the
   4 adapters `kamu-snap-{crypto,response}-{actix,axum}` bridge them to actix-web
   / axum. `kamu-snap-response` is wasm32-clean; `kamu-snap-crypto` is **not**
   (`rsa` pulls `getrandom`, which needs the consumer's `js` feature on wasm32).
@@ -187,7 +187,7 @@ Cadence expectations:
   (`just fmt` / `just fmt-check`) — don't hand-align.
 - **Coverage gates are enforced** (`kamu-iso3166` ≥ 98% lines, `kamu-logging`
   ≥ 70%, `kamu-money-core` ≥ 80%, `kamu-snap-crypto` ≥ 70%,
-  `kamu-snap-response` ≥ 70%); floors are **measured before they are set**, and
+  `kamu-snap-response` ≥ 85%); floors are **measured before they are set**, and
   a floor sitting below its measurement should say why in the recipe. Land tests with
   new code. The 4 thin `kamu-snap-*-{actix,axum}` adapter crates are
   behavior-tested by the workspace suite but intentionally not

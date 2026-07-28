@@ -449,7 +449,7 @@ jobs:
       - run: just cov-snap-crypto
 
   coverage-snap-response:
-    name: coverage (kamu-snap-response >= 70% lines)
+    name: coverage (kamu-snap-response >= 85% lines)
     needs: changes
     if: ${{ needs.changes.outputs.snap == 'true' }}
     runs-on: ubuntu-latest

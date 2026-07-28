@@ -1871,7 +1871,7 @@ dependencies = [
 
 [[package]]
 name = "kamu-snap-response"
-version = "2.3.0"
+version = "3.0.0"
 dependencies = [
  "http 1.4.2",
  "kamu-snap-crypto",
@@ -1882,22 +1882,25 @@ dependencies = [
 
 [[package]]
 name = "kamu-snap-response-actix"
-version = "2.2.0"
+version = "3.0.0"
 dependencies = [
  "actix-web",
  "http 1.4.2",
  "kamu-snap-response",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
 name = "kamu-snap-response-axum"
-version = "3.1.0"
+version = "4.0.0"
 dependencies = [
  "axum",
  "http 1.4.2",
  "kamu-snap-response",
  "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

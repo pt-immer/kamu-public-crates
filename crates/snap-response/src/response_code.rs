@@ -1,162 +1,392 @@
-//! Wire-level `responseCode` newtype + the `ServiceCode` constrained `u8`.
-//!
-//! SNAP BI's `responseCode` is a 7-digit string: `HHHSSCC` where `HHH` is the
-//! HTTP status (3 digits), `SS` is the service code (2 digits, 00–99), and
-//! `CC` is the case code (2 digits). [`ResponseCode::parse`] is total — it
-//! never errors. Malformed codes preserve `raw()` while `http()` / `service()`
-//! / `case()` return `None`, keeping the `responseMessage` available for
-//! operator inspection (review F-03 fix).
+//! SNAP BI `responseCode` parsing and construction.
 
-use crate::error::Error;
+use crate::ErrorClass;
 
-/// Wire-format `responseCode`.
+const WIRE_LEN: usize = 7;
+
+/// A syntactically valid `HHHSSCC` response code.
 ///
-/// Construct via [`ResponseCode::parse`] (defensive — never fails) or via
-/// [`ResponseCode::from_parts`] (validated). The raw string is preserved
-/// verbatim even when malformed.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[serde(transparent)]
-pub struct ResponseCode(String);
+/// All accessors read values captured by one full parse. A code is never
+/// partially valid.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ValidResponseCode {
+    raw: String,
+    http: http::StatusCode,
+    service: ServiceCode,
+    case: CaseCode,
+}
 
-impl ResponseCode {
-    /// Wrap an arbitrary string. Never fails — the value is preserved as-is.
-    pub fn parse(s: impl Into<String>) -> Self {
-        Self(s.into())
+impl ValidResponseCode {
+    /// Parse all seven ASCII digits and validate the HTTP status.
+    pub fn parse(raw: impl Into<String>) -> Result<Self, ResponseCodeError> {
+        let raw = raw.into();
+        let bytes = raw.as_bytes();
+
+        if bytes.len() != WIRE_LEN {
+            return Err(ResponseCodeError::Length { actual: bytes.len() });
+        }
+        if let Some(index) = bytes.iter().position(|byte| !byte.is_ascii_digit()) {
+            return Err(ResponseCodeError::NonDigit { index });
+        }
+
+        let http_number = digits(bytes[0], bytes[1], bytes[2]);
+        let http = http::StatusCode::from_u16(http_number)
+            .map_err(|_| ResponseCodeError::HttpStatus { value: http_number })?;
+        let service = ServiceCode((bytes[3] - b'0') * 10 + bytes[4] - b'0');
+        let case = CaseCode((bytes[5] - b'0') * 10 + bytes[6] - b'0');
+
+        Ok(Self { raw, http, service, case })
     }
 
-    /// Construct from validated `(http, service, case)` parts. Panics if `http`
-    /// is outside `100..=999` or `case` is outside `0..=99` — either would widen
-    /// the canonical 7-digit `HHHSSCC` wire form (e.g. `case = 100` formats as
-    /// three digits, yielding an 8-char code that every reader then rejects).
-    /// Use [`ResponseCode::parse`] when you cannot guarantee the inputs.
-    pub fn from_parts(http: u16, service: ServiceCode, case: u8) -> Self {
-        assert!((100..=999).contains(&http), "http status out of range");
-        assert!(case <= 99, "case code out of range (must be 0..=99)");
-        Self(format!("{http:03}{:02}{case:02}", service.get()))
+    /// Build a code from validated components.
+    #[must_use]
+    pub fn from_parts(http: http::StatusCode, service: ServiceCode, case: CaseCode) -> Self {
+        Self { raw: format!("{}{}{case}", http.as_u16(), service), http, service, case }
     }
 
-    /// Construct a `2-prefix` success code (`2HH SSCC` with `HH=00`).
-    pub fn success(service: ServiceCode, sub: u8) -> Self {
-        Self::from_parts(200, service, sub)
+    /// Validate numeric service and case components, then build a code.
+    pub fn try_from_parts(http: http::StatusCode, service: u8, case: u8) -> Result<Self, CodeOutOfRange> {
+        Ok(Self::from_parts(http, ServiceCode::try_from(service)?, CaseCode::try_from(case)?))
     }
 
-    /// The verbatim wire string.
-    pub fn raw(&self) -> &str {
+    /// Build an HTTP 200 success code.
+    #[must_use]
+    pub fn success(service: ServiceCode, case: CaseCode) -> Self {
+        Self::from_parts(http::StatusCode::OK, service, case)
+    }
+
+    /// Canonical seven-digit wire value.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.raw
+    }
+
+    /// HTTP status captured by the full parse.
+    #[must_use]
+    pub const fn http_status(&self) -> http::StatusCode {
+        self.http
+    }
+
+    /// Two-digit service component.
+    #[must_use]
+    pub const fn service_code(&self) -> ServiceCode {
+        self.service
+    }
+
+    /// Two-digit case component.
+    #[must_use]
+    pub const fn case_code(&self) -> CaseCode {
+        self.case
+    }
+
+    /// Classify a known SNAP BI error code.
+    #[must_use]
+    pub fn classify(&self) -> Option<ErrorClass> {
+        ErrorClass::from_http_and_case(self.http, self.case)
+    }
+}
+
+impl TryFrom<&str> for ValidResponseCode {
+    type Error = ResponseCodeError;
+
+    fn try_from(raw: &str) -> Result<Self, Self::Error> {
+        Self::parse(raw)
+    }
+}
+
+impl TryFrom<String> for ValidResponseCode {
+    type Error = ResponseCodeError;
+
+    fn try_from(raw: String) -> Result<Self, Self::Error> {
+        Self::parse(raw)
+    }
+}
+
+impl core::fmt::Display for ValidResponseCode {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str(&self.raw)
+    }
+}
+
+impl serde::Serialize for ValidResponseCode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.raw)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ValidResponseCode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        Self::parse(raw).map_err(serde::de::Error::custom)
+    }
+}
+
+/// An unparsed wire value retained for diagnostics and round trips.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RawResponseCode(String);
+
+impl RawResponseCode {
+    fn new(raw: String) -> Self {
+        Self(raw)
+    }
+
+    /// Verbatim wire value.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
         &self.0
     }
+}
 
-    /// Extract the leading HTTP status, defensively. `None` if the code is not
-    /// in the canonical 7-digit form or the leading 3 digits don't form a valid
-    /// HTTP status.
-    pub fn http(&self) -> Option<http::StatusCode> {
-        if self.0.len() != 7 {
-            return None;
+impl core::fmt::Display for RawResponseCode {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl serde::Serialize for RawResponseCode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum ParsedResponseCode {
+    Valid(ValidResponseCode),
+    Raw(RawResponseCode),
+}
+
+/// A total wire parser containing either a fully valid code or the raw value.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ResponseCode(ParsedResponseCode);
+
+impl ResponseCode {
+    /// Parse a wire value without discarding malformed input.
+    #[must_use]
+    pub fn parse(raw: impl Into<String>) -> Self {
+        let raw = raw.into();
+        match ValidResponseCode::parse(raw.clone()) {
+            Ok(code) => Self(ParsedResponseCode::Valid(code)),
+            Err(_) => Self(ParsedResponseCode::Raw(RawResponseCode::new(raw))),
         }
-        let n = self.0.get(..3)?.parse::<u16>().ok()?;
-        http::StatusCode::from_u16(n).ok()
     }
 
-    /// Extract the service code (positions 4..5). `None` for malformed codes.
-    pub fn service(&self) -> Option<ServiceCode> {
-        if self.0.len() != 7 {
-            return None;
+    /// Verbatim wire value.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        match &self.0 {
+            ParsedResponseCode::Valid(code) => code.as_str(),
+            ParsedResponseCode::Raw(code) => code.as_str(),
         }
-        let n = self.0.get(3..5)?.parse::<u8>().ok()?;
-        ServiceCode::new(n)
     }
 
-    /// Extract the case code (positions 6..7). `None` for malformed codes.
-    pub fn case(&self) -> Option<u8> {
-        if self.0.len() != 7 {
-            return None;
+    /// Fully validated representation, when present.
+    #[must_use]
+    pub const fn valid(&self) -> Option<&ValidResponseCode> {
+        match &self.0 {
+            ParsedResponseCode::Valid(code) => Some(code),
+            ParsedResponseCode::Raw(_) => None,
         }
-        self.0.get(5..7)?.parse::<u8>().ok()
     }
 
-    /// Inverse classifier: given a received wire code, return the matching
-    /// [`Error`] variant (with empty-string payload where the variant carries
-    /// one). `None` for unknown HTTP+case pairs and for malformed wire forms.
-    ///
-    /// Designed for client-side use — receiving a response and reasoning about
-    /// it typed.
-    pub fn classify(&self) -> Option<Error> {
-        let http = self.http()?.as_u16();
-        let case = self.case()?;
-        Error::from_http_and_case(http, case)
+    /// Raw representation when the full parse failed.
+    #[must_use]
+    pub const fn raw(&self) -> Option<&RawResponseCode> {
+        match &self.0 {
+            ParsedResponseCode::Valid(_) => None,
+            ParsedResponseCode::Raw(code) => Some(code),
+        }
+    }
+
+    /// HTTP status from the fully validated representation.
+    #[must_use]
+    pub fn http_status(&self) -> Option<http::StatusCode> {
+        self.valid().map(ValidResponseCode::http_status)
+    }
+
+    /// Service component from the fully validated representation.
+    #[must_use]
+    pub fn service_code(&self) -> Option<ServiceCode> {
+        self.valid().map(ValidResponseCode::service_code)
+    }
+
+    /// Case component from the fully validated representation.
+    #[must_use]
+    pub fn case_code(&self) -> Option<CaseCode> {
+        self.valid().map(ValidResponseCode::case_code)
+    }
+
+    /// Classify a known SNAP BI error code.
+    #[must_use]
+    pub fn classify(&self) -> Option<ErrorClass> {
+        self.valid().and_then(ValidResponseCode::classify)
+    }
+
+    pub(crate) fn into_result(self) -> Result<ValidResponseCode, RawResponseCode> {
+        match self.0 {
+            ParsedResponseCode::Valid(code) => Ok(code),
+            ParsedResponseCode::Raw(code) => Err(code),
+        }
+    }
+}
+
+impl From<ValidResponseCode> for ResponseCode {
+    fn from(code: ValidResponseCode) -> Self {
+        Self(ParsedResponseCode::Valid(code))
     }
 }
 
 impl core::fmt::Display for ResponseCode {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(&self.0)
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str(self.as_str())
     }
 }
 
-/// SNAP BI service code (2-digit slot inside `responseCode`).
-///
-/// Construction is total via [`ServiceCode::new`]: values `>99` return `None`,
-/// closing the truncation hazard of the old `service_code % 100` formula.
+impl serde::Serialize for ResponseCode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ResponseCode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self::parse(String::deserialize(deserializer)?))
+    }
+}
+
+/// Why a seven-character response code is not valid.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ResponseCodeError {
+    /// Wrong UTF-8 byte length.
+    #[error("response code must contain exactly 7 ASCII digits, got {actual} bytes")]
+    Length {
+        /// Actual UTF-8 byte length.
+        actual: usize,
+    },
+    /// A byte is not an ASCII digit.
+    #[error("response code byte {index} is not an ASCII digit")]
+    NonDigit {
+        /// Zero-based byte position.
+        index: usize,
+    },
+    /// The first three digits are outside the `http` crate's accepted range.
+    #[error("response code contains invalid HTTP status {value:03}")]
+    HttpStatus {
+        /// Parsed numeric status.
+        value: u16,
+    },
+}
+
+/// A numeric component did not fit its two-digit wire slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum CodeOutOfRange {
+    /// Invalid service code.
+    #[error("service code must be 0..=99, got {0}")]
+    Service(u8),
+    /// Invalid case code.
+    #[error("case code must be 0..=99, got {0}")]
+    Case(u8),
+}
+
+/// Two-digit SNAP BI service code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ServiceCode(u8);
 
 impl ServiceCode {
-    /// Construct a `ServiceCode`. Returns `None` for values `>99`.
+    /// Smallest service code.
+    pub const ZERO: Self = Self(0);
+
+    /// Construct a service code.
+    #[must_use]
     pub const fn new(code: u8) -> Option<Self> {
-        if code > 99 { None } else { Some(Self(code)) }
+        if code <= 99 { Some(Self(code)) } else { None }
     }
 
-    /// The underlying value.
+    /// Numeric value.
+    #[must_use]
     pub const fn get(self) -> u8 {
         self.0
     }
 }
 
+impl TryFrom<u8> for ServiceCode {
+    type Error = CodeOutOfRange;
+
+    fn try_from(code: u8) -> Result<Self, Self::Error> {
+        Self::new(code).ok_or(CodeOutOfRange::Service(code))
+    }
+}
+
 impl core::fmt::Display for ServiceCode {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{:02}", self.0)
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(formatter, "{:02}", self.0)
     }
 }
 
 impl serde::Serialize for ServiceCode {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.0.serialize(serializer)
+        serializer.serialize_u8(self.0)
     }
 }
 
 impl<'de> serde::Deserialize<'de> for ServiceCode {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let n = u8::deserialize(deserializer)?;
-        ServiceCode::new(n).ok_or_else(|| serde::de::Error::custom("service code must be 0..=99"))
+        Self::try_from(u8::deserialize(deserializer)?).map_err(serde::de::Error::custom)
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Two-digit SNAP BI case code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CaseCode(u8);
 
-    #[test]
-    fn from_parts_builds_canonical_seven_digit_code() {
-        let sc = ServiceCode::new(5).unwrap();
-        let rc = ResponseCode::from_parts(404, sc, 11);
-        assert_eq!(rc.raw(), "4040511");
-        assert_eq!(rc.raw().len(), 7);
-        assert_eq!(rc.http().unwrap().as_u16(), 404);
-        assert_eq!(rc.service().unwrap().get(), 5);
-        assert_eq!(rc.case(), Some(11));
+impl CaseCode {
+    /// Canonical success case.
+    pub const ZERO: Self = Self(0);
+
+    /// Construct a case code.
+    #[must_use]
+    pub const fn new(code: u8) -> Option<Self> {
+        if code <= 99 { Some(Self(code)) } else { None }
     }
 
-    #[test]
-    #[should_panic(expected = "case code out of range")]
-    fn from_parts_panics_on_case_over_99() {
-        let sc = ServiceCode::new(5).unwrap();
-        // Would format as "100" and widen the wire code to 8 chars — rejected.
-        let _ = ResponseCode::from_parts(404, sc, 100);
+    /// Numeric value.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
     }
 
-    #[test]
-    #[should_panic(expected = "case code out of range")]
-    fn success_panics_on_sub_over_99() {
-        let sc = ServiceCode::new(0).unwrap();
-        let _ = ResponseCode::success(sc, 200);
+    pub(crate) const fn from_valid(code: u8) -> Self {
+        Self(code)
     }
+}
+
+impl TryFrom<u8> for CaseCode {
+    type Error = CodeOutOfRange;
+
+    fn try_from(code: u8) -> Result<Self, Self::Error> {
+        Self::new(code).ok_or(CodeOutOfRange::Case(code))
+    }
+}
+
+impl core::fmt::Display for CaseCode {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(formatter, "{:02}", self.0)
+    }
+}
+
+impl serde::Serialize for CaseCode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u8(self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for CaseCode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::try_from(u8::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+fn digits(hundreds: u8, tens: u8, ones: u8) -> u16 {
+    u16::from(hundreds - b'0') * 100 + u16::from(tens - b'0') * 10 + u16::from(ones - b'0')
 }
