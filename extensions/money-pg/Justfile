@@ -73,7 +73,25 @@ PG_MAJORS := "15 16 17 18"
 # Dockerfile does `COPY . .`, so `/work` holds this directory and nothing above it. A relative path
 # to `../../crates/money-core` does not exist in the image. Container-backed suites therefore need
 # kamu-money-core PUBLISHED -- see the note on `test-pg`.
-CORE_PATCH := '--config patch.crates-io.kamu-money-core.path="../../crates/money-core"'
+# THE INNER SINGLE QUOTES ARE LOAD-BEARING. `just` interpolates this verbatim and
+# the SHELL then word-splits the result, which strips bare double quotes -- cargo
+# would receive `path=../../crates/money-core`, an unquoted TOML value, and fail
+# with "invalid mantissa, expected digits" while trying to read `../..` as a
+# number. Wrapping the whole `--config` argument in single quotes is what gets the
+# double quotes through to cargo intact.
+#
+# This was caught by CI, not locally, because the mechanism had been verified by
+# running the raw `cargo --config '...'` by hand -- where the quoting came from the
+# interactive shell -- rather than by running the recipe that wraps it.
+#
+# AND IT GOES AFTER THE SUBCOMMAND, NOT BEFORE IT. `cargo --config X nextest run`
+# fails: nextest re-invokes `cargo metadata` as a CHILD PROCESS, and the outer
+# process's `--config` is not inherited, so the child cannot resolve
+# kamu-money-core. `cargo nextest run --config X` works, because nextest forwards
+# its own `--config` down. cargo accepts the flag in either position for its
+# built-in subcommands, so putting it after the subcommand is the one placement
+# that is correct everywhere -- measured for metadata, test, doc and nextest.
+CORE_PATCH := "--config 'patch.crates-io.kamu-money-core.path=\"../../crates/money-core\"'"
 
 # List the recipes. `just` with no argument should teach, not act.
 default:
@@ -338,7 +356,7 @@ fmt-check:
 # two crates are `kamu-money-core` in the main workspace, and `just clippy-money` up there owns them.
 [doc("Clippy the extension at the pedantry its crate root denies, pinned to one PG major.")]
 lint:
-    cargo {{ CORE_PATCH }} clippy -p kamu-money-pg --no-default-features --features pg18 --all-targets -- -D warnings
+    cargo clippy {{ CORE_PATCH }} -p kamu-money-pg --no-default-features --features pg18 --all-targets -- -D warnings
 
 # Populate the in-repo PGRX_HOME so kamu-money-pg can be compile-checked without a container.
 #
@@ -377,7 +395,7 @@ pgrx-init pg_config="/usr/bin/pg_config":
 #      cast passed this recipe and failed the matrix. Cross-major differences need `test-pg`.
 [doc("Compile-check kamu-money-pg locally against one major (no container, no tests).")]
 check-pg pg="18":
-    cargo {{ CORE_PATCH }} check -p kamu-money-pg --no-default-features --features pg{{ pg }} --all-targets
+    cargo check {{ CORE_PATCH }} -p kamu-money-pg --no-default-features --features pg{{ pg }} --all-targets
 
 # The normalized fingerprint of the SQL surface `kamu-money-pg` generates. THE ORACLE FOR A
 # REFACTOR of that crate: pass the hash from before the change as `expect` and the recipe fails
@@ -412,8 +430,8 @@ schema-hash pg="18" expect="" features="":
 # the pairing is what keeps that true if one is ever added.
 [doc("Repository-hygiene guards: sixteen facts about the tree that no compiler checks.")]
 test-hygiene:
-    cargo {{ CORE_PATCH }} nextest run -p kamu-money-pg-hygiene
-    cargo {{ CORE_PATCH }} test -p kamu-money-pg-hygiene --doc
+    cargo nextest run {{ CORE_PATCH }} -p kamu-money-pg-hygiene
+    cargo test {{ CORE_PATCH }} -p kamu-money-pg-hygiene --doc
 
 # ONE MAJOR, NOT `--all-features`. The `pgN` features are mutually exclusive -- each selects a
 # different pgrx backend -- so `--all-features` does not compile here and never did. `doc-pg-all`
@@ -431,7 +449,7 @@ doc-pg:
     #!/usr/bin/env bash
     set -euo pipefail
     export RUSTDOCFLAGS="-D warnings"
-    cargo {{ CORE_PATCH }} doc -p kamu-money-pg --no-default-features --features pg18 --no-deps
+    cargo doc {{ CORE_PATCH }} -p kamu-money-pg --no-default-features --features pg18 --no-deps
 
 # The documentation build across every supported PostgreSQL major. Not in `gate-offline`: it is four
 # rustdoc runs of the same crate and only the feature-gated items differ between them.
@@ -442,7 +460,7 @@ doc-pg-all:
     export RUSTDOCFLAGS="-D warnings"
     for pg in 15 16 17 18; do
         echo "=== rustdoc kamu-money-pg pg${pg} ==="
-        cargo {{ CORE_PATCH }} doc -p kamu-money-pg --no-default-features --features "pg${pg}" --no-deps
+        cargo doc {{ CORE_PATCH }} -p kamu-money-pg --no-default-features --features "pg${pg}" --no-deps
     done
 
 # ---------------------------------------------------------------------------------------

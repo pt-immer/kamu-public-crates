@@ -725,7 +725,17 @@ jobs:
       # runner image already ships a PostgreSQL, but not its server headers, and
       # pgrx needs the headers.
       - name: Install PostgreSQL 18 server headers
+        # FROM PGDG, NOT UBUNTU'S ARCHIVE. The runner image ships PostgreSQL 16;
+        # `postgresql-18` is simply not a package it can see, and apt reports
+        # "Unable to locate package" rather than anything about versions. PGDG is
+        # also what a PostgreSQL extension should be built against — it is where
+        # the majors this crate contracts to support actually come from.
         run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends postgresql-18 postgresql-server-dev-18
       - uses: actions/cache@v4
@@ -754,7 +764,17 @@ jobs:
         with:
           workspaces: extensions/money-pg
       - name: Install PostgreSQL 18 server headers
+        # FROM PGDG, NOT UBUNTU'S ARCHIVE. The runner image ships PostgreSQL 16;
+        # `postgresql-18` is simply not a package it can see, and apt reports
+        # "Unable to locate package" rather than anything about versions. PGDG is
+        # also what a PostgreSQL extension should be built against — it is where
+        # the majors this crate contracts to support actually come from.
         run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list >/dev/null
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends postgresql-18 postgresql-server-dev-18
       - uses: actions/cache@v4
