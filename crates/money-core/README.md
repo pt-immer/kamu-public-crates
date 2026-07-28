@@ -8,7 +8,9 @@
 [![MSRV][badge-msrv]][link-msrv]
 
 Exact monetary arithmetic: `i128` at a fixed scale of 18, with compile-time
-currency identity and a residue that cannot be silently dropped.
+currency identity. Division withholds its quotient until the caller explicitly
+takes or discards the residue; a taken residue normally panics if abandoned,
+except while the thread is already unwinding.
 
 Part of the [`kamu-public-crates`](https://github.com/pt-immer/kamu-public-crates) workspace.
 

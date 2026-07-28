@@ -128,12 +128,20 @@ fn kmoney_from_mixed(value: kmoney_mixed, expected: &str) -> kmoney {
     if value.code() != want.numeric() {
         error!("kmoney: expected {}, found {}", want.alpha3(), describe(value.code()));
     }
+    if !kamu_money_core::domain::in_domain(value.units()) {
+        error!(
+            "kmoney: stored {} value is outside the domain |units| <= 10^36 - 1 \
+             and cannot be converted from kmoney_mixed",
+            want.alpha3()
+        );
+    }
     kmoney::new(value.units(), value.code())
 }
 
 #[cfg(any(test, feature = "pg_test"))]
 #[pg_schema]
 mod tests {
+    use super::{kmoney_from_mixed, kmoney_mixed};
     use pgrx::prelude::*;
 
     /// A mixed column has currency-aware equality as a PREDICATE, and STILL cannot be summed —
@@ -205,5 +213,12 @@ mod tests {
     #[pg_test(error = "kmoney: expected USD, found IDR")]
     fn the_conversion_out_of_mixed_refuses_the_wrong_currency() {
         Spi::get_one::<String>("SELECT kmoney_from_mixed('IDR 2.50'::kmoney_mixed, 'USD')::text").ok();
+    }
+
+    #[pg_test(
+        error = "kmoney: stored USD value is outside the domain |units| <= 10^36 - 1 and cannot be converted from kmoney_mixed"
+    )]
+    fn the_conversion_out_of_mixed_refuses_corrupt_units() {
+        kmoney_from_mixed(kmoney_mixed::new(kamu_money_core::DOMAIN_MAX + 1, 840), "USD");
     }
 }

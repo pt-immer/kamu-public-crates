@@ -18,7 +18,7 @@
     // font licences rustdoc bundles — six markdownlint errors in generated files
     // nobody wrote. Unlike typos, markdownlint-cli2 does not honour .gitignore.
     "**/target/**",
-    "node_modules/**",
+    "**/node_modules/**",
     ".tools/**",
     // Git-ignored agent session buffers (remember-hook runtime files).
     ".remember/**",

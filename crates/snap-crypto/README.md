@@ -77,7 +77,9 @@ verifier.verify(&headers, body)?;
 ## Security guarantees
 
 - `#![forbid(unsafe_code)]`. No `unsafe` block anywhere in this crate.
-- **Constant-time verification**: HMAC uses `hmac::Mac::verify_slice`; RSA uses `rsa::signature::Verifier::verify`. Both are constant-time per upstream guarantees.
+- **Constant-time HMAC verification**: HMAC uses `hmac::Mac::verify_slice`.
+  The RSA backend has a documented upstream timing advisory; see the repository
+  dependency policy for its scope and mitigation.
 - **PKCS#8 enforcement**: PKCS#1 PEMs are rejected by upstream parsers. Convert with `openssl pkcs8 -topk8 -nocrypt -in pkcs1.pem -out pkcs8.pem`.
 - **No HTTP framework coupling**: leaf crate. `wasm32-unknown-unknown` compiles require the consumer to enable `getrandom/js` (pulled in via `rsa`).
 

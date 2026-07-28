@@ -11,7 +11,7 @@ A Cargo workspace of small, focused Rust crates — libraries and CLI apps — p
 | ------------------------------------ | --------------------------------------------------------------------------- | --------- |
 | [`kamu-iso3166`](crates/iso3166)     | Zero-allocation, `no_std` ISO 3166-1 / 3166-2 country & subdivision primitives | [![v](https://img.shields.io/crates/v/kamu-iso3166.svg)](https://crates.io/crates/kamu-iso3166) |
 | [`kamu-logging`](crates/logging)     | Structured logging over the `tracing` ecosystem: systemd/journald, Cloudflare-Worker `wasm32`, `actix-web` spans, OpenTelemetry/OTLP | [![v](https://img.shields.io/crates/v/kamu-logging.svg)](https://crates.io/crates/kamu-logging) |
-| [`kamu-money-core`](crates/money-core) | Exact monetary arithmetic: `i128` at a fixed scale of 18, compile-time currency identity, a residue that cannot be silently dropped | [![v](https://img.shields.io/crates/v/kamu-money-core.svg)](https://crates.io/crates/kamu-money-core) |
+| [`kamu-money-core`](crates/money-core) | Exact monetary arithmetic: fixed-scale `i128`, compile-time currency identity, and explicit residue decisions | [![v](https://img.shields.io/crates/v/kamu-money-core.svg)](https://crates.io/crates/kamu-money-core) |
 | [`kamu-snap-crypto`](crates/snap-crypto) | Bank Indonesia SNAP BI cryptography: HMAC/RSA primitives, signing recipes, webhook verifier (framework-free leaf) | [![v](https://img.shields.io/crates/v/kamu-snap-crypto.svg)](https://crates.io/crates/kamu-snap-crypto) |
 | [`kamu-snap-response`](crates/snap-response) | SNAP BI response envelope + 61-variant error taxonomy (framework-free leaf) | [![v](https://img.shields.io/crates/v/kamu-snap-response.svg)](https://crates.io/crates/kamu-snap-response) |
 | [`kamu-snap-crypto-actix`](crates/snap-crypto-actix) | actix-web inbound-verify helper for `kamu-snap-crypto` | [![v](https://img.shields.io/crates/v/kamu-snap-crypto-actix.svg)](https://crates.io/crates/kamu-snap-crypto-actix) |
@@ -54,9 +54,9 @@ Common tasks are wrapped in a [`Justfile`](Justfile):
 
 ```sh
 just            # list recipes
-just gate       # complete CI-equivalent barrier — run before pushing
+just gate       # published-crate local barrier — run before pushing
 just check-all  # fast inner loop: fmt + clippy + test
-just ci         # gate + publish dry-run (the full pipeline)
+just ci         # Docker-free gate + metadata-derived publish dry-runs
 just test-all   # workspace tests + every crate's feature permutations
 just cov-all    # coverage gates for every gated crate
 just lint-all   # rustfmt + clippy + Markdown + TOML + spelling

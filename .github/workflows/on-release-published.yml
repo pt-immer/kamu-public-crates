@@ -27,11 +27,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Parse release tag -> crate + version
         id: parse
@@ -100,6 +101,17 @@ jobs:
             exit 1
           fi
 
+      - name: Verify the tag commit is on main
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          git fetch --no-tags origin main
+          tag_commit="$(git rev-parse "${TAG}^{commit}")"
+          if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
+            echo "::error::release tag '$TAG' points to $tag_commit, which is not an ancestor of origin/main"
+            exit 1
+          fi
+
       - name: Stop before crates.io for a crate that cannot be published
         if: ${{ steps.parse.outputs.publishable == 'false' }}
         env:
@@ -115,15 +127,7 @@ jobs:
         env:
           CRATE: ${{ steps.parse.outputs.crate }}
           VERSION: ${{ steps.parse.outputs.version }}
-        run: |
-          code="$(curl -fsS -o /dev/null -w '%{http_code}' \
-            -H 'User-Agent: kamu-public-crates-release (https://github.com/pt-immer/kamu-public-crates)' \
-            "https://crates.io/api/v1/crates/${CRATE}/${VERSION}" || true)"
-          if [ "$code" = "200" ]; then
-            echo "::error::${CRATE} ${VERSION} is already published on crates.io — bump the crate version before tagging."
-            exit 1
-          fi
-          echo "crates.io pre-check: ${CRATE} ${VERSION} is not yet published (HTTP ${code}). Proceeding."
+        run: python3 scripts/crates_io.py ensure-absent "$CRATE" "$VERSION"
 
       - name: Verify in-workspace kamu-snap-* deps are already published
         # Skipped for a crate that cannot be published; the step above says why.
@@ -136,18 +140,14 @@ jobs:
           # optional ones — are not yet on crates.io. Fail fast with a clear
           # message instead of cargo's opaque "no matching package" error.
           deps="$(cargo metadata --no-deps --format-version 1 \
-            | python3 -c "import json,sys,os; m=json.load(sys.stdin); p=next(x for x in m['packages'] if x['name']==os.environ['CRATE']); print('\n'.join(sorted({d['name'] for d in p['dependencies'] if d['name'].startswith('kamu-snap-')})))")"
+            | python3 -c "import json,sys,os; m=json.load(sys.stdin); p=next(x for x in m['packages'] if x['name']==os.environ['CRATE']); print('\n'.join(f'{d[\"name\"]}\t{d[\"req\"]}' for d in sorted(p['dependencies'], key=lambda d: d['name']) if d['name'].startswith('kamu-snap-')))")"
           if [ -z "$deps" ]; then echo "no in-workspace kamu-snap-* deps."; exit 0; fi
-          for d in $deps; do
-            code="$(curl -fsS -o /dev/null -w '%{http_code}' \
-              -H 'User-Agent: kamu-public-crates-release (https://github.com/pt-immer/kamu-public-crates)' \
-              "https://crates.io/api/v1/crates/${d}" || true)"
-            if [ "$code" != "200" ]; then
-              echo "::error::dependency '${d}' is not on crates.io yet (HTTP ${code}) — publish it before ${CRATE}. Order: kamu-snap-crypto -> kamu-snap-response -> adapters."
+          while IFS=$'\t' read -r dependency requirement; do
+            if ! python3 scripts/crates_io.py require "$dependency" "$requirement"; then
+              echo "::error::dependency '${dependency}' has no published version satisfying '${requirement}' — publish it before ${CRATE}. Order: kamu-snap-crypto -> kamu-snap-response -> adapters."
               exit 1
             fi
-            echo "dep present: ${d}"
-          done
+          done <<< "$deps"
 
       - name: Publish (dry-run, then for real)
         # Skipped for a crate that cannot be published; the step above says why.

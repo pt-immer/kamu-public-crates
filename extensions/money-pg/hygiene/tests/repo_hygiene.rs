@@ -61,6 +61,22 @@ fn repository_top() -> PathBuf {
     top
 }
 
+/// Docker builds use the lane root as their context. Host pgrx state must never
+/// shadow the pgrx home initialized inside the image, and build output must not
+/// turn a source context into a multi-gigabyte transfer.
+#[test]
+fn the_docker_context_excludes_host_build_state() {
+    let root = repo_root();
+    let ignore =
+        std::fs::read_to_string(root.join(".dockerignore")).expect("the lane has a readable .dockerignore");
+    let patterns: Vec<_> =
+        ignore.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with('#')).collect();
+
+    for required in [".pgrx", "target", "kamu-money-pg/yb/out"] {
+        assert!(patterns.contains(&required), ".dockerignore must exclude {required:?}; found {patterns:?}");
+    }
+}
+
 /// Every workspace member's `Cargo.toml` declares `license = "MIT"`, and for a long time the
 /// repository contained no licence text at all. A licence field without a licence is a claim,
 /// not a grant.
@@ -518,7 +534,7 @@ fn no_tracked_file_teaches_just_name_value_arguments() {
 /// Every `#[pg_test]` in `kamu-money-pg` is accounted for by the portable case suite.
 ///
 /// **This is the guard that stops a skip from being counted as a pass.** `cargo pgrx test` manages
-/// its own PostgreSQL and cannot be aimed at YugabyteDB, so the 54 tests that encode this type's
+/// its own PostgreSQL and cannot be aimed at YugabyteDB, so the 65 tests that encode this type's
 /// contract were restated as `sql/` + `expected/` pairs in `kamu-money-pg/tests/pg_regress`, which
 /// run against any live server. The risk in a port is not that a case fails — a failing case is
 /// loud. It is that a case is quietly never written, and the suite reports green over a hole.
@@ -711,7 +727,7 @@ fn the_case_suite_accounts_for_every_pg_test() {
 /// `gate-pg` next to a red `just doc-pg` — two rustdoc link errors that would have broken
 /// the docs.rs build of a crate the gate had just called releasable.
 #[test]
-fn the_gates_include_the_documentation_build() {
+fn the_host_gates_include_docs_and_dependency_audit() {
     let root = repo_root();
     let justfile = std::fs::read_to_string(root.join("Justfile")).expect("Justfile is readable");
 
@@ -724,6 +740,11 @@ fn the_gates_include_the_documentation_build() {
             line.contains("doc-pg"),
             "`{gate}` must depend on `doc-pg`; a check nobody runs is a check that does not \
              exist: {line}"
+        );
+        assert!(
+            line.split_whitespace().any(|word| word == "deny"),
+            "`{gate}` must depend on the lane's `deny` recipe; the root audit cannot see this \
+             excluded dependency graph: {line}"
         );
     }
 

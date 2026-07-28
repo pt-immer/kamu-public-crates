@@ -437,9 +437,17 @@ build-wasm:
 build-wasm-snap:
     cargo check -p kamu-snap-response --no-default-features --target wasm32-unknown-unknown
 
-# Type-check the Cloudflare Worker example (a cdylib excluded from the workspace)
+# Build the standalone Cloudflare Worker with both lockfiles.
 check-worker-example:
     cargo check --manifest-path crates/logging/examples/cloudflare-worker/Cargo.toml --target wasm32-unknown-unknown
+    npm --prefix crates/logging/examples/cloudflare-worker ci --no-fund --no-audit
+    npm --prefix crates/logging/examples/cloudflare-worker run build
+
+# Test fail-closed CI classification, registry probing, and standalone-package
+# ownership; then prove every tracked path is classified.
+test-repo-policy:
+    python3 -m unittest discover -s scripts -p 'test_*.py'
+    python3 scripts/ci_paths.py check-tracked
 
 # ---------------------------------------------------------------------------
 # Publish / vendored data / housekeeping
@@ -447,21 +455,20 @@ check-worker-example:
 
 # Dry-run publish a single crate, e.g. `just publish-dry kamu-iso3166`
 publish-dry crate:
-    cargo publish -p {{ crate }} --dry-run
+    cargo publish -p {{ crate }} --dry-run --allow-dirty
 
-# Dry-run publish the crates that can be packaged standalone: iso3166, logging,
-# and kamu-snap-crypto are leaves (every dep is already on crates.io).
-# kamu-snap-response and the 4 snap adapter crates CANNOT be dry-run until their
-# in-workspace base crate is published — cargo's package step requires every
-# declared dependency (even an OPTIONAL one) to resolve on crates.io, and
-# --no-verify does NOT skip that check ("no matching package named
-# kamu-snap-crypto found"). They are covered by `just check-all`
-# (workspace build/clippy/test/doc) and published in dependency order
-# (crypto -> response -> adapters) via on-release-published.yml.
+# Dry-run every publishable package reported by Cargo metadata. A new member
+# enters this loop automatically; `publish = false` packages stay out.
 publish-all:
-    cargo publish -p kamu-iso3166 --dry-run
-    cargo publish -p kamu-logging --dry-run
-    cargo publish -p kamu-snap-crypto --dry-run
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mapfile -t crates < <(cargo metadata --no-deps --format-version 1 | python3 -c \
+      'import json,sys; print("\n".join(p["name"] for p in json.load(sys.stdin)["packages"] if p["publish"] != []))')
+    [ "${#crates[@]}" -gt 0 ] || { echo "publish-all: metadata returned no publishable packages" >&2; exit 1; }
+    for crate in "${crates[@]}"; do
+      echo "publish-all: $crate"
+      cargo publish -p "$crate" --dry-run --allow-dirty
+    done
 
 # Initialize the vendored ISO 3166 data submodule
 submodules:
@@ -475,27 +482,28 @@ clean:
 # Aggregates
 # ---------------------------------------------------------------------------
 
-# THE GATE — the complete, CI-equivalent barrier: a green gate means CI passes.
-# Runs every check CI runs (lint-all + test-all + MSRV 1.94 + cov-all + doc +
-# cross builds + deny) as compact PASS/FAIL lines; full output for failed stages,
+# Published-crate local gate. Runs lint, tests, MSRV, coverage, docs, cross
+# builds, the standalone Worker, repository policy, and the root dependency
+# audit as compact PASS/FAIL lines; full output for failed stages,
 # or everything with `VERBOSE=1 just gate`. There is NO silent skip: a missing
 # tool or target (taplo, typos, markdownlint, cargo-llvm-cov, the 1.94 toolchain,
 # the wasm32 / thumbv7em targets) makes its stage FAIL loudly — run `just setup`
 # (and `rustup toolchain install 1.94`) first. `just check-all` is the fast loop.
-# Complete CI-equivalent barrier — a green gate means CI passes; run before push.
 gate:
     #!/usr/bin/env bash
     set -uo pipefail
-    names=("lint-all" "test-all" "test-money" "msrv(1.94)" "cov-all" "doc" "build-nostd" "build-wasm" "build-wasm-snap" "deny")
+    names=("lint-all" "test-all" "test-money" "test-repo-policy" "msrv(1.94)" "cov-all" "doc" "build-nostd" "build-wasm" "build-wasm-snap" "check-worker-example" "deny")
     cmds=("just lint-all"
           "just test-all"
           "just test-money"
+          "just test-repo-policy"
           "cargo +1.94 nextest run --workspace -E 'not binary(compile_fail)' && cargo +1.94 test --workspace --doc --quiet"
           "just cov-all"
           "just doc"
           "just build-nostd"
           "just build-wasm"
           "just build-wasm-snap"
+          "just check-worker-example"
           "just deny")
     declare -a rcs outs
     fail=0
@@ -512,8 +520,7 @@ gate:
     # build the PostgreSQL extension lane -- that needs Docker and takes hours, and a gate nobody
     # can afford to run before a push is a gate that stops being run. But a green PASS beside
     # uncommitted extension changes reads as "all clear" unless it says otherwise, so it says so.
-    if ! git diff --quiet HEAD -- extensions/money-pg 2>/dev/null || \
-       ! git diff --quiet -- extensions/money-pg 2>/dev/null; then
+    if [ -n "$(git status --porcelain --untracked-files=all -- extensions/money-pg)" ]; then
       echo
       echo "  NOTE  extensions/money-pg has changes this gate did NOT cover."
       echo "        Run 'just gate-all' before pushing them."
@@ -539,7 +546,7 @@ gate-pg:
 # that touches extensions/money-pg.
 gate-all: gate gate-pg
 
-# The full pipeline: everything the gate runs, plus a publish dry-run.
+# Local published-crate gate plus metadata-derived publish dry-runs.
 ci: gate publish-all
 
 # ---------------------------------------------------------------------------

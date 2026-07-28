@@ -23,8 +23,9 @@ publishing small, focused Rust crates — libraries and CLI apps — to crates.i
   ecosystem: systemd/journald, Cloudflare-Worker `wasm32` (via `tracing-web`),
   `actix-web` request spans, and OpenTelemetry/OTLP export (`with-otlp`).
 - **`kamu-money-core`** (`crates/money-core`) — exact monetary arithmetic:
-  `i128` at a fixed scale of 18, compile-time currency identity, and a residue
-  that cannot be silently dropped. Its ISO 4217 register is **generated at
+  `i128` at a fixed scale of 18, compile-time currency identity, and an explicit
+  residue decision before division releases its quotient. A taken residue's
+  runtime backstop is suppressed during an existing unwind. Its ISO 4217 register is **generated at
   build time** from a vendored XML list, the same way `kamu-iso3166` builds its
   tables. The `postgres` / `sqlx` adapters live in the crate itself because
   `impl ToSql` for its type from elsewhere is `E0117`.
@@ -126,17 +127,18 @@ just            # list recipes
 just setup      # submodules + cross targets + install missing tools
 just doctor     # verify toolchain & tooling are present
 just check-all  # FAST inner loop: fmt + clippy + test → compact PASS/FAIL
-just gate       # THE GATE — complete CI-equivalent barrier; run before pushing
-just ci         # gate + publish dry-run (the full pipeline)
+just gate       # published-crate local barrier; run before pushing
+just ci         # Docker-free gate + metadata-derived publish dry-runs
 just pg <recipe>  # run a recipe in the excluded extension lane (`just pg` lists them)
 just gate-pg    # the lane's gate — hours, and needs Docker
 just gate-all   # gate + gate-pg; the pre-push barrier for a lane change
 ```
 
-Run `just gate` before pushing — a **green gate means CI will pass**. It runs
-every check CI runs (`lint-all` + `test-all` + MSRV 1.94 + `cov-all` + `doc` +
-cross builds + `deny`) as compact PASS/FAIL, and there is **no silent skip**: a
-missing tool or target (`taplo`, `typos`, `markdownlint-cli2`, `cargo-llvm-cov`,
+Run `just gate` before pushing. It covers published-crate lint, Docker-free
+tests, MSRV 1.94, coverage, docs, cross builds, the standalone Worker,
+repository policy, and the root dependency audit as compact PASS/FAIL. CI also
+runs Docker-backed database tests and package dry-runs. There is **no silent
+skip**: a missing tool or target (`taplo`, `typos`, `markdownlint-cli2`, `cargo-llvm-cov`,
 `cargo-nextest`, the 1.94 toolchain, the `wasm32` / `thumbv7em` targets) makes
 its stage FAIL loudly — run `just setup` and `rustup toolchain install 1.94`
 first. The granular recipes still exist and CI runs them directly:
@@ -190,23 +192,19 @@ Cadence expectations:
 
 ## Continuous integration
 
-- **CI is path-filtered per crate** (`on-pr-synced.yml`, on `pull_request` **and**
-  `push: [main]`). A `changes` job (`dorny/paths-filter`) classifies the diff into
-  `iso3166` / `logging` / `snap` / `shared` / `docs`; every heavy job carries an
-  `if:` so a logging-only change skips the iso3166 jobs (and vice versa), a
-  root-level `*.md`-only change runs just `lint-docs` (a crate's own `*.md` change
-  also runs that crate's jobs — its README is packaged on publish), and any
-  shared/root/workflow change runs **everything**. The filters use **no `!`
-  negation rules** — under paths-filter's default `predicate-quantifier: some` a
-  negated rule matches every non-excluded file, which silently makes a filter
-  `true` for unrelated changes. `snap` is one umbrella flag for all 6 snap crates (they
-  inter-depend, so a base-crate change must re-test dependents); per-crate signal
-  comes from the separate coverage / publish-dry-run jobs, not the filter.
-  Job-level `if:` only — never a workflow-level `paths:` filter (that would strand
-  required checks as pending).
+- **CI is path-classified per crate** (`on-pr-synced.yml`, on `pull_request`
+  **and** `push: [main]`). `scripts/ci_paths.py` owns every repository surface
+  and fails the `changes` job when a path has no class; `just test-repo-policy`
+  also proves every tracked path remains covered. Heavy jobs use those outputs,
+  so a logging-only change skips ISO jobs, a root Markdown-only change runs
+  policy and docs lint, and shared build/workflow changes run everything.
+  `snap` remains one umbrella because the six crates inter-depend. Shell
+  ownership follows changed `*.sh` paths, not an assumed directory. Use
+  job-level `if:` only — a workflow-level `paths:` filter can strand required
+  checks as pending.
 - **One required check: `ci-success`** (scatter → gather → and-gate). It always
   runs and uses `re-actors/alls-green` over `needs.*` — pass when every job
-  succeeded or was a path-filtered skip, fail on any `failure`/`cancelled` (a
+  succeeded or was a path-classified skip, fail on any `failure`/`cancelled` (a
   cascade-skip can't hide a failure: the failing job is itself a `need`). The
   `main` branch **ruleset requires only `ci-success`**, so jobs can be added,
   renamed, or split without touching branch protection — just keep the gate's
@@ -227,20 +225,23 @@ Cadence expectations:
   parses `outputs.money-pg` as `outputs.money` *minus* `pg`. The YAML still
   validates and the condition still evaluates — against something nobody
   intended. Job *IDs* may contain hyphens; outputs and env names may not.
-- **CI calls `just`** — every job runs `just <recipe>` (the granular recipes the
-  aggregates compose), so the Justfile is the single source of truth for
-  build/lint/test/coverage commands and `just <recipe>` reproduces any CI job
-  locally. Job **names** are unchanged, so the `ci-success` gate is unaffected.
-  This includes `cargo-deny`: the deny job installs cargo-deny via
+- **CI calls `just` for build, lint, test, coverage, docs, and dependency
+  audits.** Small orchestration jobs call the checked-in classifier or registry
+  client directly. The Justfile remains the single source of truth for
+  developer-facing checks. This includes `cargo-deny`: the root deny job installs cargo-deny via
   `taiki-e/install-action` and runs `just deny` (`cargo deny --all-features
   check`), so CI and local run the byte-identical invocation. It replaced
   `EmbarkStudios/cargo-deny-action`, whose floating `@v2` tag drifted to a
   cargo-deny release its entrypoint invokes incorrectly (`error: unrecognized
   subcommand 'warn'`) — and since `github-actions` is a Dependabot ecosystem, any
   pin would just be bumped back to the broken tag.
+- **Third-party actions use full commit IDs.** Keep the readable release label
+  in a trailing comment, and update the commit plus comment together.
 - **Release CI** (`on-release-published.yml`) parses the `<crate>-vX.Y.Z` tag,
-  verifies the manifest version, **refuses to re-publish a version already on
-  crates.io**, and serializes per tag before publishing that single crate.
+  verifies the manifest version and main ancestry, **refuses to re-publish a
+  version already on crates.io**, checks dependency requirements against
+  non-yanked sparse-index versions, and serializes per tag before publishing
+  that single crate.
 
 ## Commits & releases
 

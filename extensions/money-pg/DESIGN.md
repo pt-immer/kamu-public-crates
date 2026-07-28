@@ -2,7 +2,8 @@
 
 **Status:** `kmoney` as a native PostgreSQL type (C8), green on PostgreSQL 15–18, native and
 byte-exact on YugabyteDB (E16). Open items in §6.
-**Toolchain:** edition 2024, MSRV 1.97 — pgrx 0.19.1 requires 1.96.
+**Toolchain:** edition 2024, Rust 1.97 — one version above pgrx 0.19.1's
+minimum and the lane's tested floor.
 
 > **Scope.** The workspace layout (§3), the test contract (§4) and the open items (§6). The
 > classification, evidence base, contracts and rejected alternatives describe the money scalar and

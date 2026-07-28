@@ -7,7 +7,7 @@ extend-exclude = [
   # whose SHA-256 crates/money-core/VENDORED.md records.
   "crates/money-core/vendor/**",
   "target/**",
-  "node_modules/**",
+  "**/node_modules/**",
   ".tools/**",
   "Cargo.lock",
   "package-lock.json",

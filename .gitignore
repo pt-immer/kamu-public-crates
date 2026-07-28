@@ -1,5 +1,7 @@
 target/
 **/*.rs.bk
+__pycache__/
+*.py[cod]
 *.swp
 .idea/
 .vscode/
@@ -8,6 +10,7 @@ target/
 # Repo-local dev tooling (populated by `just setup`).
 /.tools/
 /node_modules/
+**/node_modules/
 
 # Coverage output.
 /lcov.info
@@ -15,8 +18,4 @@ target/
 # graphify knowledge-graph artifacts (machine-local interpreter paths + cost tracker).
 /graphify-out/
 
-# Regenerated lockfile for the standalone (workspace-excluded) Cloudflare Worker example.
-/crates/logging/examples/cloudflare-worker/Cargo.lock
-
-# Cargo.lock IS committed at the workspace root for reproducible CI.
-# package-lock.json IS committed so doc-lint tooling is reproducible.
+# Cargo and npm lockfiles are committed at every workspace/application root.

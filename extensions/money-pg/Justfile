@@ -358,6 +358,10 @@ fmt-check:
 lint:
     cargo clippy {{ CORE_PATCH }} -p kamu-money-pg --no-default-features --features pg18 --all-targets -- -D warnings
 
+[doc("Audit the lane lockfile, allowing only the pinned public pgrx fork.")]
+deny:
+    python3 scripts/deny.py
+
 # Populate the in-repo PGRX_HOME so kamu-money-pg can be compile-checked without a container.
 #
 # `.cargo/config.toml` already points PGRX_HOME at `.pgrx/` for every cargo invocation, on
@@ -951,8 +955,8 @@ test-pg-all: test-yb test-pg test-pg-driver test-yb-driver
 # green `gate-pg` sitting next to a red `just doc-pg` -- two rustdoc link errors that would
 # have broken the doc-pg.rs build of a crate this gate had just declared releasable. A check
 # nobody runs is a check that does not exist.
-[doc("The gate for a change that touches no database: format, lint, shell, doc-pg, offline tests.")]
-gate-offline: fmt-check lint doc-pg test-hygiene test-regress-selftest artifact-selftest workspace-lock-selftest numa-selftest
+[doc("The gate for a change that touches no database: format, lint, audit, docs, and offline tests.")]
+gate-offline: fmt-check lint deny doc-pg test-hygiene test-regress-selftest artifact-selftest workspace-lock-selftest numa-selftest
 
 # Format, lint, doc-pg, and every suite reachable WITHOUT a from-source YugabyteDB build.
 # Expensive already: four extension builds plus a ~1.6GB image pull.
@@ -963,8 +967,8 @@ gate-offline: fmt-check lint doc-pg test-hygiene test-regress-selftest artifact-
 # YB, not the native extension. The native path is proven by `yb-ab`, which is kept out of
 # this recipe because it compiles the extension from source inside the YB image. Claiming
 # "every engine" here while that sat outside was the same overclaim one level down.
-[doc("Format, lint, shell, doc-pg, and every suite reachable without a from-source YugabyteDB build.")]
-gate-pg: fmt-check lint doc-pg yb-image-selftest artifact-selftest workspace-lock-selftest numa-selftest test-pg-all
+[doc("Format, lint, audit, docs, and every suite reachable without a from-source YugabyteDB build.")]
+gate-pg: fmt-check lint deny doc-pg yb-image-selftest artifact-selftest workspace-lock-selftest numa-selftest test-pg-all
 
 # The RELEASE gate: `gate-pg` plus the native YugabyteDB completion gate. YugabyteDB is a
 # first-class target, so a revision that has not run these has NOT been shown to work on
@@ -1190,4 +1194,3 @@ containers:
     echo
     echo "remove them with: docker rm -f \$(docker ps -aq --filter 'label=kamu-money-pg.revision')"
     exit 1
-

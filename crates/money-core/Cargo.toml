@@ -1,7 +1,7 @@
 [package]
 name = "kamu-money-core"
 version = "0.1.0"
-description = "Exact monetary arithmetic: i128 at a fixed scale of 18, with compile-time currency identity and a residue that cannot be silently dropped"
+description = "Exact monetary arithmetic: fixed-scale i128, compile-time currencies, and explicit residue decisions"
 documentation = "https://docs.rs/kamu-money-core"
 categories = ["data-structures", "finance"]
 keywords = ["currency", "decimal", "fixed-point", "money", "postgres"]

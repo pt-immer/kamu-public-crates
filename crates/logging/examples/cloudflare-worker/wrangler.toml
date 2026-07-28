@@ -3,7 +3,9 @@ main = "build/index.js"
 name = "kamu-logging-cloudflare-worker-example"
 
 [build]
-command = "cargo install worker-build@^0.8 && worker-build --release"
+# The default recovery transform currently requires an externref table that this
+# worker does not emit. Keep full packaging coverage without that transform.
+command = "cargo install worker-build --version 0.8.5 --locked && worker-build --release --no-panic-recovery"
 
 [observability]
 enabled = true

@@ -19,8 +19,8 @@ so the submodule must be initialized before building it.
 Run the same checks CI does:
 
 ```sh
-just gate        # complete CI-equivalent barrier — a green gate means CI passes
-just ci          # gate + publish dry-run (the full pipeline)
+just gate        # published-crate local barrier; CI adds Docker/package checks
+just ci          # Docker-free gate + metadata-derived publish dry-runs
 ```
 
 `just check-all` is the fast inner-loop check (fmt + clippy + test only) — handy

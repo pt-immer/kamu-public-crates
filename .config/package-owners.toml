@@ -1,0 +1,5 @@
+[[standalone]]
+manifest = "crates/logging/examples/cloudflare-worker/Cargo.toml"
+gate_recipe = "check-worker-example"
+ci_job = "check-worker-example"
+dependabot_directories = ["/crates/logging/examples/cloudflare-worker"]

@@ -59,8 +59,9 @@ license = "MIT OR Apache-2.0"
 # produce correctly, so the answer is `false` at the root, not a reviewer's memory.
 publish = false
 repository = "https://github.com/pt-immer/kamu-public-crates"
-# Higher than the main workspace's 1.94 -- pgrx 0.19.1 requires 1.96. Keeping the
-# lane separate is what lets the nine published crates stay at their own floor.
+# Higher than the main workspace's 1.94: pgrx 0.19.1 requires at least 1.96,
+# while this lane is developed and gated on 1.97. Keeping it separate lets the
+# nine published crates retain their own floor.
 rust-version = "1.97"
 
 # pgrx REQUIRES unwinding: it maps PostgreSQL's ereport/longjmp error handling

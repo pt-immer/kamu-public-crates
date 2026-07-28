@@ -9,7 +9,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 kamu-logging = { path = "../..", default-features = false, features = ["wasm32"] }
-worker = "0.8"
+worker = "=0.8.5"
 
 [profile.release]
 codegen-units = 1

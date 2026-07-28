@@ -1,7 +1,7 @@
 # Case-suite coverage of the `#[pg_test]` contract
 
 This file is the manifest mapping every `#[pg_test]` in `kamu-money-pg` to the SQL case that
-restates it. It is **machine-checked**: `kamu-money-core/tests/repo_hygiene.rs`
+restates it. It is **machine-checked**: `hygiene/tests/repo_hygiene.rs`
 (`the_case_suite_accounts_for_every_pg_test`) parses **every `.rs` file under
 `kamu-money-pg/src/`** for `#[pg_test]` and `#[pg_test(...)]` attributes, reads the table below,
 and fails if a test is missing from it, if a named case file does not exist, or if the table names
@@ -18,7 +18,7 @@ asks for: *a skipped test that is silently counted as a pass is worse than an ab
 
 `cargo pgrx test` manages its own PostgreSQL and cannot be aimed at YugabyteDB. Until this suite,
 everything known about `kmoney` on YugabyteDB came from one ~112-line script
-(`kamu-money-pg/yb/abi_battery.sql`), while the 54 tests that actually encode this type's contract
+(`kamu-money-pg/yb/abi_battery.sql`), while the 65 tests that actually encode this type's contract
 had only ever run on PGDG PostgreSQL. Restating them as `sql/` + `expected/` pairs makes them run
 against any live server: a single YB node, any node of a YB cluster, or the stock-PG15 reference.
 
@@ -110,6 +110,7 @@ against any live server: a single YB node, any node of a YB cluster, or the stoc
 | 62 | `two_type_modifiers_are_refused` | `08-typmod` | ERROR, got 2 |
 | 63 | `typmod_does_not_reach_operators_so_the_value_check_still_fires` | `08-typmod` | ERROR, IDR + USD |
 | 64 | `the_planner_splits_the_sum_aggregate_and_both_plans_agree` | NOT-PORTABLE: it asserts a stock-PostgreSQL PLAN (`Partial Aggregate` + `Finalize Aggregate`), and YugabyteDB's planner need not choose the same shape — which is the whole reason `04-sum` drives the transition and combine functions by hand instead. Running on PG15–18 via `just test-pg` is the point: it catches a `CREATE AGGREGATE` declared so that partial aggregation is never available, which every hand-driven test passes straight through. | — |
+| 65 | `the_conversion_out_of_mixed_refuses_corrupt_units` | NOT-PORTABLE: SQL text and binary receive reject out-of-domain units before they can become a `kmoney_mixed`; this defense-in-depth test constructs the otherwise unreachable corrupt Rust value directly. | — |
 
 ## Running it
 
