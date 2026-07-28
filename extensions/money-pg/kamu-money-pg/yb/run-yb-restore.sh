@@ -47,7 +47,8 @@ source ./kamu-money-pg/yb/workspace-lock.sh
 workspace_lock "$(basename "$0")" || exit 1
 
 YB_IMAGE="${1:-$(./kamu-money-pg/yb/yb-image.sh)}"
-ART="${2:-${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}}"
+RUN_ROOT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}"
+ART="${2:-$RUN_ROOT}"
 
 # shellcheck source=kamu-money-pg/yb/install.sh
 source ./kamu-money-pg/yb/install.sh
@@ -56,7 +57,7 @@ RUN_ID="kmoney-restore-$$-$(od -An -N4 -tx4 /dev/urandom | tr -d ' \n')"
 SRC="$RUN_ID-src"
 DST="$RUN_ID-dst"
 BARE="$RUN_ID-bare"
-WORK="kamu-money-pg/yb/out/restore-$RUN_ID"
+WORK="$RUN_ROOT/restore-$RUN_ID"
 
 # Every container belongs to this script, by LABEL -- the daemon is shared across several
 # organisations' runners, so cleanup can never be scoped by name prefix or image. EXIT alone is

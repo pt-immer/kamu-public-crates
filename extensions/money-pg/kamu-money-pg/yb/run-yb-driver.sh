@@ -36,6 +36,8 @@ cd "$(dirname "$0")/../.."   # repo root
 # shellcheck source=kamu-money-pg/yb/workspace-lock.sh
 source "$(dirname "$0")/workspace-lock.sh"
 workspace_lock "$(basename "$0")" || exit 1
+# shellcheck source=scripts/docker-core-context.sh
+source ./scripts/docker-core-context.sh
 
 YB_TAG="${1:-}"
 PG_MAJOR="${2:-18}"
@@ -95,7 +97,8 @@ echo "=== building the client image (cargo + this workspace, PG${PG_MAJOR}) ==="
 # identity this build produced rather than a name someone else can repoint. A tag of its OWN,
 # never `kamu-money-pg:pg18`, which belongs to test-matrix.sh and carries a label `bench-pg` reads.
 IIDFILE="$(mktemp)"
-docker build -f kamu-money-pg/Dockerfile --build-arg "PG_MAJOR=${PG_MAJOR}" \
+docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
+    -f kamu-money-pg/Dockerfile --build-arg "PG_MAJOR=${PG_MAJOR}" \
     --label "${LABEL}" --iidfile "${IIDFILE}" -t "kamu-money-pg-ybdriver:pg${PG_MAJOR}" . >&2
 CLIENT_IMAGE="$(cat "${IIDFILE}")"
 rm -f "${IIDFILE}"; IIDFILE=""
@@ -114,7 +117,9 @@ docker run --rm --network "$NET" --label "${LABEL}" \
     # Tee and assert the COUNT. Every test returns early and PASSES when MONEY_PG_NATIVE_URL is
     # unset, so "cargo test succeeded" alone would let this print OK while proving nothing. The
     # url is set above, so a skip here means something unset it, and that must be loud.
-    cargo test -p kamu-money-core --features postgres,sqlx --test pg_native_column \
+    CORE_MANIFEST="$(./scripts/resolve-core-manifest.sh)"
+    cargo test --manifest-path "$CORE_MANIFEST" \
+        --features postgres,sqlx --test pg_native_column \
         -- --nocapture --test-threads=1 2>&1 | tee /tmp/yb-driver.out
 
     if ! grep -q "4 passed" /tmp/yb-driver.out; then

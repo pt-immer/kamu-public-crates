@@ -34,7 +34,8 @@ workspace_lock "$(basename "$0")" || exit 1
 
 MINUTES="${1:-3}"
 YB_IMAGE="${2:-$(./kamu-money-pg/yb/yb-image.sh)}"
-ART="${3:-kamu-money-pg/yb/out}"
+RUN_ROOT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}"
+ART="${3:-$RUN_ROOT}"
 WORKERS=6
 ACCOUNTS=12
 SEED_EACH="IDR 10000.00"
@@ -43,7 +44,7 @@ N=3
 # shellcheck source=kamu-money-pg/yb/cluster.sh
 source ./kamu-money-pg/yb/cluster.sh
 
-OUT="kamu-money-pg/yb/out/soak"
+OUT="$RUN_ROOT/soak"
 mkdir -p "$OUT"
 LOG="$OUT/soak.log"
 : > "$LOG"

@@ -1,16 +1,10 @@
 //! Comparison, stable hashing, and the arithmetic `kmoney` is allowed to have.
 //!
-//! Split out of `lib.rs` on 2026-07-27. The code is UNCHANGED -- this file is
-//! a relocation, verified by `just schema-hash`, which fingerprints the generated SQL surface
-//! with pgrx's non-reproducible ordering normalised away (E21).
-//!
 //! Ordering refuses cross-currency; `=`/`<>` stay total. The guards themselves
-//! (`same_currency`, `currency_or_error`, `describe`) stay in `lib.rs`: four modules use them,
-//! so the root is where they belong rather than any one of their callers.
+//! (`same_currency`, `currency_or_error`, `describe`) live in the safe parent module.
 
-use super::{currency_or_error, describe, kmoney, same_currency};
-use kamu_money_core::Iso4217;
-use kamu_money_core::arith::UnitSum;
+use super::{currency_or_error, describe, kmoney, same_currency, validated_or_error};
+use kamu_money_core::advanced::arithmetic::UnitSum;
 use pgrx::prelude::*;
 
 // COMPARISON AND HASHING -- PREDICATES, NOT AN INDEX SURFACE
@@ -51,7 +45,7 @@ use pgrx::prelude::*;
 #[negator(<>)]
 #[restrict(eqsel)]
 #[join(eqjoinsel)]
-const fn kmoney_eq(a: kmoney, b: kmoney) -> bool {
+fn kmoney_eq(a: kmoney, b: kmoney) -> bool {
     a.code() == b.code() && a.units() == b.units()
 }
 
@@ -61,7 +55,7 @@ const fn kmoney_eq(a: kmoney, b: kmoney) -> bool {
 #[negator(=)]
 #[restrict(neqsel)]
 #[join(neqjoinsel)]
-const fn kmoney_ne(a: kmoney, b: kmoney) -> bool {
+fn kmoney_ne(a: kmoney, b: kmoney) -> bool {
     !kmoney_eq(a, b)
 }
 
@@ -120,7 +114,8 @@ fn kmoney_ge(a: kmoney, b: kmoney) -> bool {
 ///
 /// THE ALGORITHM IS PART OF THE ON-DISK CONTRACT, which is why this does not use `Hash`. Rust's
 /// `Hasher::write_i128` emits native-endian bytes, so a big-endian replica would disagree, and
-/// `DefaultHasher` is documented as unstable across releases. [`kamu_money_core::stable_hash`]
+/// `DefaultHasher` is documented as unstable across releases.
+/// [`kamu_money_core::advanced::stable_hash`]
 /// specifies the algorithm (FNV-1a over the canonical little-endian payload, then `fmix64`),
 /// pins it with golden vectors checked against an independent implementation, and carries the
 /// version constant a change would have to bump. Going through `kamu-money-core` rather than
@@ -128,28 +123,11 @@ fn kmoney_ge(a: kmoney, b: kmoney) -> bool {
 /// stored value if only one of them defines what it means.
 #[pg_extern(immutable, parallel_safe, requires = ["kmoney_concrete"])]
 fn kmoney_hash(value: kmoney) -> i32 {
-    kamu_money_core::stable_hash::fold_to_i32(kamu_money_core::stable_hash::stable_hash(
-        value.code(),
-        value.units(),
+    let amount = validated_or_error(value.payload(), "kmoney");
+    kamu_money_core::advanced::stable_hash::fold_to_i32(kamu_money_core::advanced::stable_hash::stable_hash(
+        amount.currency().numeric(),
+        amount.units(),
     ))
-}
-
-/// A stored value that is ALREADY outside the domain is corruption, not an arithmetic outcome.
-///
-/// Every ingress validates (`kmoney_in`, `recv`, the typmod cast), so reaching this means a
-/// payload was written by something that bypassed them. It is reported separately from a result
-/// overflow because the two need different responses: one is "your sum is too big", the other is
-/// "this row is not money".
-///
-/// NOT `#[pg_extern]`: a plain Rust helper. It takes `Iso4217`, which has no SQL representation,
-/// so it must stay outside the operator attributes below.
-fn stored_in_domain_or_error(v: kmoney, currency: Iso4217, op: &str) {
-    if !kamu_money_core::domain::in_domain(v.units()) {
-        error!(
-            "kmoney: a stored {} value is outside the domain |units| <= 10^36 - 1 and cannot be used with {op}",
-            currency.alpha3()
-        );
-    }
 }
 
 #[pg_operator(immutable, parallel_safe, requires = ["kmoney_concrete"])]
@@ -164,9 +142,7 @@ fn kmoney_add(a: kmoney, b: kmoney) -> kmoney {
     // it enforces the precondition rather than assuming it. So the operands are checked here
     // first and reported separately: attributing a corrupt STORED value to "the result" names
     // the wrong thing and sends whoever reads it to audit the arithmetic instead of the row.
-    stored_in_domain_or_error(a, currency, "+");
-    stored_in_domain_or_error(b, currency, "+");
-    let Some(units) = kamu_money_core::arith::add_units(a.units(), b.units()) else {
+    let Some(units) = kamu_money_core::advanced::arithmetic::add_units(a.units(), b.units()) else {
         error!(
             "kmoney: the result of {0} + {0} is outside the domain |units| <= 10^36 - 1",
             currency.alpha3()
@@ -179,10 +155,7 @@ fn kmoney_add(a: kmoney, b: kmoney) -> kmoney {
 #[opname(-)]
 fn kmoney_sub(a: kmoney, b: kmoney) -> kmoney {
     let currency = same_currency(a, b, "-");
-    // Operands checked before the result, for the reason given on `kmoney_add`.
-    stored_in_domain_or_error(a, currency, "-");
-    stored_in_domain_or_error(b, currency, "-");
-    let Some(units) = kamu_money_core::arith::sub_units(a.units(), b.units()) else {
+    let Some(units) = kamu_money_core::advanced::arithmetic::sub_units(a.units(), b.units()) else {
         error!(
             "kmoney: the result of {0} - {0} is outside the domain |units| <= 10^36 - 1",
             currency.alpha3()
@@ -233,11 +206,12 @@ fn kmoney_sum(values: VariadicArray<kmoney>) -> Option<kmoney> {
 
     // `flatten()` drops SQL NULL elements, matching the old aggregate's NULL-skipping.
     for value in values.iter().flatten() {
+        let amount = validated_or_error(value.payload(), "kmoney_sum");
         match reference {
-            None => reference = Some(value.code()),
+            None => reference = Some(amount.currency().numeric()),
             // The fastest check available: a raw `u16` compare, before anything else runs.
-            Some(code) if code != value.code() => {
-                let (left, right) = (describe(code), describe(value.code()));
+            Some(code) if code != amount.currency().numeric() => {
+                let (left, right) = (describe(code), amount.currency().alpha3());
                 error!("kmoney: cannot sum {left} and {right}: different currencies");
             }
             Some(_) => {}
@@ -246,7 +220,7 @@ fn kmoney_sum(values: VariadicArray<kmoney>) -> Option<kmoney> {
         // the total, and its error names the offending value in `attempted_units`. A prefix
         // asserting the SUM overflowed while the number quoted is an input would contradict the
         // message it wraps -- so the prefix only says which function refused.
-        acc = acc.add_units(value.units()).unwrap_or_else(|e| error!("kmoney_sum: {e}"));
+        acc = acc.add_units(amount.units()).unwrap_or_else(|e| error!("kmoney_sum: {e}"));
     }
 
     // No non-NULL operand -> no currency -> NULL, never a currencyless zero.
@@ -363,7 +337,7 @@ mod tests {
     /// `10^36`, one past the domain top. The exact attempted value is in the message because
     /// `10^36` fits an `i128`; a sum too large even for `i128` would report a saturated bound.
     #[pg_test(
-        error = "kmoney_sum: money domain overflow: 1000000000000000000000000000000000000 units is outside the domain |units| <= 999999999999999999999999999999999999 (NUMERIC(36,18) admits |v| < 10^18)"
+        error = "kmoney_sum: 1000000000000000000000000000000000000 canonical units is outside the supported range -999999999999999999999999999999999999..=999999999999999999999999999999999999"
     )]
     fn kmoney_sum_rejects_a_total_that_leaves_the_domain() {
         Spi::get_one::<String>(

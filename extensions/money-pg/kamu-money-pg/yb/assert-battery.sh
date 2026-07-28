@@ -55,8 +55,8 @@ F%%%kmoney: cannot sum USD and IDR: different currencies%%%%%%refusal: cross-cur
 F%%%kmoney: cannot compute IDR > USD: different currencies%%%%%%refusal: cross-currency ordering
 H%%%agg_across_a_domain_edge%%%USD 999999999999999999.999999999999999999%%%s8 sum(kmoney) totals a column across a partial sum that left the domain (R2-F4b)
 F%%%function sum(kmoney_mixed) does not exist%%%%%%refusal: no sum(kmoney_mixed) aggregate
-F%%%kmoney: money domain overflow%%%%%%refusal: one past the domain top
-F%%%fractional digits exceeds the canonical scale of 18%%%%%%refusal: excess precision, refused not rounded
+F%%%canonical units is outside the supported range%%%%%%refusal: one past the domain top
+F%%%fractional digits exceeds the supported scale of 18%%%%%%refusal: excess precision, refused not rounded
 TABLE
 }
 

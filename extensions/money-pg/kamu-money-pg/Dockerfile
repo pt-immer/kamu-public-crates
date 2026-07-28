@@ -1,13 +1,13 @@
+# syntax=docker/dockerfile:1
 # Containerised pgrx build + test for one PostgreSQL major.
 #
 # Nothing is installed on the host: the extension is compiled against this container's PG
 # headers and loaded into this container's server. That also turns the PG15..latest matrix into
 # a loop over build args rather than a sequence of mutually-exclusive host installs.
 #
-#   docker build -f kamu-money-pg/Dockerfile --build-arg PG_MAJOR=18 -t kamu-money-pg:pg18 .
-#   docker run --rm kamu-money-pg:pg18
+#   just pg test-pg 18
 #
-# The whole supported range: kamu-money-pg/test-matrix.sh
+# The whole supported range: `just pg test-pg`.
 #
 # LAYER ORDER IS LOAD-BEARING. `cargo install cargo-pgrx` takes minutes and does NOT depend on
 # the PostgreSQL major, so it is installed BEFORE `ARG PG_MAJOR` is declared. Everything above
@@ -15,7 +15,7 @@
 # `pgrx init` below it are rebuilt per version. Declaring the ARG earlier would invalidate the
 # cargo layer for each major and multiply the build time by the size of the matrix.
 
-ARG RUST_VERSION=1.97
+ARG RUST_VERSION=1.96
 FROM rust:${RUST_VERSION}-trixie
 
 # Must match the `pgrx` dependency in kamu-money-pg/Cargo.toml exactly. cargo-pgrx refuses to build
@@ -44,7 +44,7 @@ COPY kamu-money-pg/ca-certs/ /usr/local/share/ca-certificates/
 RUN update-ca-certificates
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential libclang-dev clang pkg-config \
+        build-essential libclang-dev clang jq pkg-config \
         libreadline-dev zlib1g-dev flex bison \
         libxml2-dev libxslt1-dev libssl-dev libxml2-utils xsltproc \
     && install -d /usr/share/postgresql-common/pgdg \
@@ -100,6 +100,19 @@ RUN cargo pgrx init "--pg${PG_MAJOR}" "/usr/lib/postgresql/${PG_MAJOR}/bin/pg_co
 WORKDIR /work
 COPY --chown=pgrx . .
 
+# Ordinary test builds use the normalized Cargo package supplied as a named
+# context. Release proof sets this to 0, leaving the plain version dependency to
+# resolve exclusively from crates.io.
+ARG KMONEY_USE_LOCAL_CORE=1
+COPY --from=kamu-money-core --chown=pgrx:pgrx . /opt/kamu-money-core
+RUN case "${KMONEY_USE_LOCAL_CORE}" in \
+      0) echo "kamu-money-core: resolving from crates.io" ;; \
+      1) printf '\n[patch.crates-io]\nkamu-money-core = { path = "/opt/kamu-money-core" }\n' \
+           >> /work/.cargo/config.toml ;; \
+      *) echo "KMONEY_USE_LOCAL_CORE must be 0 or 1" >&2; exit 2 ;; \
+    esac
+ENV KMONEY_USE_LOCAL_CORE=${KMONEY_USE_LOCAL_CORE}
+
 # `.cargo/config.toml` pins PGRX_HOME to `<repo>/.pgrx` with `force = true`, so that rule holds
 # on a developer's machine AND here -- the point of `force` is that a stray `~/.pgrx` must not
 # decide what gets built. Inside the image the real pgrx home was created above, before the
@@ -112,4 +125,4 @@ COPY --chown=pgrx . .
 RUN ln -s /home/pgrx/.pgrx /work/.pgrx
 
 ENV PG_MAJOR=${PG_MAJOR}
-CMD cargo pgrx test --no-default-features --features "pg${PG_MAJOR}" "pg${PG_MAJOR}"
+CMD ["bash", "-c", "exec cargo pgrx test --no-default-features --features \"pg${PG_MAJOR}\" \"pg${PG_MAJOR}\""]

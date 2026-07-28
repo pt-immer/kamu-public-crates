@@ -1,13 +1,9 @@
 //! Division with an explicit residue: `kmoney_div`.
 //!
-//! Split out of `lib.rs` on 2026-07-27. The code is UNCHANGED -- this file is
-//! a relocation, verified by `just schema-hash`, which fingerprints the generated SQL surface
-//! with pgrx's non-reproducible ordering normalised away (E21).
-//!
 //! Returns quotient AND residue as a row, because SQL has no typestate to enforce what
 //! `Division<C>` enforces in Rust -- so the residue is handed back rather than guarded.
 
-use super::{currency_or_error, kmoney};
+use super::{kmoney, validated_or_error};
 use kamu_money_core::Rounding;
 use pgrx::prelude::*;
 
@@ -47,8 +43,8 @@ fn kmoney_div(
     parts: i32,
     rounding: &str,
 ) -> TableIterator<'static, (name!(quotient, kmoney), name!(residue, kmoney))> {
-    let code = amount.code();
-    let _ = currency_or_error(code, "kmoney_div");
+    let amount = validated_or_error(amount.payload(), "kmoney_div");
+    let code = amount.currency().numeric();
 
     let Ok(parts) = u32::try_from(parts) else {
         error!("kmoney_div: cannot divide into {parts} parts");
@@ -63,9 +59,10 @@ fn kmoney_div(
         error!("kmoney_div: {rounding:?} is not a rounding mode; expected one of: {}", Rounding::names());
     };
 
-    let (quotient, residue) = kamu_money_core::arith::div_int_units(amount.units(), parts, mode)
-        .unwrap_or_else(|e| error!("kmoney_div: stored amount cannot be divided: {e}"))
-        .take_residue();
+    let (quotient, residue) =
+        kamu_money_core::advanced::arithmetic::div_int_units(amount.units(), parts, mode)
+            .unwrap_or_else(|e| error!("kmoney_div: stored amount cannot be divided: {e}"))
+            .take_residue();
 
     TableIterator::once((kmoney::new(quotient, code), kmoney::new(residue, code)))
 }

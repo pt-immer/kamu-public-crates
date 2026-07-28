@@ -232,8 +232,9 @@ lint-shell:
     fi
     lane=extensions/money-pg
     rc=0
-    host=$(git ls-files '*.sh' | grep -v "^$lane/" || true)
-    lane_files=$(git ls-files "$lane/*.sh" | sed "s|^$lane/||" || true)
+    shell_files=$(git ls-files --cached --others --exclude-standard '*.sh')
+    host=$(printf '%s\n' "$shell_files" | grep -v "^$lane/" || true)
+    lane_files=$(printf '%s\n' "$shell_files" | grep "^$lane/" | sed "s|^$lane/||" || true)
     if [ -n "$host" ]; then
         # shellcheck disable=SC2086
         shellcheck -x $host || rc=1

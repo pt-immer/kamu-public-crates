@@ -13,6 +13,8 @@
 # remembers -- the shell equivalent of the `Drop` guard the testcontainers-based suites use.
 set -euo pipefail
 cd "$(dirname "$0")/.."   # repo root
+# shellcheck source=scripts/docker-core-context.sh
+source ./scripts/docker-core-context.sh
 
 PG_MAJOR="${1:-18}"
 RUN_ID="$$-$(date +%s)"
@@ -40,12 +42,13 @@ echo "=== building the kamu-money-pg image (PG${PG_MAJOR}) ==="
 # `kamu-money-pg.revision`, which `bench-pg` requires before it will time an image. This build
 # carries only the driver run's own label, so retagging the shared name silently repointed it at
 # an unlabelled image -- and since `release-check` ends with the driver column, a SUCCESSFUL
-# release deterministically left `just bench-pg 18` refusing until a full 64-test rebuild.
+# release deterministically left `just bench-pg 18` refusing until a full test rebuild.
 #
 # The refusal was correct; the collision was not. `--iidfile` below is what this script actually
 # runs, so the tag is convenience either way -- it just has no business overwriting another
 # suite's.
-docker build -f kamu-money-pg/Dockerfile --build-arg "PG_MAJOR=${PG_MAJOR}" \
+docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
+    -f kamu-money-pg/Dockerfile --build-arg "PG_MAJOR=${PG_MAJOR}" \
     --label "${LABEL}" --iidfile "${IIDFILE}" -t "kamu-money-pg-driver:pg${PG_MAJOR}" .
 IMAGE_ID="$(cat "${IIDFILE}")"
 rm -f "${IIDFILE}"; IIDFILE=""
@@ -85,7 +88,9 @@ docker run --rm --name "$NAME" --label "${LABEL}" \
     # FOUR since 2026-07-27, when the two write halves were added. The number is hardcoded on
     # purpose: it is what makes a test that stops running loud instead of invisible, which is the
     # entire job of this assertion. Update it deliberately when the suite grows.
-    cargo test -p kamu-money-core --features postgres,sqlx --test pg_native_column \
+    CORE_MANIFEST="$(./scripts/resolve-core-manifest.sh)"
+    cargo test --manifest-path "$CORE_MANIFEST" \
+        --features postgres,sqlx --test pg_native_column \
         -- --nocapture --test-threads=1 2>&1 | tee /tmp/native-driver.out
     if ! grep -q "4 passed" /tmp/native-driver.out; then
         echo "native-driver-test: FAILED -- expected 4 passing tests; the suite changed size" >&2

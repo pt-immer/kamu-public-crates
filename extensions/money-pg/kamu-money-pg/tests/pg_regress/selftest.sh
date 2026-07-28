@@ -115,7 +115,7 @@ sed -i 's/, in "ZWL 1.00"$/, in "ZWL 1.00" at character 8/' "$FAKE_FIXTURE_DIR/0
 expect_accept 02-text "a trailing 'at character N' is stripped (it is a byte offset into the .sql text)"
 
 golden 02-text
-sed -i 's/not a money literal/not a money literal at character 8 oops/' "$FAKE_FIXTURE_DIR/02-text.fixture"
+sed -i 's/invalid money literal/invalid money literal at character 8 oops/' "$FAKE_FIXTURE_DIR/02-text.fixture"
 expect_reject 02-text 'output differs' "'at character N' INSIDE a message is NOT stripped"
 
 # --- value corruptions --------------------------------------------------------------------------
@@ -133,14 +133,14 @@ expect_reject 04-sum 'output differs' "a boolean assertion flipped is REJECTED"
 golden 02-text
 
 sed -i 's/is not an ISO 4217 code/is not an ISO4217 code/' "$FAKE_FIXTURE_DIR/02-text.fixture" || true
-sed -i 's/not a money literal/not a money literals/' "$FAKE_FIXTURE_DIR/02-text.fixture"
+sed -i 's/invalid money literal/invalid money literals/' "$FAKE_FIXTURE_DIR/02-text.fixture"
 expect_reject 02-text 'output differs' "a single letter changed in a refusal message is REJECTED"
 
 golden 02-text
 # The one that matters most: an error that stops being raised at all. A refusal probe whose ERROR
 # line simply vanishes is exactly what a regression in the input function looks like.
 before=$(wc -l < "$FAKE_FIXTURE_DIR/02-text.fixture")
-sed -i '/^ERROR:  kmoney: not a money literal/d' "$FAKE_FIXTURE_DIR/02-text.fixture"
+sed -i '/^ERROR:  kmoney: invalid money literal/d' "$FAKE_FIXTURE_DIR/02-text.fixture"
 # The mutation itself is asserted. A `sed` whose pattern has gone stale deletes nothing, the
 # fixture stays correct, the runner accepts it -- and the probe reports that the oracle failed to
 # reject a corruption that was never applied. Measured: this exact probe went red when the goldens

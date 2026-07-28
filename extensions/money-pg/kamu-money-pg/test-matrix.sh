@@ -21,6 +21,8 @@ DEFAULT_MAJORS=(15 16 17 18)
 MAJORS=("${@:-${DEFAULT_MAJORS[@]}}")
 
 cd "$(dirname "$0")/.."
+# shellcheck source=scripts/docker-core-context.sh
+source ./scripts/docker-core-context.sh
 
 # A daemon-global run identity. `$$` alone is NOT unique here: separate runner containers
 # sharing one daemon have their own PID namespaces, so two concurrent matrices can draw the
@@ -76,7 +78,8 @@ one_major() {
   iidfile="$(mktemp)"
   # --iidfile records the image ID this build actually produced. The -t tag is a convenience
   # for a human; it is deliberately not what gets run below.
-  if ! docker build -f kamu-money-pg/Dockerfile --build-arg "PG_MAJOR=${pg}" \
+  if ! docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
+        -f kamu-money-pg/Dockerfile --build-arg "PG_MAJOR=${pg}" \
         --label "${LABEL}" --label "kamu-money-pg.revision=${REVISION}" \
         --iidfile "${iidfile}" -t "kamu-money-pg:pg${pg}" . ; then
     echo "PG${pg}: BUILD FAILED"; rm -f "${iidfile}"; return 1

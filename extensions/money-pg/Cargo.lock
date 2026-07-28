@@ -823,6 +823,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "roxmltree",
+ "thiserror",
 ]
 
 [[package]]
@@ -833,11 +834,16 @@ dependencies = [
  "pgrx",
  "pgrx-bench",
  "pgrx-tests",
+ "tempfile",
 ]
 
 [[package]]
 name = "kamu-money-pg-hygiene"
 version = "0.1.0"
+dependencies = [
+ "kamu-money-core",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "libc"

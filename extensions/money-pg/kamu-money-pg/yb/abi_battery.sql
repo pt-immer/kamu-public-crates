@@ -33,6 +33,8 @@ SELECT 'USD 10.50'::kmoney::text AS usd,
        'KWD 10.500'::kmoney::text AS kwd,
        ('USD -0.000000000000000001'::kmoney)::text AS tiny_neg,
        ('USD 999999999999999999.999999999999999999'::kmoney)::text AS domain_top;
+SELECT typname, typlen, typbyval, typalign, typstorage
+  FROM pg_type WHERE typname IN ('kmoney', 'kmoney_mixed') ORDER BY typname;
 
 \echo == 2. binary send() width + bytea (raw SEND path) ==
 SELECT length(kmoney_send('USD 10.50'::kmoney)) AS send_len,
@@ -114,7 +116,7 @@ SELECT sum(a) FROM (VALUES ('USD 1.00'::kmoney_mixed)) t(a);
 
 \echo == 9. domain + precision refusals (parse path) ==
 -- The ISO prefix is REQUIRED here. Without it this dies in the literal parser
--- ("not a money literal") and the domain branch is never reached -- the probe would then
+-- ("invalid money literal") and the domain branch is never reached -- the probe would then
 -- claim domain coverage it does not actually have.
 SELECT 'USD 1000000000000000000.00'::kmoney;             -- one past the domain: ERROR
 SELECT 'USD 0.0000000000000000005'::kmoney;              -- 19dp: ERROR, never rounded

@@ -1,15 +1,12 @@
 //! `kmoney_mixed`: the deliberately arithmetic-free type, and the proof out of it.
 //!
-//! Split out of `lib.rs` on 2026-07-27. The code is UNCHANGED -- this file is
-//! a relocation, verified by `just schema-hash`, which fingerprints the generated SQL surface
-//! with pgrx's non-reproducible ordering normalised away (E21).
-//!
 //! The type itself stays in `lib.rs` beside the shell-type SQL that declares it. What lives
 //! here is its I/O, its equality, and `kmoney_from_mixed` -- the SQL twin of proving a value
 //! into `Money<C>`. There is no arithmetic, and its ABSENCE is the contract: `sum(kmoney_mixed)`
 //! must fail when the query is PLANNED, not after four million rows have been read.
 
-use super::{describe, kmoney, kmoney_mixed};
+use super::payload::{ValidationError, validate_payload};
+use super::{kmoney, kmoney_mixed, validated_or_error};
 use kamu_money_core::{Iso4217, text};
 use pgrx::prelude::*;
 
@@ -28,11 +25,8 @@ fn kmoney_mixed_in(input: &core::ffi::CStr) -> kmoney_mixed {
 #[doc(hidden)]
 #[pg_extern(immutable, parallel_safe, requires = ["money_shell_types"])]
 fn kmoney_mixed_out(value: kmoney_mixed) -> alloc::ffi::CString {
-    let code = value.code();
-    let Some(currency) = Iso4217::from_numeric(code) else {
-        error!("kmoney_mixed: stored ISO 4217 numeric code {code} is not in kamu_money_core's table");
-    };
-    let rendered = text::render(value.units(), currency)
+    let amount = validated_or_error(value.payload(), "kmoney_mixed");
+    let rendered = text::render(amount.units(), amount.currency())
         .unwrap_or_else(|e| error!("kmoney_mixed: stored amount cannot be rendered: {e}"));
     alloc::ffi::CString::new(rendered)
         .unwrap_or_else(|e| error!("kmoney_mixed: rendered form contains a NUL byte: {e}"))
@@ -87,7 +81,7 @@ CREATE TYPE kmoney_mixed (
 #[negator(<>)]
 #[restrict(eqsel)]
 #[join(eqjoinsel)]
-const fn kmoney_mixed_eq(a: kmoney_mixed, b: kmoney_mixed) -> bool {
+fn kmoney_mixed_eq(a: kmoney_mixed, b: kmoney_mixed) -> bool {
     a.code() == b.code() && a.units() == b.units()
 }
 
@@ -97,7 +91,7 @@ const fn kmoney_mixed_eq(a: kmoney_mixed, b: kmoney_mixed) -> bool {
 #[negator(=)]
 #[restrict(neqsel)]
 #[join(neqjoinsel)]
-const fn kmoney_mixed_ne(a: kmoney_mixed, b: kmoney_mixed) -> bool {
+fn kmoney_mixed_ne(a: kmoney_mixed, b: kmoney_mixed) -> bool {
     !kmoney_mixed_eq(a, b)
 }
 
@@ -109,9 +103,10 @@ const fn kmoney_mixed_ne(a: kmoney_mixed, b: kmoney_mixed) -> bool {
 /// function; the pinned-hash test asserts the two agree.
 #[pg_extern(immutable, parallel_safe, requires = ["kmoney_mixed_concrete"])]
 fn kmoney_mixed_hash(value: kmoney_mixed) -> i32 {
-    kamu_money_core::stable_hash::fold_to_i32(kamu_money_core::stable_hash::stable_hash(
-        value.code(),
-        value.units(),
+    let amount = validated_or_error(value.payload(), "kmoney_mixed");
+    kamu_money_core::advanced::stable_hash::fold_to_i32(kamu_money_core::advanced::stable_hash::stable_hash(
+        amount.currency().numeric(),
+        amount.units(),
     ))
 }
 
@@ -125,17 +120,17 @@ fn kmoney_from_mixed(value: kmoney_mixed, expected: &str) -> kmoney {
     let Some(want) = Iso4217::from_alpha3(expected) else {
         error!("kmoney: {expected:?} is not an ISO 4217 code kamu_money_core knows");
     };
-    if value.code() != want.numeric() {
-        error!("kmoney: expected {}, found {}", want.alpha3(), describe(value.code()));
-    }
-    if !kamu_money_core::domain::in_domain(value.units()) {
-        error!(
+    let amount = validate_payload(value.payload(), Some(want)).unwrap_or_else(|error| match error {
+        ValidationError::OutOfDomain { currency, .. } => error!(
             "kmoney: stored {} value is outside the domain |units| <= 10^36 - 1 \
              and cannot be converted from kmoney_mixed",
-            want.alpha3()
-        );
-    }
-    kmoney::new(value.units(), value.code())
+            currency.alpha3()
+        ),
+        ValidationError::UnexpectedCurrency { .. } | ValidationError::UnknownCurrency { .. } => {
+            error!("kmoney: {error}")
+        }
+    });
+    kmoney::from_payload(amount.payload())
 }
 
 #[cfg(any(test, feature = "pg_test"))]

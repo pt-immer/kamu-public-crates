@@ -1,7 +1,7 @@
 [workspace]
-# `hygiene` is a dependency-free crate holding the repository guards. It is separate from
-# kamu-money-pg because an integration test there would drag in the pgrx build -- see
-# hygiene/Cargo.toml for the measurement.
+# `hygiene` is the pgrx-free crate holding repository guards and the safe payload harness.
+# It is separate from kamu-money-pg because an integration test there would drag in the pgrx
+# build -- see hygiene/Cargo.toml for the measurement.
 members = ["kamu-money-pg", "hygiene"]
 # A locally checked-out pgrx is its OWN workspace. Without this, cargo resolves
 # ITS members' inherited fields against THIS root and dies in `cargo metadata`
@@ -59,10 +59,10 @@ license = "MIT OR Apache-2.0"
 # produce correctly, so the answer is `false` at the root, not a reviewer's memory.
 publish = false
 repository = "https://github.com/pt-immer/kamu-public-crates"
-# Higher than the main workspace's 1.94: pgrx 0.19.1 requires at least 1.96,
-# while this lane is developed and gated on 1.97. Keeping it separate lets the
-# nine published crates retain their own floor.
-rust-version = "1.97"
+# Higher than the main workspace's 1.94 because pgrx 0.19.1 requires 1.96.
+# `rust-toolchain.toml`, CI, and every container pin that measured dependency
+# floor, so the declared MSRV is exercised rather than merely documented.
+rust-version = "1.96"
 
 # pgrx REQUIRES unwinding: it maps PostgreSQL's ereport/longjmp error handling
 # onto Rust panics, so `panic = "abort"` would turn a recoverable SQL error into

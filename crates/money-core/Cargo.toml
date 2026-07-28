@@ -30,10 +30,12 @@ include = [
   "build/**/*.rs",
   "examples/**/*.rs",
   "src/**/*.rs",
+  "tests/**/*.rs",
   "vendor/list-one.xml",
 ]
-# `benches/` and `examples/` are listed because `[[bench]]` and `[[example]]`
-# below NAME those files: an include list that omits them leaves cargo warning
+# `benches/`, `examples/`, and `tests/` are listed because the declared targets
+# and the PostgreSQL integration lane use those files from the normalized
+# package. An include list that omits them leaves cargo warning
 # "ignoring benchmark `kernel` as benches/kernel.rs is not included in the
 # published package" on every publish, and ships target declarations that point
 # at nothing. The examples are also the clearest documentation this crate has of

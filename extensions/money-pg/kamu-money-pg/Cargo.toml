@@ -48,7 +48,7 @@ pg15 = ["pgrx/pg15", "pgrx-tests/pg15"]
 pg16 = ["pgrx/pg16", "pgrx-tests/pg16"]
 pg17 = ["pgrx/pg17", "pgrx-tests/pg17"]
 pg18 = ["pgrx/pg18", "pgrx-tests/pg18"]
-pg_test = []
+pg_test = ["dep:tempfile"]
 # THE BOUNDARY PROBE, and it is NOT in `default` on purpose. It adds two no-op `#[pg_extern]`s
 # whose only reason to exist is to be measured: `rs_noop` has the same signature as a five-line
 # C function so the difference between them is pgrx's per-call wrapper, and `rs_noop_kmoney`
@@ -92,11 +92,14 @@ pgrx = "=0.19.1"
 # convenience but the only way this lane resolves at all — a bare `cargo` command
 # here will fail to find the crate, and that is the intended, loud behaviour.
 kamu-money-core = "0.1"
+tempfile = { version = "3", optional = true }
 
 [dependencies.pgrx-bench]
 version = "=0.19.1"
 optional = true
 
 [dev-dependencies]
+tempfile = "3"
+
 [dev-dependencies.pgrx-tests]
 version = "=0.19.1"

@@ -1,14 +1,10 @@
 //! `sum(kmoney)`: the row aggregate and its wide transition state.
 //!
-//! Split out of `lib.rs` on 2026-07-27. The code is UNCHANGED -- this file is
-//! a relocation, verified by `just schema-hash`, which fingerprints the generated SQL surface
-//! with pgrx's non-reproducible ordering normalised away (E21).
-//!
 //! The state is a `bytea` carrying `UnitSum` plus the ISO code, because a fold through `+`
 //! cannot widen (R2-F4b). `PARALLEL = SAFE` rests on the combine function, which is here too.
 
-use super::{currency_or_error, describe, kmoney};
-use kamu_money_core::arith::UnitSum;
+use super::{currency_or_error, describe, kmoney, validated_or_error};
+use kamu_money_core::advanced::arithmetic::UnitSum;
 use pgrx::prelude::*;
 
 // =========================================================================================
@@ -86,16 +82,17 @@ fn kmoney_sum_accum(state: Option<Vec<u8>>, value: Option<kmoney>) -> Option<Vec
     let Some(value) = value else {
         return state;
     };
+    let value = validated_or_error(value.payload(), "sum(kmoney)");
 
     let (acc, code) = match state {
         // First non-NULL row: it names the currency for the rest of the group.
-        None => (UnitSum::ZERO, value.code()),
+        None => (UnitSum::ZERO, value.currency().numeric()),
         Some(bytes) => {
             let (acc, code) = sum_state_decode(&bytes, "sum(kmoney)");
-            if code != value.code() {
+            if code != value.currency().numeric() {
                 // The fastest check available, a raw `u16` compare, and the same rule `+` and
                 // `kmoney_sum` apply. A column holding two currencies has no total.
-                let (left, right) = (describe(code), describe(value.code()));
+                let (left, right) = (describe(code), value.currency().alpha3());
                 error!("kmoney: cannot sum {left} and {right}: different currencies");
             }
             (acc, code)
@@ -361,7 +358,7 @@ mod tests {
     }
 
     #[pg_test(
-        error = "sum(kmoney): money domain overflow: 1000000000000000000000000000000000000 units is outside the domain |units| <= 999999999999999999999999999999999999 (NUMERIC(36,18) admits |v| < 10^18)"
+        error = "sum(kmoney): 1000000000000000000000000000000000000 canonical units is outside the supported range -999999999999999999999999999999999999..=999999999999999999999999999999999999"
     )]
     fn the_sum_aggregate_rejects_a_total_that_leaves_the_domain() {
         Spi::run("CREATE TABLE ledger (amount kmoney)").expect("table created");

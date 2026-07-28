@@ -7,7 +7,7 @@
 # kamu-money-pg/yb/abi_battery.sql on that stock PG15 and exports the output, so `just yb-ab`
 # can diff it against the YB run -- a diff attributable purely to the YB fork's ABI.
 #
-#   docker build -f kamu-money-pg/yb/Dockerfile.pg15 --target ref -o kamu-money-pg/yb/out .
+# Built by `just pg yb-ab`, which supplies both Docker contexts.
 ARG YB_IMAGE=yugabytedb/yugabyte:2025.2.5.1-b1
 FROM ${YB_IMAGE} AS build
 USER root
@@ -33,7 +33,7 @@ USER pgrx
 ENV PATH=/home/pgrx/.cargo/bin:$PATH CARGO_HOME=/home/pgrx/.cargo USER=pgrx
 
 RUN curl --proto '=https' --tlsv1.2 -sSfo /tmp/rustup.sh https://sh.rustup.rs \
- && sh /tmp/rustup.sh -y --default-toolchain 1.97.0
+ && sh /tmp/rustup.sh -y --default-toolchain 1.96.0
 RUN cargo install cargo-pgrx --version 0.19.1 --locked
 ENV RUST_BACKTRACE=1
 
@@ -43,7 +43,16 @@ RUN cargo pgrx init --pg15 download
 WORKDIR /work
 USER root
 COPY --chown=pgrx . .
+ARG KMONEY_USE_LOCAL_CORE=1
+COPY --from=kamu-money-core --chown=pgrx:pgrx . /opt/kamu-money-core
 USER pgrx
+RUN case "${KMONEY_USE_LOCAL_CORE}" in \
+      0) echo "kamu-money-core: resolving from crates.io" ;; \
+      1) printf '\n[patch.crates-io]\nkamu-money-core = { path = "/opt/kamu-money-core" }\n' \
+           >> /work/.cargo/config.toml ;; \
+      *) echo "KMONEY_USE_LOCAL_CORE must be 0 or 1" >&2; exit 2 ;; \
+    esac
+ENV KMONEY_USE_LOCAL_CORE=${KMONEY_USE_LOCAL_CORE}
 # Same PGRX_HOME reconciliation as the other Dockerfiles: the forced relative /work/.pgrx
 # must resolve to the real home pgrx init wrote.
 RUN ln -sfn /home/pgrx/.pgrx /work/.pgrx

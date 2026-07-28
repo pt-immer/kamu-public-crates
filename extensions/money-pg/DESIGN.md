@@ -2,8 +2,8 @@
 
 **Status:** `kmoney` as a native PostgreSQL type (C8), green on PostgreSQL 15–18, native and
 byte-exact on YugabyteDB (E16). Open items in §6.
-**Toolchain:** edition 2024, Rust 1.97 — one version above pgrx 0.19.1's
-minimum and the lane's tested floor.
+**Toolchain:** edition 2024, Rust 1.96 — pgrx 0.19.1's minimum and the
+continuously tested floor.
 
 > **Scope.** The workspace layout (§3), the test contract (§4) and the open items (§6). The
 > classification, evidence base, contracts and rejected alternatives describe the money scalar and
@@ -26,13 +26,15 @@ and this lane is its own Cargo workspace:
 ```text
 extensions/money-pg/
   kamu-money-pg/    pgrx extension -> kmoney   (cdylib)
-  hygiene/          repository guards; no dependencies, so they run without pgrx
+  hygiene/          repository guards + safe payload harness; no pgrx
 ```
 
 `kamu-money-core` is **not** a member. It is a published crate in the main workspace at
-`crates/money-core`, and this lane depends on it by version, with the path injected on the command
-line. The lane is separate because `[patch.crates-io]` is root-only, `panic = "unwind"` is honoured
-only at a workspace root, and pgrx needs a higher MSRV than the published crates.
+`crates/money-core`, and this lane depends on it by version. Host recipes inject its checkout path
+on the command line. Container recipes pass Cargo's normalized package as a small named context,
+keeping this lane as the primary context. The lane is separate because `[patch.crates-io]` is
+root-only, `panic = "unwind"` is honoured only at a workspace root, and pgrx needs a higher MSRV
+than the published crates.
 
 **The Cargo name and the SQL name are chosen independently, and both are deliberate.**
 
@@ -57,7 +59,7 @@ scalar's own contract and the tests pinning it are documented with `kamu-money-c
 |---|---|
 | `proptest` vs real PostgreSQL (testcontainers): `decode(encode(m)) == m` | C8, C9 |
 | `proptest` vs real PostgreSQL: `pg_sum(rows) == rust_sum(rows)`, bit-exact | E9's exactness claim |
-| All **63 portable** `#[pg_test]` assertions run against a live YugabyteDB as SQL cases, byte-identical to hand-authored goldens; the 64th asserts a stock-PostgreSQL *plan* and is declared `NOT-PORTABLE` with its reason | E17 — the YB evidence surface is the whole contract, not one script |
+| Every portable `#[pg_test]` assertion runs against live YugabyteDB as a SQL case, byte-identical to a hand-authored golden; exceptions are named and justified in `tests/pg_regress/COVERAGE.md` | E17 — the YB evidence surface is the whole contract, not one script |
 | The planner really **splits** `sum(kmoney)` into `Partial`/`Finalize`, and the two plans agree over domain-edge rows | R2-F4b — a `CREATE AGGREGATE` that silently forbids partial aggregation passes every hand-driven test |
 | Every `#[pg_test]` has a row in `tests/pg_regress/COVERAGE.md`, or an explicit `NOT-PORTABLE: <reason>` | E17 — a skipped test counted as a pass is worse than an absent one; checked offline, in `gate-offline` |
 | The case-suite oracle rejects 14 realistic corruptions, each **for its own reason** — including a client that died with perfect bytes, and a case with no golden | E17 — an oracle nothing checks certifies whatever the code currently does |
@@ -70,7 +72,33 @@ scalar's own contract and the tests pinning it are documented with `kamu-money-c
 | The three shimmed ABI symbols still have the expected shape in this image's headers, checked **before** patching | E19 — converts a YugabyteDB upgrade from a production incident into a build failure |
 | The YugabyteDB tag still resolves to the digest the fork was validated against | E19 — a new image is adopted deliberately, never by a `docker pull` |
 | `kmoney` data survives a node restart, a node failure with writes continuing, and a rejoin | E19 — G5, minus the rolling version upgrade, which is named as not covered |
-| `gate-pg-release` depends on all four YugabyteDB gates | E19 — dropping one for wall-clock is the obvious temptation and would make the gate's claim untrue |
+| `gate-pg-release` composes every native YugabyteDB proof | E19 — dropping one for wall-clock would make the gate's claim untrue |
+
+### Unsafe boundary and proof limits
+
+`src/safe/` owns payload encoding, validation, rendering, arithmetic, typmod policy, and tests.
+`src/ffi/` owns PostgreSQL datum allocation, raw `fcinfo` access, C-visible symbols, and pgrx ABI
+traits. A `syn`-based hygiene guard rejects unsafe syntax anywhere else and includes a mutation
+test proving the guard can fail.
+
+The shared ABI contract is:
+
+- both SQL types have `typlen = 18`, `typbyval = false`, byte alignment, and plain storage;
+- a non-null datum for either registered OID exposes at least 18 readable bytes;
+- array elements use the same by-reference representation;
+- pgrx invokes the trait implementations only for the registered types;
+- PostgreSQL errors may escape through pgrx's panic machinery, so critical cleanup does not rely
+  on destructors after an error.
+
+Compile-time size/alignment assertions protect the Rust layout. Live catalog tests assert the
+four PostgreSQL representation fields for both types; scalar, array, binary-width, binary
+round-trip, and corrupt-input tests exercise the remaining edges across PostgreSQL 15–18 and
+YugabyteDB.
+
+Miri runs the exact `safe/payload.rs` module through the pgrx-free hygiene crate. It checks layout,
+little-endian conversion, exact-length parsing, assigned/expected currency handling, and both
+domain edges. It does **not** prove datum provenance, OIDs, memory contexts, PostgreSQL longjmp
+behavior, or pgrx array layout; the live tests above remain authoritative for those promises.
 
 ### E21 — pgrx's generated SQL is not reproducible (measured 2026-07-27)
 
@@ -108,6 +136,6 @@ trustworthy oracle for checking the rest.
 |---|---|
 | Self-maintained pgrx / YugabyteDB fork | **OPEN by decision.** `pt-immer/pgrx-yugabytedb` is ours to maintain. Every YugabyteDB digest or PostgreSQL-major change repeats `just pg gate-pg-release`. |
 | Two-version rolling upgrade | **UNREHEARSED.** Restore is proven same-version. `kamu-money-pg/yb/RUNBOOK.md` §2 is the procedure; the cross-version step needs a second image digest *and* a second from-source build against that image's headers. |
-| Container-backed suites | **BLOCKED on publication.** Every Docker build here uses the lane root as its context, so `crates/money-core` is not in the image and the injected path patch cannot reach it. `gate-pg` and `gate-pg-release` wait for `kamu-money-core` on crates.io. |
+| Container-backed suites | **RUNNABLE before publication.** `scripts/docker-core-context.sh` packages `kamu-money-core` and supplies only that normalized package as a named context. `gate-pg-release` disables the local patch and remains a registry-resolution proof. |
 | RPO/RTO, backup scheduling, rollback authority, incident response | **NOT THIS REPOSITORY'S.** They belong to the platform consuming the artefact. |
 | Registry publication of the node image | **STRUCK, not deferred.** The node image is a **test fixture**, not a deliverable: consumers build from source at a version and own their own artefact identity. Publishing it would create a distribution channel nobody consumes and an implicit support claim for bytes nobody is meant to run. Recorded rather than deleted, because three reviews raised it in good faith and a fourth would too. |

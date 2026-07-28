@@ -1,7 +1,8 @@
 -- 01-layout: the physical shape of `kmoney`, and the space argument stated honestly.
 --
--- Ports: kmoney_is_eighteen_bytes_with_no_header, the_catalog_says_fixed_length_plain_and_
--- byte_aligned, the_size_tradeoff_against_numeric_is_measured_not_assumed,
+-- Ports: kmoney_is_eighteen_bytes_with_no_header,
+-- the_catalog_says_fixed_length_plain_and_byte_aligned,
+-- the_size_tradeoff_against_numeric_is_measured_not_assumed,
 -- the_size_does_not_depend_on_the_value, numeric_silently_rounds_four_e_minus_nineteen_to_zero.
 --
 -- OUTPUT IS UNALIGNED AND TUPLES-ONLY throughout this suite, on purpose: psql's aligned table
@@ -29,8 +30,8 @@ SELECT 'stored=' || pg_column_size(v)
     || ' in_memory=' || pg_column_size('USD 10.50'::kmoney) FROM sized;
 
 \echo -- the_catalog_says_fixed_length_plain_and_byte_aligned
-SELECT format('%s/%s/%s/%s', typlen, typbyval, typalign, typstorage)
-  FROM pg_type WHERE typname = 'kmoney';
+SELECT format('%s=%s/%s/%s/%s', typname, typlen, typbyval, typalign, typstorage)
+  FROM pg_type WHERE typname IN ('kmoney', 'kmoney_mixed') ORDER BY typname;
 
 \echo -- the_size_tradeoff_against_numeric_is_measured_not_assumed
 CREATE TEMP TABLE compared (r kmoney, n numeric(36,18));

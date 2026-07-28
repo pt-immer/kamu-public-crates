@@ -11,13 +11,12 @@
 # whether the Justfile names the right recipes would have become the most expensive check in the
 # lane.
 #
-# So the guards live in a crate with NO dependencies at all. `repo_root()` walks up from
-# CARGO_MANIFEST_DIR and looks for a Justfile, which lands on the lane root from here exactly as it
-# did from the crate that used to host them.
+# So the guards live in a pgrx-free crate. Its small dev-dependency set supports structural TOML /
+# Rust inspection and compiles the exact safe payload module under ordinary tests and Miri.
 [package]
 name = "kamu-money-pg-hygiene"
 version = "0.1.0"
-description = "Repository-hygiene guards for the kamu-money-pg lane. Never published; reads files, builds nothing."
+description = "Pgrx-free repository guards and safe-payload tests for the kamu-money-pg lane."
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -33,3 +32,7 @@ rust-version.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+
+[dev-dependencies]
+kamu-money-core = "0.1"
+syn = { version = "2", features = ["full", "visit"] }

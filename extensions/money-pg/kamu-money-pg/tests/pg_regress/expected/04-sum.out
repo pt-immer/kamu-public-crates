@@ -7,7 +7,7 @@ empty_sum_is_null=true
 -- kmoney_sum_rejects_a_mixed_currency_argument
 ERROR:  kmoney: cannot sum USD and IDR: different currencies
 -- kmoney_sum_rejects_a_total_that_leaves_the_domain
-ERROR:  kmoney_sum: money domain overflow: 1000000000000000000000000000000000000 units is outside the domain |units| <= 999999999999999999999999999999999999 (NUMERIC(36,18) admits |v| < 10^18)
+ERROR:  kmoney_sum: 1000000000000000000000000000000000000 canonical units is outside the supported range -999999999999999999999999999999999999..=999999999999999999999999999999999999
 -- the_sum_aggregate_totals_a_column
 USD 11.00
 -- the_sum_aggregate_of_nothing_is_null
@@ -22,7 +22,7 @@ empty_partial_is_identity=true
 -- the_sum_aggregate_rejects_a_forged_transition_state
 ERROR:  sum(kmoney): transition state must be exactly 34 bytes, got 3
 -- the_sum_aggregate_rejects_a_total_that_leaves_the_domain
-ERROR:  sum(kmoney): money domain overflow: 1000000000000000000000000000000000000 units is outside the domain |units| <= 999999999999999999999999999999999999 (NUMERIC(36,18) admits |v| < 10^18)
+ERROR:  sum(kmoney): 1000000000000000000000000000000000000 canonical units is outside the supported range -999999999999999999999999999999999999..=999999999999999999999999999999999999
 -- the_sum_aggregate_refuses_a_mixed_currency_column
 ERROR:  kmoney: cannot sum USD and IDR: different currencies
 == CASE COMPLETE: 04-sum ==

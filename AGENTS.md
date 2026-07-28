@@ -78,7 +78,13 @@ Cargo workspace**, and the rule is general rather than about any one lane:
   stops matching.
 
 The current lane is `extensions/money-pg` (the `kmoney` pgrx extension and its
-YugabyteDB harness); its own `DESIGN.md` and `Justfile` carry the detail.
+YugabyteDB harness). It pins Rust 1.96 in its own `rust-toolchain.toml`: run
+`just pg setup` once for its toolchain, Miri, and cargo-pgrx prerequisites. Safe
+payload/semantic code lives under `src/safe/`; all unsafe syntax is confined to
+`src/ffi/` and enforced by a parsed-source hygiene test. Miri covers only the
+safe payload codec; live catalog, scalar/array, binary, PostgreSQL 15–18, and
+YugabyteDB tests carry the ABI proof. Its own `DESIGN.md` and `Justfile` carry
+the detail.
 
 ## Ground rules
 
@@ -135,6 +141,7 @@ just check-all  # FAST inner loop: fmt + clippy + test → compact PASS/FAIL
 just gate       # published-crate local barrier; run before pushing
 just ci         # Docker-free gate + metadata-derived publish dry-runs
 just pg <recipe>  # run a recipe in the excluded extension lane (`just pg` lists them)
+just pg gate-offline # lane checks needing no database; includes Miri
 just gate-pg    # the lane's gate — hours, and needs Docker
 just gate-all   # gate + gate-pg; the pre-push barrier for a lane change
 ```
@@ -221,12 +228,13 @@ Cadence expectations:
   and became a real hole the moment a lane arrived with 38. When adding a recipe
   to an aggregate, check whether any CI job reaches it; when a recipe's coverage
   changes, re-check.
-- **A job blocked by a dependency should gate on a probe, not a flag.** The
-  extension lane's container suites cannot run until `kamu-money-core` is on
-  crates.io, so a job queries the registry and the suites gate on its output —
-  they re-enable themselves on publication instead of waiting for someone to
-  remember. The probe job always runs and emits a `::notice` naming what is
-  skipped, so the gap is stated rather than silent.
+- **Container tests receive only the package they depend on.** The money-pg
+  lane keeps its own directory as the primary Docker context and supplies
+  Cargo's normalized `kamu-money-core` package as a named context. This lets
+  ordinary CI run before the crate's first publication without copying the
+  whole repository into an image. `gate-pg-release` sets
+  `KMONEY_USE_LOCAL_CORE=0`, disables the image-local patch, and therefore
+  still proves that the plain version dependency resolves from a registry.
 - **Never give a workflow output or env var a hyphenated name.** GitHub Actions
   parses `outputs.money-pg` as `outputs.money` *minus* `pg`. The YAML still
   validates and the condition still evaluates — against something nobody

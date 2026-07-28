@@ -1,13 +1,9 @@
 //! Conservative distribution in SQL: `kmoney_allocate` and its output cap.
 //!
-//! Split out of `lib.rs` on 2026-07-27. The code is UNCHANGED -- this file is
-//! a relocation, verified by `just schema-hash`, which fingerprints the generated SQL surface
-//! with pgrx's non-reproducible ordering normalised away (E21).
-//!
 //! The 65,536-part cap lives here with the function it bounds: it is the SQL adapter's
 //! obligation, and `kamu-money-core` deliberately declines to invent a universal one.
 
-use super::{currency_or_error, kmoney};
+use super::{kmoney, validated_or_error};
 use pgrx::prelude::*;
 
 /// The largest number of weights `kmoney_allocate` will accept in one call.
@@ -90,8 +86,8 @@ const MAX_ALLOCATE_PARTS: usize = 1 << 16;
 #[allow(clippy::needless_pass_by_value)]
 #[pg_extern(immutable, parallel_safe, requires = ["kmoney_concrete"])]
 fn kmoney_allocate(amount: kmoney, weights: Array<'_, i32>) -> Vec<kmoney> {
-    let code = amount.code();
-    let _ = currency_or_error(code, "kmoney_allocate");
+    let amount = validated_or_error(amount.payload(), "kmoney_allocate");
+    let code = amount.currency().numeric();
 
     // LENGTH FIRST. Everything below this point is per-element, so everything below this point is
     // work an oversized input must not be able to buy.
@@ -130,7 +126,7 @@ fn kmoney_allocate(amount: kmoney, weights: Array<'_, i32>) -> Vec<kmoney> {
         error!("kmoney_allocate: weights sum to zero — the amount would have nowhere to go");
     }
 
-    kamu_money_core::allocate::allocate_units(amount.units(), &checked)
+    kamu_money_core::advanced::arithmetic::allocate_units(amount.units(), &checked)
         .unwrap_or_else(|e| error!("kmoney_allocate: stored amount cannot be allocated: {e}"))
         .into_iter()
         .map(|units| kmoney::new(units, code))

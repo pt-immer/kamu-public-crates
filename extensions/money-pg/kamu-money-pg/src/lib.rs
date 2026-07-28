@@ -38,6 +38,7 @@
 // A function-wide allow was rejected: it would blanket-permit future unaudited casts in the very
 // functions that most need auditing.
 #![deny(clippy::all, clippy::pedantic)]
+#![deny(unsafe_op_in_unsafe_fn, clippy::undocumented_unsafe_blocks)]
 #![deny(
     clippy::arithmetic_side_effects,
     clippy::as_conversions,
@@ -51,18 +52,17 @@
     clippy::use_self
 )]
 
-use kamu_money_core::Iso4217;
 use kamu_money_core::text;
 
 extern crate alloc;
-use pgrx::datum::{FromDatum, IntoDatum};
 use pgrx::prelude::*;
+
+use safe::payload::{PAYLOAD_BYTES, Payload};
 
 ::pgrx::pg_module_magic!(name, version);
 
-/// The payload every money type here stores: 16 bytes of little-endian units followed by a
-/// 2-byte little-endian ISO 4217 numeric code.
-const PAYLOAD_BYTES: usize = 18;
+mod ffi;
+mod safe;
 
 /// Define a **fixed-length** PostgreSQL type over an 18-byte `#[repr(C)]` payload.
 ///
@@ -90,10 +90,7 @@ macro_rules! fixed_length_money_type {
         #[derive(Copy, Clone)]
         #[repr(C)]
         #[allow(non_camel_case_types)]
-        pub struct $t {
-            units: [u8; 16],
-            code: [u8; 2],
-        }
+        pub struct $t(Payload);
 
         // Held where they cannot rot. `size_of` is the on-disk width PostgreSQL is told about
         // in `INTERNALLENGTH`, and a mismatch would read past the end of a tuple field;
@@ -110,168 +107,30 @@ macro_rules! fixed_length_money_type {
 
         impl $t {
             /// Canonical units, as `kamu_money_core` counts them.
-            const fn units(self) -> i128 {
-                i128::from_le_bytes(self.units)
+            fn units(self) -> i128 {
+                self.0.units()
             }
 
             /// The stored ISO 4217 numeric code.
             const fn code(self) -> u16 {
-                u16::from_le_bytes(self.code)
+                self.0.code()
             }
 
-            const fn new(units: i128, code: u16) -> Self {
-                Self { units: units.to_le_bytes(), code: code.to_le_bytes() }
+            fn new(units: i128, code: u16) -> Self {
+                Self(Payload::from_parts(units, code))
             }
 
-            /// The on-disk bytes. Assembled field by field rather than by transmuting the
-            /// struct, so the format is stated here rather than inherited from `repr(C)`.
-            fn to_payload(self) -> [u8; PAYLOAD_BYTES] {
-                let mut out = [0u8; PAYLOAD_BYTES];
-                out[..16].copy_from_slice(&self.units);
-                out[16..].copy_from_slice(&self.code);
-                out
+            const fn payload(self) -> Payload {
+                self.0
             }
 
-            /// Takes an ARRAY, not a slice: `copy_from_slice` panics on a length mismatch, and
-            /// a `&[u8; PAYLOAD_BYTES]` moves that check to the type where it cannot fire at
-            /// run time at all.
-            fn from_payload(bytes: &[u8; PAYLOAD_BYTES]) -> Self {
-                let (units, code) = bytes.split_at(16);
-                Self {
-                    units: units.try_into().expect("split_at(16) yields 16 bytes"),
-                    code: code.try_into().expect("PAYLOAD_BYTES - 16 == 2"),
-                }
+            const fn from_payload(payload: Payload) -> Self {
+                Self(payload)
             }
         }
 
-        impl IntoDatum for $t {
-            fn into_datum(self) -> Option<pgrx::pg_sys::Datum> {
-                let payload = self.to_payload();
-                // `palloc` + `copy_nonoverlapping`, NOT `palloc_slice`. palloc_slice builds a
-                // `&mut [u8]` over memory palloc has not initialised, and constructing a
-                // reference to uninitialised bytes is undefined behaviour even for `u8` --
-                // benign here because the next line overwrites all of it, but it is UB the
-                // compiler is entitled to act on, and Miri rejects it. A raw pointer never
-                // makes that claim.
-                //
-                // SAFETY: CurrentMemoryContext is always valid inside a backend; palloc returns
-                // at least PAYLOAD_BYTES of writable memory or raises; source and destination
-                // are distinct allocations of exactly that length. PostgreSQL owns the result
-                // and frees it on context reset -- this must NOT be freed here.
-                let dst = unsafe {
-                    pgrx::pg_sys::palloc(PAYLOAD_BYTES).cast::<u8>()
-                };
-                unsafe {
-                    core::ptr::copy_nonoverlapping(payload.as_ptr(), dst, PAYLOAD_BYTES);
-                }
-                Some(dst.into())
-            }
-
-            fn type_oid() -> pgrx::pg_sys::Oid {
-                pgrx::wrappers::rust_regtypein::<Self>()
-            }
-        }
-
-        impl FromDatum for $t {
-            unsafe fn from_polymorphic_datum(
-                datum: pgrx::pg_sys::Datum,
-                is_null: bool,
-                _typoid: pgrx::pg_sys::Oid,
-            ) -> Option<Self> {
-                if is_null {
-                    return None;
-                }
-                // SAFETY: a non-null datum of this type is a pointer to PAYLOAD_BYTES that
-                // PostgreSQL laid out, and `align_of == 1` (asserted above) means any address
-                // it chose is readable. The bytes are COPIED out rather than borrowed, so the
-                // result does not alias the tuple.
-                let bytes = unsafe {
-                    &*datum.cast_mut_ptr::<u8>().cast::<[u8; PAYLOAD_BYTES]>()
-                };
-                Some(Self::from_payload(bytes))
-            }
-        }
-
-        // Lets this type be an ARRAY element, which is what a `VARIADIC $t[]` argument is. pgrx
-        // gates array iteration on `UnboxDatum` rather than `FromDatum`; the two read the same
-        // inline PAYLOAD_BYTES, but this one has no `is_null` branch because the array iterator
-        // has already decided nullness. Mirrors the `Uuid` impl (a 16-byte by-ref type) exactly,
-        // two bytes wider. Without it `kmoney_sum(VARIADIC kmoney[])` will not compile.
-        unsafe impl pgrx::datum::UnboxDatum for $t {
-            type As<'src> = $t;
-            unsafe fn unbox<'src>(datum: pgrx::datum::Datum<'src>) -> Self::As<'src>
-            where
-                Self: 'src,
-            {
-                // SAFETY: the array stores each non-null element inline as PAYLOAD_BYTES that
-                // PostgreSQL laid out, and `align_of == 1` means the address it chose is
-                // readable. Read by value (`$t` is `Copy`) so the result does not alias the array.
-                let bytes = unsafe {
-                    datum
-                        .sans_lifetime()
-                        .cast_mut_ptr::<[u8; PAYLOAD_BYTES]>()
-                        .read()
-                };
-                Self::from_payload(&bytes)
-            }
-        }
-
-        unsafe impl pgrx::pgrx_sql_entity_graph::metadata::SqlTranslatable for $t {
-            const TYPE_IDENT: &'static str = stringify!($t);
-            const TYPE_ORIGIN: pgrx::pgrx_sql_entity_graph::metadata::TypeOrigin =
-                pgrx::pgrx_sql_entity_graph::metadata::TypeOrigin::External;
-            const ARGUMENT_SQL: Result<
-                pgrx::pgrx_sql_entity_graph::metadata::SqlMappingRef,
-                pgrx::pgrx_sql_entity_graph::metadata::ArgumentError,
-            > = Ok(pgrx::pgrx_sql_entity_graph::metadata::SqlMappingRef::literal(stringify!($t)));
-            const RETURN_SQL: Result<
-                pgrx::pgrx_sql_entity_graph::metadata::ReturnsRef,
-                pgrx::pgrx_sql_entity_graph::metadata::ReturnsError,
-            > = Ok(pgrx::pgrx_sql_entity_graph::metadata::ReturnsRef::One(
-                pgrx::pgrx_sql_entity_graph::metadata::SqlMappingRef::literal(stringify!($t)),
-            ));
-        }
-
-        unsafe impl<'fcx> pgrx::callconv::ArgAbi<'fcx> for $t {
-            unsafe fn unbox_arg_unchecked(arg: pgrx::callconv::Arg<'_, 'fcx>) -> Self {
-                let index = arg.index();
-                unsafe {
-                    arg.unbox_arg_using_from_datum()
-                        .unwrap_or_else(|| panic!("argument {index} must not be null"))
-                }
-            }
-
-            /// pgrx's trait docs are explicit that a BY-REFERENCE type must override this,
-            /// because Postgres conflates "SQL null" with "nullptr" in places. `typbyval = f`
-            /// makes this exactly that case, and pgrx's own `argue_from_datum!` -- which the
-            /// impl above otherwise copies verbatim -- supplies both halves.
-            ///
-            /// Not reachable today: no `#[pg_extern]` here takes an `Option<kmoney>`, so every
-            /// argument routes through `unbox_arg_unchecked`. It becomes live the moment one
-            /// does, which is precisely the kind of gap that is cheap now and a debugging
-            /// session later.
-            unsafe fn unbox_nullable_arg(
-                arg: pgrx::callconv::Arg<'_, 'fcx>,
-            ) -> pgrx::nullable::Nullable<Self> {
-                unsafe { arg.unbox_arg_using_from_datum() }.into()
-            }
-        }
-
-        unsafe impl pgrx::callconv::BoxRet for $t {
-            unsafe fn box_into<'fcx>(
-                self,
-                fcinfo: &mut pgrx::callconv::FcInfo<'fcx>,
-            ) -> pgrx::datum::Datum<'fcx> {
-                match self.into_datum() {
-                    Some(datum) => unsafe { fcinfo.return_raw_datum(datum) },
-                    None => fcinfo.return_null(),
-                }
-            }
-        }
     };
 }
-
-mod wire;
 
 // The shell type must exist before the in/out functions can name it, and the real type before
 // anything else can use it. `bootstrap` puts this first in the generated script.
@@ -328,12 +187,12 @@ fn kmoney_out(value: kmoney) -> alloc::ffi::CString {
     // An unknown code means the row was written by a build whose currency table differed, or
     // the bytes are corrupt. Rendering a placeholder would emit a number attached to the wrong
     // currency, which is precisely the silent wrongness this design exists to prevent.
-    let currency = currency_or_error(value.code(), "kmoney");
+    let amount = safe::validated_or_error(value.payload(), "kmoney");
     // A stored amount outside the domain means corrupt bytes or a datum written by something
     // that bypassed the input function. `text::render` refuses it rather than emitting
     // canonical-looking text no parser would accept back, so this surfaces as a SQL ERROR on
     // the row that is actually broken.
-    let rendered = text::render(value.units(), currency)
+    let rendered = text::render(amount.units(), amount.currency())
         .unwrap_or_else(|e| error!("kmoney: stored amount cannot be rendered: {e}"));
     alloc::ffi::CString::new(rendered)
         .unwrap_or_else(|e| error!("kmoney: rendered form contains a NUL byte: {e}"))
@@ -358,36 +217,6 @@ fn kmoney_out(value: kmoney) -> alloc::ffi::CString {
 // value-carried code remains the only thing standing between two currencies in an expression.
 // =========================================================================================
 
-/// PostgreSQL's V1 calling-convention record, one per raw function.
-///
-/// `#[pg_extern]` emits this for you; a hand-declared `LANGUAGE c` function has to supply it or
-/// PostgreSQL refuses the call with
-/// `could not find function information for function "..."`. The name must be exactly
-/// `pg_finfo_<symbol>`.
-// `extern "C"`, not `"C-unwind"`: this returns a pointer to a static and cannot panic, so
-// there is nothing to unwind. `#[pg_guard]`'s C-unwind requirement applies to the functions it
-// wraps, not to the finfo record beside them.
-macro_rules! pg_finfo_v1 {
-    ($name:ident, $finfo:ident) => {
-        static $name: pg_sys::Pg_finfo_record = pg_sys::Pg_finfo_record { api_version: 1 };
-
-        #[unsafe(no_mangle)]
-        pub extern "C" fn $finfo() -> *const pg_sys::Pg_finfo_record {
-            &raw const $name
-        }
-    };
-}
-
-pg_finfo_v1!(FINFO_TYPMOD_IN, pg_finfo_kmoney_typmod_in);
-pg_finfo_v1!(FINFO_TYPMOD_OUT, pg_finfo_kmoney_typmod_out);
-// The binary-input functions need the same records. Declared HERE, beside the others,
-// because `macro_rules!` is textually scoped -- invoking `pg_finfo_v1!` above its own
-// definition fails with `cannot find macro in this scope`, which is what happened.
-pg_finfo_v1!(FINFO_RECV, pg_finfo_kmoney_recv);
-pg_finfo_v1!(FINFO_MIXED_RECV, pg_finfo_kmoney_mixed_recv);
-
-mod typmod;
-
 // =========================================================================================
 // Arithmetic — defined for `kmoney` and, deliberately, for NOTHING ELSE.
 //
@@ -403,46 +232,6 @@ mod typmod;
 // and returned failed or succeeded by plan order. The state was the defect, not the aggregate —
 // see `kmoney_sum_accum` for the widened one that replaces it.
 // =========================================================================================
-
-/// The currency check both operators share.
-///
-/// PostgreSQL does not pass typmod to operators, so `kmoney(USD) + kmoney(IDR)` arrives
-/// here as `kmoney + kmoney` with nothing but the values to tell them apart. This is the
-/// only mechanism left, which is why the currency is carried in the value at all.
-fn same_currency(a: kmoney, b: kmoney, op: &str) -> Iso4217 {
-    if a.code() != b.code() {
-        let (left, right) = (describe(a.code()), describe(b.code()));
-        error!("kmoney: cannot compute {left} {op} {right}: different currencies");
-    }
-    let Some(currency) = Iso4217::from_numeric(a.code()) else {
-        error!("kmoney: stored ISO 4217 numeric code {} is not in kamu_money_core's table", a.code());
-    };
-    currency
-}
-
-/// A stored numeric code resolved to a currency, or a SQL error naming the offending value.
-///
-/// An unknown code means the row was written by a build whose currency table differed, or the
-/// bytes are corrupt. Rendering a placeholder would attach a number to the wrong currency,
-/// which is precisely the silent wrongness this design exists to prevent.
-///
-/// One helper rather than the five hand-written copies this replaced -- two of which checked
-/// `is_none()`, discarded the answer, and looked the currency up again later.
-fn currency_or_error(code: u16, context: &str) -> Iso4217 {
-    Iso4217::from_numeric(code).unwrap_or_else(|| {
-        error!("{context}: stored ISO 4217 numeric code {code} is not in kamu_money_core's table")
-    })
-}
-
-/// An ISO code for an error message, without erroring on the way to an error.
-fn describe(code: u16) -> String {
-    Iso4217::from_numeric(code).map_or_else(|| format!("<unknown code {code}>"), |c| c.alpha3().to_owned())
-}
-
-// =========================================================================================
-mod ops;
-
-mod aggregate;
 
 fixed_length_money_type! {
     /// Money whose currency is **not** fixed by the column.
@@ -464,13 +253,6 @@ fixed_length_money_type! {
     /// exactly as Rust proves a value into a typed `Money<C>` before it can be added.
     kmoney_mixed
 }
-
-#[doc(hidden)]
-mod mixed;
-
-mod division;
-
-mod allocation;
 
 // =========================================================================================
 // THERE IS NO PATH TO `numeric`. Deliberately, and this is the second time it was removed.
@@ -583,13 +365,16 @@ mod tests {
     #[pg_test]
     fn the_catalog_says_fixed_length_plain_and_byte_aligned() {
         let row = Spi::get_one::<String>(
-            "SELECT format('%s/%s/%s/%s', typlen, typbyval, typalign, typstorage)
-               FROM pg_type WHERE typname = 'kmoney'",
+            "SELECT string_agg(
+                 format('%s=%s/%s/%s/%s', typname, typlen, typbyval, typalign, typstorage),
+                 ',' ORDER BY typname
+             )
+               FROM pg_type WHERE typname IN ('kmoney', 'kmoney_mixed')",
         )
         .expect("query ran")
         .expect("not null");
         // PostgreSQL renders booleans as t/f, so typbyval = false prints as "f".
-        assert_eq!(row, "18/f/c/p");
+        assert_eq!(row, "kmoney=18/f/c/p,kmoney_mixed=18/f/c/p");
     }
 
     /// **`kmoney` is NOT smaller than `numeric(36,18)` for typical amounts.** Measured:
@@ -710,7 +495,7 @@ mod tests {
     // the literal's source text and running it through an `unescape` pass, so a `\`-newline
     // continuation is not reliably folded away and would be compared verbatim.
     #[pg_test(
-        error = "kmoney: 19 fractional digits exceeds the canonical scale of 18; refused rather than rounded, because rounding here would lose money silently, in \"USD 0.0000000000000000004\""
+        error = "kmoney: 19 fractional digits exceeds the supported scale of 18, in \"USD 0.0000000000000000004\""
     )]
     fn kmoney_refuses_what_numeric_silently_rounds() {
         Spi::get_one::<String>("SELECT 'USD 0.0000000000000000004'::kmoney::text").ok();
@@ -727,7 +512,7 @@ mod tests {
 
     /// One major unit past the domain is refused by the same check `kamu_money_core` applies.
     #[pg_test(
-        error = "kmoney: money domain overflow: 1000000000000000000000000000000000000 units is outside the domain |units| <= 999999999999999999999999999999999999 (NUMERIC(36,18) admits |v| < 10^18), in \"IDR 1000000000000000000\""
+        error = "kmoney: 1000000000000000000000000000000000000 canonical units is outside the supported range -999999999999999999999999999999999999..=999999999999999999999999999999999999, in \"IDR 1000000000000000000\""
     )]
     fn one_unit_past_the_domain_is_refused() {
         Spi::get_one::<String>("SELECT 'IDR 1000000000000000000'::kmoney::text").ok();
@@ -735,7 +520,7 @@ mod tests {
 
     /// A currency `kamu_money_core` does not know is refused at input, not stored and guessed at
     /// later. There is exactly one currency table and it lives in `kamu_money_core` (C9).
-    #[pg_test(error = "kmoney: not a money literal: expected \"<ISO> <amount>\", in \"ZWL 1.00\"")]
+    #[pg_test(error = "kmoney: invalid money literal, in \"ZWL 1.00\"")]
     fn an_unknown_currency_is_refused_at_the_boundary() {
         Spi::get_one::<String>("SELECT 'ZWL 1.00'::kmoney::text").ok();
     }

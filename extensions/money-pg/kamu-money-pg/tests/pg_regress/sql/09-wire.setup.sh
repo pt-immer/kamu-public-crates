@@ -30,7 +30,11 @@
 # file cannot drift away from what the type actually writes.
 set -euo pipefail
 
-D="${KMONEY_SUITE_DIR:-/tmp}"
+D=$(mktemp -d /tmp/kmoney-suite.XXXXXX)
+chmod 0700 "$D"
+# Machine-readable handoff to run-suite.sh. Print this before later work so the runner can clean
+# the directory even if a fixture assertion fails.
+printf 'KMONEY_SUITE_DIR=%s\n' "$D"
 
 # 11-byte signature, then flags and header-extension, both int32 zero.
 HDR='\x50\x47\x43\x4f\x50\x59\x0a\xff\x0d\x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00'
@@ -53,7 +57,7 @@ PAD8='\x00\x00\x00\x00\x00\x00\x00\x00'
 # The variables ARE the format string, which is what makes printf interpret \xNN. None of them
 # contain a `%`, so there is no format-injection surface here.
 # shellcheck disable=SC2059
-write() { printf "$2" > "$D/$1"; chmod 0644 "$D/$1"; }
+write() { printf "$2" > "$D/$1"; chmod 0600 "$D/$1"; }
 
 # Valid framing, units one past the domain top, currency left valid -> the DOMAIN check fires.
 write kmoney_suite_bad_domain.bin "$HDR$FIELDS$LEN18$UNITS_OVER$USD$TRAILER"
@@ -76,4 +80,4 @@ for f in bad_domain:45 bad_nocur:45 bad_short:37 bad_long:53; do
         exit 1
     }
 done
-echo "09-wire.setup: wrote 4 crafted payloads to $D"
+echo "09-wire.setup: wrote 4 crafted payloads"

@@ -5,7 +5,7 @@
 #   kamu-money-pg/yb/run-yb.sh [yb-image] [artifact-dir] [out-file]
 #
 # Prereq: kamu-money-pg/yb/out/{kmoney.so,kmoney.control,kmoney--*.sql} built by
-#   docker build -f kamu-money-pg/yb/Dockerfile --target artifact -o kamu-money-pg/yb/out .
+#   just pg yb-build
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
@@ -23,11 +23,12 @@ workspace_lock "$(basename "$0")" || exit 1
 # (review-3 N9). Every Justfile path already passes a resolved "$YB_REF"; this closes the
 # hand-invocation route, which was the only one left that could straddle a retag.
 YB_IMAGE="${1:-$(./kamu-money-pg/yb/yb-image.sh)}"
-ART="${2:-kamu-money-pg/yb/out}"
+RUN_ROOT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}"
+ART="${2:-$RUN_ROOT}"
 # Under out/, matching what the Justfile passes and what .gitignore covers (review-3 N10). The
 # old default wrote to kamu-money-pg/yb/out-yb.txt -- one directory up, NOT ignored, so a hand run
 # left an untracked battery output sitting in the tree.
-OUT="${3:-kamu-money-pg/yb/out/out-yb.txt}"
+OUT="${3:-$RUN_ROOT/out-yb.txt}"
 SQLFILE="${4:-kamu-money-pg/yb/abi_battery.sql}"
 
 # Baked or copied, verified by hash either way -- one implementation, shared with the cluster

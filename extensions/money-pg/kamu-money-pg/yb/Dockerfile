@@ -6,8 +6,8 @@
 #
 # The three-symbol adaptation now lives in the pgrx fork the workspace root patches in
 # (pgrx-yugabytedb, tag v0.19.1-yb.1), behind its `yb-pg15` feature -- it is no longer vendored
-# and textually patched here. Build context is the repo root:
-#   docker build -f kamu-money-pg/yb/Dockerfile --target artifact -o kamu-money-pg/yb/out .
+# and textually patched here. Build through `just pg yb-build`; the recipe supplies
+# the lane context plus the normalized kamu-money-core named context.
 ARG YB_IMAGE=yugabytedb/yugabyte:2025.2.5.1-b1
 FROM ${YB_IMAGE} AS build
 USER root
@@ -29,13 +29,25 @@ ENV SSL_CERT_FILE=/etc/pki/tls/certs/ca-bundle.crt \
     CARGO_HTTP_CAINFO=/etc/pki/tls/certs/ca-bundle.crt
 
 RUN curl --proto '=https' --tlsv1.2 -sSfo /tmp/rustup.sh https://sh.rustup.rs \
- && sh /tmp/rustup.sh -y --default-toolchain 1.97.0
+ && sh /tmp/rustup.sh -y --default-toolchain 1.96.0
 ENV PATH=/root/.cargo/bin:$PATH
 RUN cargo install cargo-pgrx --version 0.19.1 --locked
 ENV RUST_BACKTRACE=1
 
 WORKDIR /work
 COPY . .
+
+# Keep the lane as the primary context. A second context carries only Cargo's
+# normalized kamu-money-core package; release proof disables its Cargo patch.
+ARG KMONEY_USE_LOCAL_CORE=1
+COPY --from=kamu-money-core . /opt/kamu-money-core
+RUN case "${KMONEY_USE_LOCAL_CORE}" in \
+      0) echo "kamu-money-core: resolving from crates.io" ;; \
+      1) printf '\n[patch.crates-io]\nkamu-money-core = { path = "/opt/kamu-money-core" }\n' \
+           >> /work/.cargo/config.toml ;; \
+      *) echo "KMONEY_USE_LOCAL_CORE must be 0 or 1" >&2; exit 2 ;; \
+    esac
+ENV KMONEY_USE_LOCAL_CORE=${KMONEY_USE_LOCAL_CORE}
 
 # `.cargo/config.toml` forces PGRX_HOME=<workspace>/.pgrx (relative, force=true), but
 # `cargo pgrx init` does NOT honour that [env] and writes to the default /root/.pgrx,
@@ -125,7 +137,7 @@ COPY --from=build /out/ /
 # connections, because `module_pathname = 'kmoney'` means live backends keep the old library
 # loaded. See yb/RUNBOOK.md §5.
 #
-#   docker build -f kamu-money-pg/yb/Dockerfile --target node -t kmoney-yugabyte:<ver> .
+#   just pg yb-node-image
 FROM ${YB_IMAGE} AS node
 COPY --from=build /out/kmoney.so             /home/yugabyte/postgres/lib/kmoney.so
 COPY --from=build /out/kmoney.control        /home/yugabyte/postgres/share/extension/
@@ -147,8 +159,7 @@ RUN set -eux; \
 # =================================================================================================
 # THE BOUNDARY-PROBE NODE. A MEASUREMENT ARTEFACT, NEVER A DEPLOYABLE ONE.
 #
-#   docker build -f kamu-money-pg/yb/Dockerfile --target boundary-node \
-#     --build-arg YB_IMAGE=<digest> --build-arg EXTRA_FEATURES=boundary-probe -t <tag> .
+#   just pg bench-boundary-yb
 #
 # WHY IT NEEDS ITS OWN TARGET. The probe compares a null `#[pg_extern]` against a null C function
 # of the same signature, and the subtraction only means anything if BOTH were compiled against

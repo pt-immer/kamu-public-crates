@@ -7,14 +7,14 @@
 #     warning: the MSRV in `clippy.toml` and `Cargo.toml` differ;
 #              using `1.94.0` from `clippy.toml`
 #
-# That is not merely noise. This lane's floor is 1.97 because pgrx 0.19.1 requires
-# 1.96, and linting it at 1.94 would flag a legitimate use of anything newer as an
+# That is not merely noise. This lane's floor is 1.96 because pgrx 0.19.1 requires
+# it, and linting at 1.94 would flag a legitimate use of anything newer as an
 # MSRV violation -- an error about a rule this workspace does not hold to.
 #
 # Keep it in step with `rust-version` in extensions/money-pg/Cargo.toml. They are
 # two statements of one fact, and clippy says so out loud when they drift, which is
 # how this was found.
-msrv = "1.97"
+msrv = "1.96"
 
 # A clippy.toml REPLACES the one above it rather than merging, so the root's list
 # is restated here. Same reasoning as there: these are product and standard names,

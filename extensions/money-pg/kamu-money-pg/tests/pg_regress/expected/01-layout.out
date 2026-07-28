@@ -1,7 +1,8 @@
 -- kmoney_is_eighteen_bytes_with_no_header
 stored=18 in_memory=18
 -- the_catalog_says_fixed_length_plain_and_byte_aligned
-18/f/c/p
+kmoney=18/f/c/p
+kmoney_mixed=18/f/c/p
 -- the_size_tradeoff_against_numeric_is_measured_not_assumed
 kmoney_fixed_at_18=true numeric_wins_typical=true numeric_loses_at_top=true
 -- the_size_does_not_depend_on_the_value

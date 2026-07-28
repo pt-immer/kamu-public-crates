@@ -85,7 +85,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
+        with:
+          toolchain: 1.96.0
         with:
           components: rustfmt
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
@@ -102,8 +104,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
+          toolchain: 1.96.0
           components: clippy
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
@@ -120,7 +123,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
+        with:
+          toolchain: 1.96.0
         with:
           components: clippy
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
@@ -603,44 +608,6 @@ jobs:
       # nine published crates' audit.
       - run: just pg deny
 
-  money-core-published:
-    name: is kamu-money-core on crates.io?
-    needs: changes
-    # ALWAYS RUNS WHEN THE LANE DOES, and reports rather than deciding silently.
-    # The container-backed suites below cannot work until this is true, and this
-    # job is what makes that visible in the checks list instead of being a comment
-    # somebody has to find.
-    if: ${{ needs.changes.outputs.moneypg == 'true' }}
-    runs-on: ubuntu-latest
-    outputs:
-      published: ${{ steps.probe.outputs.published }}
-    steps:
-      # WHY THIS EXISTS. kamu-money-pg declares a plain `kamu-money-core = "0.1"`,
-      # and the lane's recipes inject the path on the command line so that no
-      # manifest is ever rewritten. That injection CANNOT REACH INSIDE A CONTAINER:
-      # every Docker build here uses the lane root as its context and the
-      # Dockerfile does `COPY . .`, so the image holds extensions/money-pg and
-      # nothing above it — `../../crates/money-core` is not there.
-      #
-      # So the host-side jobs work today and the container ones wait for the
-      # published crate. Probing rather than hard-coding a flag means they switch
-      # themselves on the day it publishes, with nobody remembering to.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - id: probe
-        run: |
-          requirement="$(
-            cargo metadata --no-deps --format-version 1 \
-              --manifest-path extensions/money-pg/Cargo.toml |
-              python3 -c 'import json,sys; m=json.load(sys.stdin); p=next(x for x in m["packages"] if x["name"]=="kamu-money-pg"); print(next(d["req"] for d in p["dependencies"] if d["name"]=="kamu-money-core"))'
-          )"
-          python3 scripts/crates_io.py probe \
-            kamu-money-core "$requirement" --github-output "$GITHUB_OUTPUT"
-          if grep -qx 'published=true' "$GITHUB_OUTPUT"; then
-            echo "kamu-money-core is on crates.io — the container-backed suites will run."
-          else
-            echo "::notice title=PG lane partially gated::kamu-money-core is not yet on crates.io, so the container-backed suites (PostgreSQL matrix, YugabyteDB) are skipped. The host-side jobs still run. See extensions/money-pg/DESIGN.md section 6."
-          fi
-
   test-money-pg-offline:
     name: test (kamu-money-pg hygiene guards)
     needs: [changes, lint-shell]
@@ -655,12 +622,32 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: extensions/money-pg
-      # NEEDS NO PostgreSQL AND NO pgrx. The guards read files — the Justfile, the
-      # yb/*.sh scripts, the control file — and live in their own dependency-free
-      # crate for exactly that reason: an integration test under the pgrx cdylib
-      # would drag the whole PostgreSQL build onto this job's critical path.
+      # NEEDS NO PostgreSQL AND NO pgrx. The guards inspect repository structure,
+      # and the safe payload tests compile the exact extension module without its
+      # ABI shell. An integration test under the pgrx cdylib would drag PostgreSQL
+      # onto this job's critical path.
       - run: just pg fmt-check
       - run: just pg test-hygiene
+
+  miri-money-pg:
+    name: miri (kamu-money-pg safe payload)
+    needs: changes
+    if: ${{ needs.changes.outputs.moneypg == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # nightly
+        with:
+          toolchain: nightly
+          components: miri
+      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+        with:
+          tool: just
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: extensions/money-pg
+      # Deliberately narrow: Miri cannot prove PostgreSQL/pgrx ABI promises.
+      - run: just pg miri-payload
 
   lint-money-pg:
     name: clippy (kamu-money-pg pg18)
@@ -768,8 +755,8 @@ jobs:
 
   test-money-pg-matrix:
     name: test (kamu-money-pg PG${{ matrix.pg }})
-    needs: [changes, money-core-published, lint-money-pg]
-    if: ${{ needs.changes.outputs.moneypg == 'true' && needs.money-core-published.outputs.published == 'true' }}
+    needs: [changes, lint-money-pg]
+    if: ${{ needs.changes.outputs.moneypg == 'true' }}
     runs-on: ubuntu-latest
     strategy:
       # FOUR JOBS, NOT ONE LOOP. The recipe's own `test-matrix.sh` walks the
@@ -795,8 +782,8 @@ jobs:
 
   test-money-pg-yb:
     name: test (kamu-money-pg YugabyteDB)
-    needs: [changes, money-core-published, lint-money-pg]
-    if: ${{ needs.changes.outputs.moneypg == 'true' && needs.money-core-published.outputs.published == 'true' }}
+    needs: [changes, lint-money-pg]
+    if: ${{ needs.changes.outputs.moneypg == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -841,8 +828,8 @@ jobs:
       - coverage-money
       - lint-shell
       - deny-money-pg
-      - money-core-published
       - test-money-pg-offline
+      - miri-money-pg
       - lint-money-pg
       - docs-money-pg
       - test-money-pg-matrix
@@ -886,8 +873,8 @@ jobs:
             coverage-money,
             lint-shell,
             deny-money-pg,
-            money-core-published,
             test-money-pg-offline,
+            miri-money-pg,
             lint-money-pg,
             docs-money-pg,
             test-money-pg-matrix,

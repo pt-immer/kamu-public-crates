@@ -9,6 +9,123 @@
 //! fails on a published artifact would be a worse defect than the ones it prevents.
 
 use std::path::{Path, PathBuf};
+use syn::visit::Visit;
+
+fn rust_sources_under(root: &Path) -> Vec<PathBuf> {
+    fn collect(directory: &Path, files: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(directory)
+            .unwrap_or_else(|error| panic!("{} is not readable: {error}", directory.display()))
+        {
+            let path = entry.expect("readable directory entry").path();
+            if path.is_dir() {
+                collect(&path, files);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    collect(root, &mut files);
+    files.sort();
+    files
+}
+
+fn unsafe_syntax_count(source: &str) -> Result<usize, syn::Error> {
+    struct Counter(usize);
+
+    impl<'ast> Visit<'ast> for Counter {
+        fn visit_attribute(&mut self, attribute: &'ast syn::Attribute) {
+            if attribute.path().is_ident("unsafe") {
+                self.0 += 1;
+            }
+            syn::visit::visit_attribute(self, attribute);
+        }
+
+        fn visit_expr_unsafe(&mut self, expression: &'ast syn::ExprUnsafe) {
+            self.0 += 1;
+            syn::visit::visit_expr_unsafe(self, expression);
+        }
+
+        fn visit_item_foreign_mod(&mut self, item: &'ast syn::ItemForeignMod) {
+            self.0 += usize::from(item.unsafety.is_some());
+            syn::visit::visit_item_foreign_mod(self, item);
+        }
+
+        fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+            self.0 += usize::from(item.sig.unsafety.is_some());
+            syn::visit::visit_impl_item_fn(self, item);
+        }
+
+        fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+            self.0 += usize::from(item.sig.unsafety.is_some());
+            syn::visit::visit_item_fn(self, item);
+        }
+
+        fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+            self.0 += usize::from(item.unsafety.is_some());
+            syn::visit::visit_item_impl(self, item);
+        }
+
+        fn visit_item_trait(&mut self, item: &'ast syn::ItemTrait) {
+            self.0 += usize::from(item.unsafety.is_some());
+            syn::visit::visit_item_trait(self, item);
+        }
+
+        fn visit_trait_item_fn(&mut self, item: &'ast syn::TraitItemFn) {
+            self.0 += usize::from(item.sig.unsafety.is_some());
+            syn::visit::visit_trait_item_fn(self, item);
+        }
+    }
+
+    let syntax = syn::parse_file(source)?;
+    let mut counter = Counter(0);
+    counter.visit_file(&syntax);
+    Ok(counter.0)
+}
+
+#[test]
+fn unsafe_syntax_is_confined_to_the_ffi_layer() {
+    let source_root = repo_root().join("kamu-money-pg/src");
+    let mut outside_ffi = Vec::new();
+    let mut ffi_constructs = 0;
+
+    for path in rust_sources_under(&source_root) {
+        let source = std::fs::read_to_string(&path).expect("Rust source is readable");
+        let count = unsafe_syntax_count(&source)
+            .unwrap_or_else(|error| panic!("{} must parse as Rust: {error}", path.display()));
+        let relative = path.strip_prefix(&source_root).expect("source is below source root");
+        if relative.starts_with("ffi") {
+            ffi_constructs += count;
+        } else if count != 0 {
+            outside_ffi.push(format!("{} ({count})", relative.display()));
+        }
+    }
+
+    assert!(ffi_constructs > 0, "positive control: ffi/ must contain the required unsafe boundary");
+    assert!(
+        outside_ffi.is_empty(),
+        "unsafe syntax is allowed only below kamu-money-pg/src/ffi:\n{}",
+        outside_ffi.join("\n")
+    );
+}
+
+#[test]
+fn the_unsafe_syntax_guard_distinguishes_code_from_prose() {
+    let prose = r#"
+        //! `unsafe` in documentation is not syntax.
+        const WORD: &str = "unsafe fn";
+        fn safe() {}
+    "#;
+    assert_eq!(unsafe_syntax_count(prose).expect("sample parses"), 0);
+
+    let violation = r#"
+        unsafe fn raw() {
+            unsafe { core::ptr::read(core::ptr::null::<u8>()); }
+        }
+    "#;
+    assert_eq!(unsafe_syntax_count(violation).expect("sample parses"), 2);
+}
 
 /// The lane's workspace root.
 ///
@@ -75,6 +192,72 @@ fn the_docker_context_excludes_host_build_state() {
     for required in [".pgrx", "target", "kamu-money-pg/yb/out"] {
         assert!(patterns.contains(&required), ".dockerignore must exclude {required:?}; found {patterns:?}");
     }
+}
+
+/// Container tests may use the local core package without widening the lane's
+/// primary Docker context. Release proof must disable that patch.
+#[test]
+fn docker_builds_share_the_packaged_core_context() {
+    let root = repo_root();
+    let top = repository_top();
+    let helper = std::fs::read_to_string(root.join("scripts/docker-core-context.sh"))
+        .expect("Docker context helper is readable");
+    for required in ["cargo package", "tests/pg_native_column.rs", "--build-context", "KMONEY_USE_LOCAL_CORE"]
+    {
+        assert!(helper.contains(required), "Docker context helper must contain {required:?}");
+    }
+
+    let core_manifest =
+        std::fs::read_to_string(top.join("crates/money-core/Cargo.toml")).expect("core manifest is readable");
+    assert!(
+        core_manifest.contains("\"tests/**/*.rs\""),
+        "the normalized core package must include the native-column integration test"
+    );
+
+    for dockerfile in
+        ["kamu-money-pg/Dockerfile", "kamu-money-pg/yb/Dockerfile", "kamu-money-pg/yb/Dockerfile.pg15"]
+    {
+        let source = std::fs::read_to_string(root.join(dockerfile))
+            .unwrap_or_else(|error| panic!("{dockerfile} is readable: {error}"));
+        for required in ["--from=kamu-money-core", "KMONEY_USE_LOCAL_CORE", "[patch.crates-io]"] {
+            assert!(source.contains(required), "{dockerfile} must contain {required:?}");
+        }
+    }
+
+    for caller in [
+        "Justfile",
+        "kamu-money-pg/test-matrix.sh",
+        "kamu-money-pg/native-driver-test.sh",
+        "kamu-money-pg/yb/run-yb-driver.sh",
+        "kamu-money-pg/yb/node-image.sh",
+        "kamu-money-pg/bench/run-bench-boundary-yb.sh",
+    ] {
+        let source = std::fs::read_to_string(root.join(caller))
+            .unwrap_or_else(|error| panic!("{caller} is readable: {error}"));
+        for line in source.lines().filter(|line| {
+            let trimmed = line.trim_start();
+            !trimmed.starts_with('#') && trimmed.contains("docker build")
+        }) {
+            assert!(
+                line.contains("KMONEY_CORE_DOCKER_ARGS"),
+                "{caller} has a Docker build without the packaged-core context: {line}"
+            );
+        }
+    }
+
+    let justfile = std::fs::read_to_string(root.join("Justfile")).expect("Justfile is readable");
+    let release = executable_recipe_body(&justfile, "gate-pg-release");
+    assert!(
+        release.contains("export KMONEY_USE_LOCAL_CORE=0"),
+        "gate-pg-release must disable the local core patch:\n{release}"
+    );
+
+    let workflow = std::fs::read_to_string(top.join(".github/workflows/on-pr-synced.yml"))
+        .expect("PR workflow is readable");
+    assert!(
+        !workflow.contains("money-core-published"),
+        "ordinary container CI must not skip while waiting for first publication"
+    );
 }
 
 /// Every workspace member's `Cargo.toml` declares `license = "MIT"`, and for a long time the
@@ -189,9 +372,8 @@ fn workspace_members(root: &Path) -> Vec<String> {
 /// `kamu-money-pg` depended on `kamu-money-core` by path alone, which makes the crate impossible to
 /// package: cargo refuses with "all dependencies must have a version requirement specified".
 ///
-/// This asserts the requirement exists, NOT that `cargo package -p kamu-money-pg` succeeds. It
-/// cannot succeed until `kamu-money-core` is actually on crates.io — that residual failure is
-/// publication ORDER, not a defect, and asserting it would pin a fact that is meant to change.
+/// This asserts that the manifest carries a version requirement and no path. Host and container
+/// test patches are external to the manifest; release proof disables them.
 #[test]
 fn the_pgrx_crate_can_be_packaged() {
     let root = repo_root();
@@ -389,11 +571,8 @@ fn kmoney_allocate_does_not_materialize_its_weights_before_the_cap() {
     // back unnoticed. Naming the crate instead of the file is what makes it survive the next
     // move as well as this one.
     let src = root.join("kamu-money-pg/src");
-    let lib = std::fs::read_dir(&src)
-        .expect("kamu-money-pg/src is readable")
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "rs"))
+    let lib = rust_sources_under(&src)
+        .into_iter()
         .filter_map(|p| std::fs::read_to_string(p).ok())
         .find(|t| t.lines().any(|l| l.trim_start().starts_with("fn kmoney_allocate(")))
         .expect("kamu-money-pg still defines kmoney_allocate somewhere under src/");
@@ -534,7 +713,7 @@ fn no_tracked_file_teaches_just_name_value_arguments() {
 /// Every `#[pg_test]` in `kamu-money-pg` is accounted for by the portable case suite.
 ///
 /// **This is the guard that stops a skip from being counted as a pass.** `cargo pgrx test` manages
-/// its own PostgreSQL and cannot be aimed at YugabyteDB, so the 65 tests that encode this type's
+/// its own PostgreSQL and cannot be aimed at YugabyteDB, so the tests encoding this type's
 /// contract were restated as `sql/` + `expected/` pairs in `kamu-money-pg/tests/pg_regress`, which
 /// run against any live server. The risk in a port is not that a case fails — a failing case is
 /// loud. It is that a case is quietly never written, and the suite reports green over a hole.
@@ -554,13 +733,7 @@ fn the_case_suite_accounts_for_every_pg_test() {
     // the in-backend suite now lives beside the code it tests, in `ops.rs`, `wire.rs` and so on.
     // A guard scoped to one file stops guarding the moment its subject moves, which is precisely
     // when a test can go missing, so the scope is the crate and the ordering is deterministic.
-    let mut sources: Vec<std::path::PathBuf> = std::fs::read_dir(root.join("kamu-money-pg/src"))
-        .expect("kamu-money-pg/src is readable")
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "rs"))
-        .collect();
-    sources.sort();
+    let sources = rust_sources_under(&root.join("kamu-money-pg/src"));
     let lib = sources
         .iter()
         .map(|p| std::fs::read_to_string(p).expect("crate source is readable"))
@@ -698,6 +871,21 @@ fn the_case_suite_accounts_for_every_pg_test() {
         .filter(|c| c.starts_with('`') && c.ends_with('`'))
         .map(|c| c.trim_matches('`').to_owned())
         .collect();
+    println!(
+        "pg_regress coverage: {} #[pg_test]s from {}; {} portable, {} NOT-PORTABLE",
+        tests.len(),
+        sources
+            .iter()
+            .map(|path| path
+                .strip_prefix(&root)
+                .expect("crate source is below lane root")
+                .display()
+                .to_string())
+            .collect::<Vec<_>>()
+            .join(", "),
+        tests.len() - not_portable.len(),
+        not_portable.len()
+    );
     let unlabelled: Vec<&String> =
         tests.iter().filter(|t| !labels.contains(t) && !not_portable.contains(t)).collect();
     assert!(
@@ -731,22 +919,24 @@ fn the_host_gates_include_docs_and_dependency_audit() {
     let root = repo_root();
     let justfile = std::fs::read_to_string(root.join("Justfile")).expect("Justfile is readable");
 
-    for gate in ["gate-offline:", "gate-pg:"] {
-        let line = justfile
-            .lines()
-            .find(|l| l.starts_with(gate))
-            .unwrap_or_else(|| panic!("Justfile has no `{gate}` recipe"));
+    let offline = justfile
+        .lines()
+        .find(|line| line.starts_with("gate-offline:"))
+        .expect("Justfile has no `gate-offline` recipe");
+    for required in ["doc-pg", "deny", "test-hygiene", "miri-payload"] {
         assert!(
-            line.contains("doc-pg"),
-            "`{gate}` must depend on `doc-pg`; a check nobody runs is a check that does not \
-             exist: {line}"
-        );
-        assert!(
-            line.split_whitespace().any(|word| word == "deny"),
-            "`{gate}` must depend on the lane's `deny` recipe; the root audit cannot see this \
-             excluded dependency graph: {line}"
+            offline.split_whitespace().any(|word| word == required),
+            "`gate-offline` must depend on `{required}`: {offline}"
         );
     }
+
+    let database =
+        justfile.lines().find(|line| line.starts_with("gate-pg:")).expect("Justfile has no `gate-pg` recipe");
+    assert!(
+        database.split_whitespace().any(|word| word == "gate-offline"),
+        "`gate-pg` must compose `gate-offline`, so database changes cannot skip its docs, audit, \
+         hygiene, or Miri checks: {database}"
+    );
 
     // The same failure one level up. `gate-pg-release` is the recipe that decides whether a revision
     // may carry money on YugabyteDB, and each of these answers a question none of the others do:
@@ -995,6 +1185,41 @@ fn executable_recipe_body(justfile: &str, name: &str) -> String {
         body.push('\n');
     }
     body
+}
+
+fn recipe_routes_scratch_through_run_root(body: &str) -> bool {
+    const DEFAULT: &str = r#"RUN_ROOT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}""#;
+    body.contains(DEFAULT)
+        && body
+            .lines()
+            .filter(|line| !line.contains(DEFAULT))
+            .all(|line| !line.contains("kamu-money-pg/yb/out"))
+}
+
+#[test]
+fn artifact_recipes_honor_kmoney_run_root() {
+    let justfile = std::fs::read_to_string(repo_root().join("Justfile")).expect("Justfile is readable");
+    for recipe in ["yb-build", "yb-native", "_yb-ab-ref", "gate-pg-release"] {
+        let body = executable_recipe_body(&justfile, recipe);
+        assert!(
+            recipe_routes_scratch_through_run_root(&body),
+            "`{recipe}` must derive its scratch paths once from KMONEY_RUN_ROOT:\n{body}"
+        );
+    }
+}
+
+#[test]
+fn the_run_root_guard_rejects_one_hard_coded_output() {
+    let good = r#"
+        RUN_ROOT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}"
+        docker build -o "$RUN_ROOT" .
+    "#;
+    let bad = r#"
+        RUN_ROOT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}"
+        docker build -o kamu-money-pg/yb/out .
+    "#;
+    assert!(recipe_routes_scratch_through_run_root(good));
+    assert!(!recipe_routes_scratch_through_run_root(bad));
 }
 
 /// The guard above must fail when the thing it guards is removed.

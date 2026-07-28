@@ -68,11 +68,11 @@ PG_MAJORS := "15 16 17 18"
 #
 #     just pg lint CORE_PATCH=
 #
-# THIS DOES NOT REACH INSIDE A CONTAINER, and that is the important limitation. Every Docker build
-# here uses the LANE ROOT as its context (`docker build -f kamu-money-pg/Dockerfile ... .`) and the
-# Dockerfile does `COPY . .`, so `/work` holds this directory and nothing above it. A relative path
-# to `../../crates/money-core` does not exist in the image. Container-backed suites therefore need
-# kamu-money-core PUBLISHED -- see the note on `test-pg`.
+# Container builds cannot use that host-relative patch. `scripts/docker-core-context.sh`
+# instead runs `cargo package` and supplies only the normalized kamu-money-core package as a
+# named Docker context. The lane remains the primary context; no other public crate enters the
+# image. `KMONEY_USE_LOCAL_CORE=0` disables the image-local patch so the release gate still proves
+# that the plain version dependency resolves from a registry.
 # THE INNER SINGLE QUOTES ARE LOAD-BEARING. `just` interpolates this verbatim and
 # the SHELL then word-splits the result, which strips bare double quotes -- cargo
 # would receive `path=../../crates/money-core`, an unquoted TOML value, and fail
@@ -134,6 +134,16 @@ setup:
                 rc=1
             fi
         done
+
+        if cargo +nightly miri --version >/dev/null 2>&1; then
+            echo "setup: nightly Miri already present"
+        elif rustup component add miri --toolchain nightly >/dev/null 2>&1; then
+            echo "setup: nightly Miri ok"
+        else
+            echo "setup: FAILED to add Miri to the nightly toolchain" >&2
+            echo "setup: install nightly first with: rustup toolchain install nightly --profile minimal" >&2
+            rc=1
+        fi
     fi
 
     # cargo-pgrx must match the pinned pgrx EXACTLY -- it refuses to build an extension whose pgrx
@@ -212,6 +222,9 @@ doctor:
     fi
     cargo fmt --version   >/dev/null 2>&1 && ok "rustfmt"  || fail "rustfmt missing (rustup component add rustfmt)"
     cargo clippy --version >/dev/null 2>&1 && ok "clippy"   || fail "clippy missing (rustup component add clippy)"
+    cargo +nightly miri --version >/dev/null 2>&1 \
+        && ok "nightly Miri" \
+        || fail "nightly Miri missing (rustup component add miri --toolchain nightly)"
     # rust-src IS NOT CHECKED HERE ANY MORE. It guarded a compile-fail golden that quotes core's
     # own source, and that suite belongs to `kamu-money-core` in the main workspace -- the root
     # `just doctor` checks it there, against the gate that actually needs it. Nothing under this
@@ -412,8 +425,8 @@ check-pg pg="18":
 # hashes the sorted object set instead.
 #
 # `features` reaches the in-backend test surface, which the default build cannot see at all:
-# pass `pg_test` when the thing being refactored is the test suite. "64 tests still pass" proves
-# the ones that RAN are green, not that the same 64 still exist.
+# pass `pg_test` when the thing being refactored is the test suite. "The tests pass" proves
+# the ones that ran are green, not that the same generated test surface still exists.
 #
 # `expect` and `features` are quoted at the call site because they default to empty and `just`
 # args are positional.
@@ -424,18 +437,25 @@ schema-hash pg="18" expect="" features="":
 # scripts merge no docker streams on the host, the control file names the type it ships, the
 # licence texts have not drifted.
 #
-# THESE READ FILES AND LINK NOTHING, which is why they live in their own crate rather than under
+# THESE ARE PGRX-FREE, which is why they live in their own crate rather than under
 # kamu-money-pg/tests/. An integration test there drags in the pgrx build -- a trivial empty one
-# fails with `Error: $PGRX_HOME does not exist` -- and that would put PostgreSQL-from-source on the
-# critical path of a check that greps a Justfile. See hygiene/Cargo.toml.
+# fails with `Error: $PGRX_HOME does not exist` -- and that would put PostgreSQL on the critical
+# path of checks that inspect files or exercise the safe payload codec. See hygiene/Cargo.toml.
 #
 # nextest, then the doctests, per this repository's cadence: nextest does NOT run doc examples, so
 # an unpaired invocation stops testing them silently. The lib here is empty and has none today;
 # the pairing is what keeps that true if one is ever added.
-[doc("Repository-hygiene guards: sixteen facts about the tree that no compiler checks.")]
+[doc("Run pgrx-free repository guards and safe-payload tests.")]
 test-hygiene:
     cargo nextest run {{ CORE_PATCH }} -p kamu-money-pg-hygiene
     cargo test {{ CORE_PATCH }} -p kamu-money-pg-hygiene --doc
+
+# Miri covers the pure 18-byte codec and validation layer only. It cannot model PostgreSQL's
+# Datum provenance, OIDs, memory contexts, longjmp behavior, or pgrx array layout; live matrix and
+# catalog tests remain the proof for those contracts.
+[doc("Run Miri over the exact pgrx-free payload codec.")]
+miri-payload:
+    cargo +nightly miri test {{ CORE_PATCH }} -p kamu-money-pg-hygiene --test payload_miri
 
 # ONE MAJOR, NOT `--all-features`. The `pgN` features are mutually exclusive -- each selects a
 # different pgrx backend -- so `--all-features` does not compile here and never did. `doc-pg-all`
@@ -514,14 +534,10 @@ test-yb tag="":
 # FROM the YB image with `--features pg15,yb-pg15` -- proven byte-exact by `just yb-native` / `just yb-ab`
 # (E16). That gate compiles from the YB image, so it lives BESIDE this matrix, not inside it.
 #
-# THIS NEEDS kamu-money-core ON crates.io, and CORE_PATCH cannot help. Every Docker build here uses
-# the LANE ROOT as its context and the Dockerfile does `COPY . .`, so `/work` inside the image
-# holds this directory and nothing above it -- `../../crates/money-core` is not in the image, and a
-# path patch naming it resolves to nothing. The host-side recipes (`check-pg`, `doc-pg`, `lint`)
-# take the patch and work today; every container-backed suite, and therefore `gate-pg` and
-# `gate-pg-release`, waits for the published crate. Broadening the build context to the repository
-# root would also work and is deliberately not done: it would put all nine published crates into
-# every extension image build to satisfy a dependency that is about to exist anyway.
+# The helper packages kamu-money-core and passes that package as a named context. This keeps the
+# primary Docker context at the lane root while allowing ordinary pre-publication tests. The
+# release gate sets `KMONEY_USE_LOCAL_CORE=0`; those builds do not install the local patch and
+# therefore still fail unless the manifest's plain version requirement resolves from a registry.
 [doc("The pgrx extension suite, once per supported PostgreSQL major, each in a container.")]
 test-pg majors=PG_MAJORS jobs="1":
     MATRIX_JOBS={{ jobs }} ./kamu-money-pg/test-matrix.sh {{ majors }}
@@ -588,10 +604,13 @@ yb-build tag="":
     # 2026-07-26 review pointed out that it is the one entry point nothing could refuse.
     source ./kamu-money-pg/yb/workspace-lock.sh
     workspace_lock "yb-build" || exit 1
+    RUN_ROOT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}"
     YB_REF="$(./kamu-money-pg/yb/yb-image.sh {{ tag }})"
     echo "yb: image identity $YB_REF"
-    docker build -f kamu-money-pg/yb/Dockerfile --target artifact \
-        --build-arg YB_IMAGE="$YB_REF" -o kamu-money-pg/yb/out .
+    source ./scripts/docker-core-context.sh
+    docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
+        -f kamu-money-pg/yb/Dockerfile --target artifact \
+        --build-arg YB_IMAGE="$YB_REF" -o "$RUN_ROOT" .
 
 # NOT `yb-native: yb-build`. Each would resolve the tag separately, which is the very straddle
 # this is meant to prevent -- the identity is resolved ONCE here and passed to both the build
@@ -605,11 +624,14 @@ yb-native tag="":
     # arrived after the damage, which is the P0-2 shape.
     source ./kamu-money-pg/yb/workspace-lock.sh
     workspace_lock "yb-native" || exit 1
+    RUN_ROOT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}"
     YB_REF="$(./kamu-money-pg/yb/yb-image.sh {{ tag }})"
     echo "yb: image identity $YB_REF"
-    docker build -f kamu-money-pg/yb/Dockerfile --target artifact \
-        --build-arg YB_IMAGE="$YB_REF" -o kamu-money-pg/yb/out .
-    ./kamu-money-pg/yb/run-yb.sh "$YB_REF" "" kamu-money-pg/yb/out/out-yb.txt kamu-money-pg/yb/abi_battery.sql
+    source ./scripts/docker-core-context.sh
+    docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
+        -f kamu-money-pg/yb/Dockerfile --target artifact \
+        --build-arg YB_IMAGE="$YB_REF" -o "$RUN_ROOT" .
+    ./kamu-money-pg/yb/run-yb.sh "$YB_REF" "$RUN_ROOT" "$RUN_ROOT/out-yb.txt" kamu-money-pg/yb/abi_battery.sql
 
 # One resolved identity feeds ALL THREE consumers: the YB artifact build, the live YB runtime,
 # and the stock-PG15 reference build. Byte-exactness is a claim about one image; resolving the
@@ -617,12 +639,16 @@ yb-native tag="":
 # The negative control on its own, against the last battery output. `yb-ab` runs this too; it is
 # exposed separately so the oracle can be exercised without a 20-minute rebuild.
 [doc("Negative control: prove every battery assertion still rejects a mutated output.")]
-yb-selftest out="kamu-money-pg/yb/out/out-yb.txt":
-    ./kamu-money-pg/yb/assert-battery-selftest.sh {{ out }}
+yb-selftest out="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    OUT="{{ out }}"
+    [ -n "$OUT" ] || OUT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}/out-yb.txt"
+    ./kamu-money-pg/yb/assert-battery-selftest.sh "$OUT"
 
 # --- The ported case suite (P0.1) --------------------------------------------------------------
-# The 64 `#[pg_test]`s ARE this type's contract -- 63 of them portable, plus one that asserts a
-# stock-PostgreSQL PLAN and says so as NOT-PORTABLE -- and until now they had only ever run on PGDG
+# The `#[pg_test]` suite IS this type's contract. Portable coverage and explicit exceptions are
+# derived by the hygiene guard rather than repeated here. Before the portable suite, it ran only on PGDG
 # PostgreSQL: `cargo pgrx test` manages its own server and cannot be aimed at YugabyteDB, so the
 # entire YB evidence surface was one ~112-line script. `tests/pg_regress` restates that contract as
 # sql/ + expected/ pairs which run against any live server, so the same cases and the SAME
@@ -846,6 +872,7 @@ _yb-ab-ref base runtime="":
     # descriptor check; this covers the case where neither does.
     source ./kamu-money-pg/yb/workspace-lock.sh
     workspace_lock "yb-ab" || exit 1
+    RUN_ROOT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}"
     BASE="{{ base }}"
     RUNTIME="{{ runtime }}"
     [ -n "$RUNTIME" ] || RUNTIME="$BASE"
@@ -861,10 +888,12 @@ _yb-ab-ref base runtime="":
     done
     echo "yb: base identity    $BASE (artifact build and PG15 reference are compiled against this)"
     echo "yb: battery runtime  $RUNTIME"
+    source ./scripts/docker-core-context.sh
     if [ "$RUNTIME" = "$BASE" ]; then
         # Stock base: the battery has to be given the extension, so build the loose triplet.
-        docker build -f kamu-money-pg/yb/Dockerfile --target artifact \
-            --build-arg YB_IMAGE="$BASE" -o kamu-money-pg/yb/out .
+        docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
+            -f kamu-money-pg/yb/Dockerfile --target artifact \
+            --build-arg YB_IMAGE="$BASE" -o "$RUN_ROOT" .
     else
         # The runtime image carries kmoney already. NOTHING is built or copied for the YB side --
         # that is the point: this run exercises the shipped bytes, in the image that ships them.
@@ -872,22 +901,23 @@ _yb-ab-ref base runtime="":
         echo "yb: no artifact build, and run-yb.sh will refuse to install onto it."
         export YB_REQUIRE_BAKED=1
     fi
-    ./kamu-money-pg/yb/run-yb.sh "$RUNTIME" "" kamu-money-pg/yb/out/out-yb.txt kamu-money-pg/yb/abi_battery.sql
+    ./kamu-money-pg/yb/run-yb.sh "$RUNTIME" "$RUN_ROOT" "$RUN_ROOT/out-yb.txt" kamu-money-pg/yb/abi_battery.sql
     # run-yb.sh and the PG15 build each assert their OWN output reached the end with its named
     # markers and refusals. This asserts the ASSERTER: it mutates a real output seven ways and
     # requires each to be rejected for its own reason, so an oracle that has rotted into
     # always-passing cannot quietly certify the diff below. Pure grep, hence every run.
-    ./kamu-money-pg/yb/assert-battery-selftest.sh kamu-money-pg/yb/out/out-yb.txt
-    docker build -f kamu-money-pg/yb/Dockerfile.pg15 --target ref \
-        --build-arg YB_IMAGE="$BASE" -o kamu-money-pg/yb/out/ref .
+    ./kamu-money-pg/yb/assert-battery-selftest.sh "$RUN_ROOT/out-yb.txt"
+    docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
+        -f kamu-money-pg/yb/Dockerfile.pg15 --target ref \
+        --build-arg YB_IMAGE="$BASE" -o "$RUN_ROOT/ref" .
     # The PG15 side asserted itself during the build; re-assert the EXTRACTED file, because what
     # gets diffed is this copy, not the one the build looked at.
-    ./kamu-money-pg/yb/assert-battery.sh kamu-money-pg/yb/out/ref/out-pg15.txt pg15-extracted 0
+    ./kamu-money-pg/yb/assert-battery.sh "$RUN_ROOT/ref/out-pg15.txt" pg15-extracted 0
     # Normalize ONLY the psql/ysqlsh error-location prefix (client binary + input path + line):
     # that is harness metadata, not kmoney's error text, which follows it verbatim and must match.
     norm() { sed -E 's/^(psql|ysqlsh):[^:]*:[0-9]+:/CLIENT:/'; }
     echo "=== A/B diff: YugabyteDB vs stock PG15 -- empty = byte-exact, zero YB edges ==="
-    if diff <(norm < kamu-money-pg/yb/out/out-yb.txt) <(norm < kamu-money-pg/yb/out/ref/out-pg15.txt); then
+    if diff <(norm < "$RUN_ROOT/out-yb.txt") <(norm < "$RUN_ROOT/ref/out-pg15.txt"); then
         echo "yb-ab: BYTE-EXACT -- kmoney behaves identically on YugabyteDB and stock PG15"
     else
         echo "yb-ab: DIVERGENCE (investigate above)"; exit 1
@@ -955,8 +985,8 @@ test-pg-all: test-yb test-pg test-pg-driver test-yb-driver
 # green `gate-pg` sitting next to a red `just doc-pg` -- two rustdoc link errors that would
 # have broken the doc-pg.rs build of a crate this gate had just declared releasable. A check
 # nobody runs is a check that does not exist.
-[doc("The gate for a change that touches no database: format, lint, audit, docs, and offline tests.")]
-gate-offline: fmt-check lint deny doc-pg test-hygiene test-regress-selftest artifact-selftest workspace-lock-selftest numa-selftest
+[doc("The gate for a change that touches no database: format, lint, audit, docs, Miri, and offline tests.")]
+gate-offline: fmt-check lint deny doc-pg test-hygiene miri-payload test-regress-selftest artifact-selftest workspace-lock-selftest numa-selftest
 
 # Format, lint, doc-pg, and every suite reachable WITHOUT a from-source YugabyteDB build.
 # Expensive already: four extension builds plus a ~1.6GB image pull.
@@ -967,8 +997,8 @@ gate-offline: fmt-check lint deny doc-pg test-hygiene test-regress-selftest arti
 # YB, not the native extension. The native path is proven by `yb-ab`, which is kept out of
 # this recipe because it compiles the extension from source inside the YB image. Claiming
 # "every engine" here while that sat outside was the same overclaim one level down.
-[doc("Format, lint, audit, docs, and every suite reachable without a from-source YugabyteDB build.")]
-gate-pg: fmt-check lint deny doc-pg yb-image-selftest artifact-selftest workspace-lock-selftest numa-selftest test-pg-all
+[doc("The offline gate plus every suite reachable without a from-source YugabyteDB build.")]
+gate-pg: gate-offline yb-image-selftest test-pg-all
 
 # The RELEASE gate: `gate-pg` plus the native YugabyteDB completion gate. YugabyteDB is a
 # first-class target, so a revision that has not run these has NOT been shown to work on
@@ -1058,6 +1088,12 @@ gate-pg-release jobs="1" tag="":
     # Rust constant: `yugabytedb/yugabyte:2025.2.4.1-b4`, a mutable tag one release behind this
     # digest. So the run was one identity for the native extension stages and quietly another for
     # `gate-pg` -- and a retag could change what `gate-pg` tested with nothing here moving.
+    #
+    # RELEASE MODE HAS NO LOCAL CORE PATCH. Ordinary container tests use the normalized package
+    # named context so they can run before first publication. This gate instead leaves the lane's
+    # plain version requirement untouched; if that version is absent from the registry, the build
+    # must fail rather than certify local bytes as published ones.
+    export KMONEY_USE_LOCAL_CORE=0
     YB_REF="$(./kamu-money-pg/yb/yb-image.sh {{ tag }})"
     export KMONEY_YB_IMAGE="$YB_REF"
 
@@ -1087,8 +1123,9 @@ gate-pg-release jobs="1" tag="":
     # substitution. Extracted, they are the image's own bytes by construction, so the checks
     # below are reading the shipped artifact rather than a lookalike rebuild.
     source ./kamu-money-pg/yb/install.sh
-    yb_extract_artifact_from_image "$NODE_IMAGE" kamu-money-pg/yb/out
-    yb_resolve_artifacts kamu-money-pg/yb/out
+    RUN_ROOT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}"
+    yb_extract_artifact_from_image "$NODE_IMAGE" "$RUN_ROOT"
+    yb_resolve_artifacts "$RUN_ROOT"
 
     # NO BENCHMARK SCAFFOLDING IN THE THING THAT SHIPS. `boundary-probe` adds two no-op
     # `#[pg_extern]`s whose only purpose is to be timed (kamu-money-pg/bench/boundary/). They are
@@ -1139,7 +1176,7 @@ gate-pg-release jobs="1" tag="":
         done
     else
         echo "gate-pg-release: running ${#SUITES[@]} YugabyteDB suites concurrently (jobs={{ jobs }})"
-        LOGDIR=kamu-money-pg/yb/out/release-suites
+        LOGDIR="$RUN_ROOT/release-suites"
         mkdir -p "$LOGDIR"
         pids=(); names=()
         for entry in "${SUITES[@]}"; do

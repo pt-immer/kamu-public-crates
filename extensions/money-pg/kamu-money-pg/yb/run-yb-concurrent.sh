@@ -6,7 +6,7 @@
 # P0.3 of the readiness plan (gap G4). Nothing in this repository had ever run two sessions at
 # once, on any engine. That matters more on YugabyteDB than on PostgreSQL: the transaction layer
 # is DocDB, not PostgreSQL's, so snapshot semantics, conflict detection and the retry contract are
-# a different implementation from the one the 54 tests exercise -- and they are the layer a
+# a different implementation from the one the in-backend tests exercise -- and they are the layer a
 # double-entry ledger's correctness rests on.
 #
 # THE CENTRAL ASSERTION IS CONSERVATION. N workers move money between accounts concurrently; each

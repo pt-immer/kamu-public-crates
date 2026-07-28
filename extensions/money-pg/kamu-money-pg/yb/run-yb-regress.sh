@@ -4,7 +4,7 @@
 #   kamu-money-pg/yb/run-yb-regress.sh [yb-image] [artifact-dir]
 #
 # This is P0.1 of the readiness plan, and the single highest-value item in it. Before this, the
-# whole YugabyteDB evidence surface was one ~112-line script; the 54 #[pg_test]s that encode this
+# whole YugabyteDB evidence surface was one ~112-line script; the #[pg_test]s that encode this
 # type's contract had never run there, because `cargo pgrx test` manages its own PostgreSQL and
 # cannot be aimed at a YB backend. The suite speaks the wire protocol instead, so it runs here
 # unchanged -- and the stock-PG15 reference (Dockerfile.pg15) runs the SAME cases against the SAME
