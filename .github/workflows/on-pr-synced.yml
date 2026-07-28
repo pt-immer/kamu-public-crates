@@ -60,8 +60,16 @@ jobs:
       # re-run the dependents' jobs. Release independence is preserved by the
       # per-crate dry-run/coverage jobs + per-crate release tags, not the trigger.
       snap: ${{ steps.filter.outputs.snap == 'true' || steps.filter.outputs.shared == 'true' }}
+      # PostgreSQL-extension-lane work (its sources, or shared infra). `shared` is
+      # included because the lane's jobs are defined in this workflow file, which
+      # `shared` covers — a change to how they run must re-run them.
+      moneypg: ${{ steps.filter.outputs.moneypg == 'true' || steps.filter.outputs.shared == 'true' }}
       # Doc/lint job: any crate, shared infra, or pure docs.
       lint: ${{ steps.filter.outputs.iso3166 == 'true' || steps.filter.outputs.logging == 'true' || steps.filter.outputs.money == 'true' || steps.filter.outputs.snap == 'true' || steps.filter.outputs.shared == 'true' || steps.filter.outputs.docs == 'true' }}
+      # Shell linting covers `git ls-files '*.sh'`, which today is almost entirely
+      # the extension lane — so it must fire on a lane change as well as on the
+      # broad lint set, or 38 scripts change with nothing checking them.
+      shell: ${{ steps.filter.outputs.moneypg == 'true' || steps.filter.outputs.shared == 'true' }}
     steps:
       # `push` events diff before..after against the local git repo, so a
       # checkout is required there (pull_request events use the API and need
@@ -88,6 +96,11 @@ jobs:
               - 'crates/logging/**'
             money:
               - 'crates/money-core/**'
+            # The PostgreSQL extension lane. Its own Cargo workspace, EXCLUDED from
+            # the root one, so no `--workspace` command here can reach it and none
+            # of the filters above can be true for a change confined to it.
+            moneypg:
+              - 'extensions/money-pg/**'
             snap:
               - 'crates/snap-*/**'
             shared:
@@ -613,6 +626,188 @@ jobs:
       # cannot generate the register without it.
       - run: just publish-dry kamu-money-core
 
+  # ---------------------------------------------------------------------------
+  # Shell, and the PostgreSQL extension lane
+  # ---------------------------------------------------------------------------
+
+  lint-shell:
+    name: lint shell (shellcheck)
+    needs: changes
+    # NO CI JOB RAN THIS UNTIL NOW. `lint-shell` has existed since the recipe set
+    # was settled, but it lived only in `lint-all` and `gate`, both local — CI runs
+    # `fmt-rust-check` and `lint-docs`, and neither composes it. That was harmless
+    # while it covered zero tracked scripts. It now covers 38, so without this job
+    # CI would merge a broken one.
+    if: ${{ needs.changes.outputs.shell == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,shellcheck
+      # The recipe checks the lane with its working directory set to the lane
+      # root, because those scripts resolve siblings relative to it. Measured: 33
+      # unfollowable-source findings from the repository root, 0 from the lane.
+      - run: just lint-shell
+
+  money-core-published:
+    name: is kamu-money-core on crates.io?
+    needs: changes
+    # ALWAYS RUNS WHEN THE LANE DOES, and reports rather than deciding silently.
+    # The container-backed suites below cannot work until this is true, and this
+    # job is what makes that visible in the checks list instead of being a comment
+    # somebody has to find.
+    if: ${{ needs.changes.outputs.moneypg == 'true' }}
+    runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.probe.outputs.published }}
+    steps:
+      # WHY THIS EXISTS. kamu-money-pg declares a plain `kamu-money-core = "0.1"`,
+      # and the lane's recipes inject the path on the command line so that no
+      # manifest is ever rewritten. That injection CANNOT REACH INSIDE A CONTAINER:
+      # every Docker build here uses the lane root as its context and the
+      # Dockerfile does `COPY . .`, so the image holds extensions/money-pg and
+      # nothing above it — `../../crates/money-core` is not there.
+      #
+      # So the host-side jobs work today and the container ones wait for the
+      # published crate. Probing rather than hard-coding a flag means they switch
+      # themselves on the day it publishes, with nobody remembering to.
+      - id: probe
+        run: |
+          if curl -fsS --max-time 20 https://index.crates.io/ka/mu/kamu-money-core >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "kamu-money-core is on crates.io — the container-backed suites will run."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=PG lane partially gated::kamu-money-core is not yet on crates.io, so the container-backed suites (PostgreSQL matrix, YugabyteDB) are skipped. The host-side jobs still run. See extensions/money-pg/DESIGN.md section 6."
+          fi
+
+  test-money-pg-offline:
+    name: test (kamu-money-pg hygiene guards)
+    needs: [changes, lint-shell]
+    if: ${{ needs.changes.outputs.moneypg == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-nextest
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: extensions/money-pg
+      # NEEDS NO PostgreSQL AND NO pgrx. The guards read files — the Justfile, the
+      # yb/*.sh scripts, the control file — and live in their own dependency-free
+      # crate for exactly that reason: an integration test under the pgrx cdylib
+      # would drag the whole PostgreSQL build onto this job's critical path.
+      - run: just pg fmt-check
+      - run: just pg test-hygiene
+
+  lint-money-pg:
+    name: clippy (kamu-money-pg pg18)
+    needs: [changes, lint-shell]
+    if: ${{ needs.changes.outputs.moneypg == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-pgrx@0.19.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: extensions/money-pg
+      # PGDG's PostgreSQL, NOT a from-source build. `cargo pgrx init` with no
+      # argument compiles PostgreSQL itself, which is minutes per major on a
+      # hosted runner; pointing it at an installed pg_config is seconds. The
+      # runner image already ships a PostgreSQL, but not its server headers, and
+      # pgrx needs the headers.
+      - name: Install PostgreSQL 18 server headers
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-18 postgresql-server-dev-18
+      - uses: actions/cache@v4
+        with:
+          path: ~/.pgrx
+          key: pgrx-0.19.1-pg18-${{ runner.os }}
+      - name: Initialise PGRX_HOME against the installed server
+        run: cargo pgrx init --pg18 /usr/lib/postgresql/18/bin/pg_config
+      # ONE MAJOR, NEVER --all-features: pgrx's pg15..pg18 features are mutually
+      # exclusive, so an --all-features sweep does not lint this crate strictly,
+      # it fails to build it.
+      - run: just pg lint
+
+  docs-money-pg:
+    name: docs (kamu-money-pg pg18)
+    needs: [changes, lint-money-pg]
+    if: ${{ needs.changes.outputs.moneypg == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-pgrx@0.19.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: extensions/money-pg
+      - name: Install PostgreSQL 18 server headers
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql-18 postgresql-server-dev-18
+      - uses: actions/cache@v4
+        with:
+          path: ~/.pgrx
+          key: pgrx-0.19.1-pg18-${{ runner.os }}
+      - name: Initialise PGRX_HOME against the installed server
+        run: cargo pgrx init --pg18 /usr/lib/postgresql/18/bin/pg_config
+      - run: just pg doc-pg
+
+  test-money-pg-matrix:
+    name: test (kamu-money-pg PG${{ matrix.pg }})
+    needs: [changes, money-core-published, lint-money-pg]
+    if: ${{ needs.changes.outputs.moneypg == 'true' && needs.money-core-published.outputs.published == 'true' }}
+    runs-on: ubuntu-latest
+    strategy:
+      # FOUR JOBS, NOT ONE LOOP. The recipe's own `test-matrix.sh` walks the
+      # majors serially in a single process, which is right on a workstation and
+      # wrong here: four jobs each get their own fresh runner with its own 14 GB,
+      # so the images never co-reside, and the wall clock is one major rather than
+      # four. fail-fast off, because "PG16 broke" and "PG16 and PG18 broke" are
+      # different findings and the second is the one that says where to look.
+      fail-fast: false
+      matrix:
+        pg: [15, 16, 17, 18]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      # Each leg builds the extension inside a container against its own major.
+      # Teardown is scoped by the `kamu-money-pg.*` labels the harness applies —
+      # never a global prune, which on a shared daemon would take other work with
+      # it. A hosted runner is not shared, but the harness must behave the same
+      # everywhere or the habit is what fails when it matters.
+      - run: just pg test-pg "${{ matrix.pg }}"
+
+  test-money-pg-yb:
+    name: test (kamu-money-pg YugabyteDB)
+    needs: [changes, money-core-published, lint-money-pg]
+    if: ${{ needs.changes.outputs.moneypg == 'true' && needs.money-core-published.outputs.published == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      # The ported #[pg_test] suite against a live single-node YugabyteDB, plus
+      # the stock-PG15 reference it is diffed against. Node memory is capped by
+      # yb/node-limits.sh — a container sees the HOST's RAM, not its own limit, so
+      # without that cap a node sizes itself for the whole runner and is killed.
+      - run: just pg test-yb-regress
+
   ci-success:
     name: ci-success
     needs:
@@ -644,6 +839,13 @@ jobs:
       - docs-money
       - coverage-money
       - publish-dry-run-money
+      - lint-shell
+      - money-core-published
+      - test-money-pg-offline
+      - lint-money-pg
+      - docs-money-pg
+      - test-money-pg-matrix
+      - test-money-pg-yb
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
@@ -681,4 +883,11 @@ jobs:
             test-money-db,
             docs-money,
             coverage-money,
-            publish-dry-run-money
+            publish-dry-run-money,
+            lint-shell,
+            money-core-published,
+            test-money-pg-offline,
+            lint-money-pg,
+            docs-money-pg,
+            test-money-pg-matrix,
+            test-money-pg-yb
