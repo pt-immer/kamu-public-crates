@@ -2,6 +2,8 @@
 
 >
 > **A Cargo workspace of 9 independently-versioned public crates** — `kamu-iso3166`, `kamu-logging`, `kamu-money-core`, and the 6-crate `kamu-snap-*` Bank Indonesia SNAP BI family. Edition 2024, MSRV 1.94, dual-licensed `MIT OR Apache-2.0`. Each crate's authoritative version lives in its `Cargo.toml` / [`CHANGELOG.md`](CHANGELOG.md); releases are per-crate (see [Commits & releases](#commits--releases)).
+>
+> **Plus one excluded lane under `extensions/`**, which is *not* a tenth published crate — see [Excluded lanes](#excluded-lanes).
 
 Guidance for AI coding agents (Claude Code, GitHub Copilot, and others) working in
 this repository. `CLAUDE.md` and `.github/copilot-instructions.md` are symlinks to
@@ -36,6 +38,46 @@ publishing small, focused Rust crates — libraries and CLI apps — to crates.i
 
 Each crate **versions and releases independently** — see its own `CHANGELOG.md`.
 
+## Excluded lanes
+
+Some work cannot live in the main workspace without changing what the published
+crates build. That work goes under `extensions/<name>/` as an **excluded nested
+Cargo workspace**, and the rule is general rather than about any one lane:
+
+- **A lane owns its own toolchain, `[patch.crates-io]`, profiles, `Cargo.lock`,
+  `deny.toml` and gate.** All five are root-only or root-honoured — cargo ignores
+  `[profile.*]` in a non-root member, and a `[patch]` in the main root would enter
+  the nine published crates' lockfile and force a workspace-wide `allow-git` in a
+  `deny.toml` whose audit is meant to cover only what ships.
+- **`--workspace` at the repository root cannot see it**, because `Cargo.toml`
+  `exclude`s it. That is what makes CI selectivity *structural*: a path filter
+  gates whether a job runs, but it cannot change what a `--workspace` command
+  builds, so exclusion is the only thing that keeps an unrelated Rust change from
+  compiling PostgreSQL. Never thread `--exclude <lane>` through the aggregates
+  instead — one forgotten aggregate is a silent regression.
+- **Reach it through `just pg <recipe>`** — one passthrough, not a mirror of the
+  lane's ~50 recipe names into a second list to keep in step.
+- **`gate` covers the published crates; `gate-all` covers both.** The lane's gate
+  needs Docker and takes hours, so it cannot be the barrier you run before every
+  push. `gate` therefore *prints* a note when the lane has changes it did not
+  cover — a stated non-coverage, which is what the no-silent-skip rule actually
+  demands.
+- **A lane crate is not a tenth published crate.** It carries
+  `publish = false`, the README inventory does not gain a row, and
+  `on-release-published.yml` recognises its `<crate>-vX.Y.Z` tag but exits before
+  the crates.io step rather than failing or publishing.
+- **Name a lane's recipes so nothing collides with the root's.** The two Justfiles
+  are read by the same people; a name meaning one thing here and another there is
+  mistyped exactly once, and the expensive direction is the one that looks cheap.
+- **Policy that covers the whole tree stays at the root.** `scrub` and
+  `lint-shell` are the root's and cover the lane too — `lint-shell` runs with its
+  working directory set to the lane root, because scripts there resolve siblings
+  relative to it. Two implementations of one policy drift until the forgotten copy
+  stops matching.
+
+The current lane is `extensions/money-pg` (the `kmoney` pgrx extension and its
+YugabyteDB harness); its own `DESIGN.md` and `Justfile` carry the detail.
+
 ## Ground rules
 
 - **Edition 2024, MSRV `1.94`.** Don't use APIs newer than 1.94; CI tests both
@@ -50,7 +92,14 @@ Each crate **versions and releases independently** — see its own `CHANGELOG.md
 - **Never use `--all-features` across the whole workspace.** `kamu-logging`'s
   `systemd` and `wasm32` features are **mutually exclusive** (enforced by
   `compile_error!`), and `wasm32` is incompatible with both `with-actix-web` and
-  `with-otlp`. Select features per crate, as the recipes and CI do.
+  `with-otlp`. A pgrx extension has the same shape for a different reason — its
+  `pg15`…`pg18` features each select a different backend, so `--all-features`
+  does not lint it strictly, it **fails to build it**. Select features per crate,
+  as the recipes and CI do, and pin one major for anything pgrx.
+- **`--workspace --exclude X` checks nothing when `X` is the only member.** It
+  exits 0 and reads exactly like coverage. This is how an extension crate went
+  entirely unlinted after a workspace split: the exclusion was written when the
+  workspace had three members and survived a move that left it with one.
 - **Lints are denials.** The workspace sets `rust.warnings = "deny"` and
   `clippy.all = "deny"`; `kamu-iso3166` additionally holds to `clippy::pedantic`.
   Keep code warning-clean.
@@ -79,6 +128,9 @@ just doctor     # verify toolchain & tooling are present
 just check-all  # FAST inner loop: fmt + clippy + test → compact PASS/FAIL
 just gate       # THE GATE — complete CI-equivalent barrier; run before pushing
 just ci         # gate + publish dry-run (the full pipeline)
+just pg <recipe>  # run a recipe in the excluded extension lane (`just pg` lists them)
+just gate-pg    # the lane's gate — hours, and needs Docker
+just gate-all   # gate + gate-pg; the pre-push barrier for a lane change
 ```
 
 Run `just gate` before pushing — a **green gate means CI will pass**. It runs
@@ -159,6 +211,22 @@ Cadence expectations:
   `main` branch **ruleset requires only `ci-success`**, so jobs can be added,
   renamed, or split without touching branch protection — just keep the gate's
   `needs:` list and `allowed-skips` complete.
+- **A recipe in no CI job is not a check.** `lint-shell` sat in `lint-all` and
+  `gate` — both local — while CI ran only `fmt-rust-check` and `lint-docs`, and
+  neither composes it. That was invisible while it covered zero tracked scripts
+  and became a real hole the moment a lane arrived with 38. When adding a recipe
+  to an aggregate, check whether any CI job reaches it; when a recipe's coverage
+  changes, re-check.
+- **A job blocked by a dependency should gate on a probe, not a flag.** The
+  extension lane's container suites cannot run until `kamu-money-core` is on
+  crates.io, so a job queries the registry and the suites gate on its output —
+  they re-enable themselves on publication instead of waiting for someone to
+  remember. The probe job always runs and emits a `::notice` naming what is
+  skipped, so the gap is stated rather than silent.
+- **Never give a workflow output or env var a hyphenated name.** GitHub Actions
+  parses `outputs.money-pg` as `outputs.money` *minus* `pg`. The YAML still
+  validates and the condition still evaluates — against something nobody
+  intended. Job *IDs* may contain hyphens; outputs and env names may not.
 - **CI calls `just`** — every job runs `just <recipe>` (the granular recipes the
   aggregates compose), so the Justfile is the single source of truth for
   build/lint/test/coverage commands and `just <recipe>` reproduces any CI job
@@ -205,7 +273,13 @@ Cadence expectations:
   to `main`, then tag a GitHub Release `<crate>-vX.Y.Z` (e.g.
   `kamu-iso3166-v0.2.0`). `on-release-published.yml` verifies the manifest
   version matches the tag and publishes that single crate. Valid crate prefixes:
-  `kamu-iso3166`, `kamu-logging`, and the 6 `kamu-snap-*`.
+  `kamu-iso3166`, `kamu-logging`, `kamu-money-core`, the 6 `kamu-snap-*`, and
+  `kamu-money-pg` — which the workflow recognises and verifies against its
+  manifest, then **exits before the crates.io step**. It is a `cdylib` whose
+  resolvable graph goes through a root `[patch.crates-io]`, and cargo does not
+  package a patch, so a published `.crate` would resolve pgrx from crates.io
+  where the forked feature does not exist. The tag parser fails closed: a prefix
+  it cannot attribute is an error, never a publish attempt.
 - **What actually needs a release.** Only a change to a crate's own manifest or
   source warrants a version bump — a changed dependency requirement, or code. A
   workspace-wide `cargo update` lockfile refresh alone needs **no** per-crate
