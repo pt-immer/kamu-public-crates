@@ -3,13 +3,13 @@
 //!
 //! Run with `cargo run -p kamu-money-core --example fx`.
 
-use kamu_money_core::RateError;
-use kamu_money_core::currency::StaticCurrency;
-use kamu_money_core::domain::{DOMAIN_MAX, POW10_SCALE};
+use kamu_money_core::Money;
+use kamu_money_core::Rate;
+use kamu_money_core::Rounding;
+use kamu_money_core::StaticCurrency;
+use kamu_money_core::advanced::domain::{DOMAIN_MAX, POW10_SCALE};
+use kamu_money_core::errors::RateError;
 use kamu_money_core::iso::{EUR, IDR, Iso4217, SGD, USD};
-use kamu_money_core::money::Money;
-use kamu_money_core::rate::Rate;
-use kamu_money_core::rounding::Rounding;
 use std::collections::HashMap;
 
 /// A quote table: keyed by currency CODES at runtime, but it hands out TYPED rates.

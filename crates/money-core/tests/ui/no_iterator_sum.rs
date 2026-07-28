@@ -6,7 +6,7 @@
 // (DESIGN.md R2-F4)
 
 use kamu_money_core::iso::USD;
-use kamu_money_core::money::Money;
+use kamu_money_core::Money;
 
 fn main() {
     let balances = [

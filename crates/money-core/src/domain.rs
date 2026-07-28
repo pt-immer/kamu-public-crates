@@ -48,7 +48,8 @@ pub const POW10_SCALE: i128 = 10i128.pow(SCALE);
 /// **FIXED (R2-F4).** The summing abstraction was removed rather than widened in place: there is
 /// no `Sum` trait and no `sum(kmoney)` aggregate. `Money::try_sum` and the SQL
 /// `kmoney_sum(VARIADIC)` accumulate in `I256` and range-check ONCE at the end (shared kernel
-/// `arith::sum_units`), so the result is order- and plan-independent. The mistaken premise —
+/// `advanced::arithmetic::sum_units`), so the result is order- and
+/// plan-independent. The mistaken premise —
 /// reasoning from `numeric`'s widening `SUM()` to a custom aggregate's — is kept above rather
 /// than deleted, as the reasoning that produced the defect.
 ///

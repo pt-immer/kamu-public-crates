@@ -1,6 +1,6 @@
 //! Errors grouped by operation.
 
-use crate::domain::{DOMAIN_MAX, SCALE};
+use crate::domain_impl::{DOMAIN_MAX, SCALE};
 use crate::iso::Iso4217;
 use thiserror::Error;
 

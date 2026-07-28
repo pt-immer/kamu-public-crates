@@ -77,8 +77,8 @@ const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 ///
 /// Takes the two fields rather than a [`crate::Money`] because the caller that needs it is
 /// `kamu-money-pg`, whose type is not generic and learns its currency at run time. Same reasoning as
-/// [`crate::allocate::allocate_units`]: one implementation the adapter shares, not two that can
-/// drift apart.
+/// [`crate::advanced::arithmetic::allocate_units`]: one implementation the
+/// adapter shares, not two that can drift apart.
 #[must_use]
 pub fn stable_hash(code: u16, units: i128) -> u64 {
     let mut h = FNV_OFFSET_BASIS;
@@ -129,7 +129,7 @@ pub const fn fold_to_i32(hash: u64) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{fold_to_i32, stable_hash};
-    use crate::domain::DOMAIN_MAX;
+    use crate::domain_impl::DOMAIN_MAX;
     use std::collections::BTreeSet;
 
     /// Golden vectors. The whole point of the module.
@@ -266,7 +266,8 @@ mod tests {
         assert!(
             offenders.is_empty(),
             "DefaultHasher's algorithm is explicitly unstable across Rust releases and must \
-             not back anything persisted. Use kamu_money_core::stable_hash. Found in: {offenders:?}"
+             not back anything persisted. Use kamu_money_core::advanced::stable_hash. \
+             Found in: {offenders:?}"
         );
     }
 }

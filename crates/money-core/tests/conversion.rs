@@ -18,12 +18,12 @@
 //! matching. If the range is ever wrong, the `unwrap` fails loudly instead of the test quietly
 //! testing the other branch. The overflow path gets its own test, which asserts `Err`.
 
-use kamu_money_core::RateError;
-use kamu_money_core::domain::{DOMAIN_MAX, POW10_SCALE, in_domain};
+use kamu_money_core::Money;
+use kamu_money_core::Rate;
+use kamu_money_core::Rounding;
+use kamu_money_core::advanced::domain::{DOMAIN_MAX, POW10_SCALE, in_domain};
+use kamu_money_core::errors::RateError;
 use kamu_money_core::iso::{EUR, IDR, Iso4217, USD};
-use kamu_money_core::money::Money;
-use kamu_money_core::rate::Rate;
-use kamu_money_core::rounding::Rounding;
 use proptest::prelude::*;
 
 /// Widest operand bound that keeps a one-leg result in the domain by construction:

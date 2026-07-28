@@ -5,10 +5,10 @@
 //! holds. Parse is liberal: any exact decimal is accepted, so the round trip is a
 //! **retraction** (`parse(render(v)) == v`) and not a bijection. (DESIGN.md C7)
 
-use kamu_money_core::domain::{DOMAIN_MAX, POW10_SCALE};
+use kamu_money_core::Money;
+use kamu_money_core::advanced::domain::{DOMAIN_MAX, POW10_SCALE};
+use kamu_money_core::errors::{AmountError, ParseMoneyError};
 use kamu_money_core::iso::{IDR, JPY, KWD, USD, XAU};
-use kamu_money_core::money::Money;
-use kamu_money_core::{AmountError, ParseMoneyError};
 use proptest::prelude::*;
 use std::str::FromStr;
 
@@ -146,7 +146,7 @@ proptest! {
 // exact decimal transport into JavaScript and `parseFloat("1,619")` is `1`.
 // ---------------------------------------------------------------------------------------
 
-use kamu_money_core::rate::Rate;
+use kamu_money_core::Rate;
 
 #[test]
 fn a_rate_renders_as_base_slash_quote_slash_rate() {
@@ -343,7 +343,7 @@ proptest! {
                 "rendered {} but the parser would not take it back", rendered
             ),
             // Refusing is the correct answer outside the domain; it must not be silent.
-            Err(_) => prop_assert!(!kamu_money_core::domain::in_domain(units)),
+            Err(_) => prop_assert!(!kamu_money_core::advanced::domain::in_domain(units)),
         }
     }
 }
@@ -355,8 +355,8 @@ proptest! {
 fn the_raw_unit_entry_points_refuse_values_no_money_could_hold() {
     use core::num::NonZeroU32;
     use kamu_money_core::Rounding;
-    use kamu_money_core::allocate::allocate_units;
-    use kamu_money_core::arith::div_int_units;
+    use kamu_money_core::advanced::arithmetic::allocate_units;
+    use kamu_money_core::advanced::arithmetic::div_int_units;
 
     let three = NonZeroU32::new(3).unwrap();
     for out_of_domain in [i128::MAX, i128::MIN, DOMAIN_MAX + 1, -DOMAIN_MAX - 1] {

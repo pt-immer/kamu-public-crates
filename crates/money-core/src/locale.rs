@@ -29,7 +29,8 @@
 //! ```
 //! use kamu_money_core::iso::IDR;
 //! use kamu_money_core::locale::ID_IDR;
-//! use kamu_money_core::{Money, POW10_SCALE};
+//! use kamu_money_core::advanced::domain::POW10_SCALE;
+//! use kamu_money_core::Money;
 //!
 //! let m = Money::<IDR>::try_from_units(16_000 * POW10_SCALE + POW10_SCALE / 2).unwrap();
 //! assert_eq!(m.to_string(), "IDR 16000.50");            // canonical: settles at 2
@@ -50,10 +51,10 @@
 //! leading `-` is unambiguous and correct; `(1,234.50)` is a preference. It was considered and
 //! cut, which is the same call that deleted `to_minor_units()` and `StaticCurrency::EXP`.
 
-use crate::currency::StaticCurrency;
-use crate::error::{AmountError, LocaleError};
+use crate::Money;
+use crate::StaticCurrency;
+use crate::error_impl::{AmountError, LocaleError};
 use crate::iso::Iso4217;
-use crate::money::Money;
 use crate::text::fixed_point_parts;
 
 /// Where the currency symbol sits relative to the digits.
@@ -297,7 +298,7 @@ impl<'a> LocalePolicy<'a> {
         if currency != self.currency {
             return Err(LocaleError::WrongCurrency { expected: self.currency, found: currency });
         }
-        if !crate::domain::in_domain(units) {
+        if !crate::domain_impl::in_domain(units) {
             return Err(AmountError::out_of_domain(units).into());
         }
 

@@ -14,23 +14,9 @@
 
 use crate::iso::Iso4217;
 
-/// Prevents downstream crates from implementing [`StaticCurrency`].
-///
-/// `pub(crate)` module + public trait inside = the classic sealed-trait pattern: crate-internal
-/// code (the `iso4217!` macro) can implement `Sealed`, but no downstream crate can name it, so
-/// none can satisfy `StaticCurrency`'s supertrait bound.
-///
-/// Without this, a downstream crate could mint a counterfeit currency claiming
-/// `CODE = Iso4217::USD`, and it would impersonate genuine USD anywhere a `Money<C>` is
-/// accepted. Verified: it compiled and ran before this seal existed.
-pub(crate) mod private {
-    /// Sealing marker. Implemented only by the `iso4217!` macro.
-    pub trait Sealed {}
-}
-
-/// A currency, known at compile time. Implemented by the `iso4217!` macro, never by hand —
-/// and enforced, not requested: the `private::Sealed` supertrait is unnameable outside this
-/// crate.
+/// A currency, known at compile time. Implemented by the generated ISO register,
+/// never by hand — and enforced, not requested: the crate-private sealing
+/// supertrait is unnameable downstream.
 ///
 /// **`CODE` is the only fact.** Everything else about a currency is derived from it, at compile
 /// time: `C::CODE.exponent()`, `C::CODE.alpha3()`, `C::CODE.name()` are all `const fn`. An
@@ -38,7 +24,12 @@ pub(crate) mod private {
 /// knows — and then needed a generated test across every currency to prove the two copies
 /// hadn't diverged. Deleting the duplication makes drift unrepresentable instead of merely
 /// tested. Do not reintroduce a derived fact as an associated const.
-pub trait StaticCurrency: private::Sealed {
+///
+/// Without the seal, a downstream crate could claim `CODE = Iso4217::USD` and
+/// impersonate genuine USD anywhere a `Money<C>` is accepted. That counterfeit
+/// implementation compiled before the seal was added; the compile-fail suite
+/// pins the refusal.
+pub trait StaticCurrency: crate::sealed::Sealed {
     /// The ISO 4217 code. The single source of truth for this currency.
     const CODE: Iso4217;
 }

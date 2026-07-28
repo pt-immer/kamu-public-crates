@@ -1,9 +1,9 @@
 //! Conservative distribution: splitting money without losing any.
 
-use crate::currency::StaticCurrency;
-use crate::error::{AllocationError, AmountError};
-use crate::money::Money;
-use crate::rounding::{Rounding, div_round_i256};
+use crate::Money;
+use crate::StaticCurrency;
+use crate::error_impl::{AllocationError, AmountError};
+use crate::rounding_impl::{Rounding, div_round_i256};
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
 use ethnum::I256;
@@ -43,7 +43,7 @@ use std::collections::TryReserveError;
 /// conservation would no longer be provable, which is a condition worth stopping for rather than
 /// distributing around.
 pub fn allocate_units(units: i128, weights: &[u32]) -> Result<Vec<i128>, AllocationError> {
-    if !crate::domain::in_domain(units) {
+    if !crate::domain_impl::in_domain(units) {
         return Err(AmountError::out_of_domain(units).into());
     }
     let total_w: i128 = weights.iter().map(|&w| i128::from(w)).sum();

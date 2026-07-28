@@ -1,10 +1,10 @@
 //! FX conversion: rates, and the money that passes through them. (DESIGN.md C6)
 
-use crate::currency::StaticCurrency;
-use crate::domain::{POW10_SCALE, in_domain};
-use crate::error::{AmountError, RateError};
-use crate::money::Money;
-use crate::rounding::{Rounding, div_round_i256};
+use crate::Money;
+use crate::StaticCurrency;
+use crate::domain_impl::{POW10_SCALE, in_domain};
+use crate::error_impl::{AmountError, RateError};
+use crate::rounding_impl::{Rounding, div_round_i256};
 use core::marker::PhantomData;
 use ethnum::I256;
 
@@ -64,7 +64,7 @@ fn apply_rate_pair(units: i128, first: i128, second: i128, mode: Rounding) -> Op
 }
 
 /// A directed FX rate: how many `T` one `F` buys, as a fixed-point number at the crate's
-/// one [`SCALE`](crate::domain::SCALE).
+/// one [`SCALE`](crate::advanced::domain::SCALE).
 ///
 /// The pair is carried in the type, so `Money<USD>` can only be converted by a
 /// `Rate<USD, IDR>` and the result can only be `Money<IDR>` — a mismatched pair does not
@@ -239,18 +239,16 @@ impl<C: StaticCurrency> Money<C> {
 
 #[cfg(test)]
 mod tests {
-    use crate::domain::{DOMAIN_MAX, POW10_SCALE};
-    use crate::error::{AmountError, RateError};
+    use crate::Money;
+    use crate::Rate;
+    use crate::domain_impl::{DOMAIN_MAX, POW10_SCALE};
+    use crate::error_impl::{AmountError, RateError};
     use crate::iso::{EUR, IDR, Iso4217, USD};
-    use crate::money::Money;
-    use crate::rate::Rate;
-    use crate::rounding::Rounding;
+    use crate::rounding_impl::Rounding;
     use ethnum::I256;
 
     /// `major` whole currency units, as a rate.
-    fn rate<Base: crate::currency::StaticCurrency, Quote: crate::currency::StaticCurrency>(
-        major: i128,
-    ) -> Rate<Base, Quote> {
+    fn rate<Base: crate::StaticCurrency, Quote: crate::StaticCurrency>(major: i128) -> Rate<Base, Quote> {
         Rate::try_from_units(major.checked_mul(POW10_SCALE).unwrap()).unwrap()
     }
 

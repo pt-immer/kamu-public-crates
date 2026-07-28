@@ -46,16 +46,16 @@
 //! a division is unresolved local state; neither is a durable value to recreate
 //! from untrusted input.
 
-use crate::currency::StaticCurrency;
-use crate::error::WireError;
+use crate::Money;
+use crate::Rate;
+use crate::StaticCurrency;
+use crate::error_impl::{RateError, WireError};
 use crate::iso::Iso4217;
-use crate::money::Money;
-use crate::rate::Rate;
-use crate::text::{render_amount, render_rate};
+use crate::text::{parse_amount, parse_rate_amount, render_amount, render_rate};
 use core::fmt;
-use core::str::FromStr;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::borrow::Cow;
 
 // ---------------------------------------------------------------------------------------
 // Iso4217 — hand-written, and this is the one that MUST NOT be derived.
@@ -135,6 +135,18 @@ fn rate_from_units<Base: StaticCurrency, Quote: StaticCurrency, E: de::Error>(
     Rate::try_from_units(units).map_err(|e| to_de_error(&e))
 }
 
+fn money_from_amount<C: StaticCurrency>(amount: &str) -> Result<Money<C>, WireError> {
+    let units = parse_amount(amount)?;
+    Ok(Money::try_from_units(units)?)
+}
+
+fn rate_from_amount<Base: StaticCurrency, Quote: StaticCurrency>(
+    amount: &str,
+) -> Result<Rate<Base, Quote>, WireError> {
+    let units = parse_rate_amount(amount).map_err(RateError::from)?;
+    Ok(Rate::try_from_units(units)?)
+}
+
 // --- binary codec (R2-F2) --------------------------------------------------------------
 //
 // The tag lives in ONE place, called by both the default impls and the transparent module, for
@@ -189,9 +201,10 @@ struct MoneyOut<'a> {
 }
 
 #[derive(Deserialize)]
-struct MoneyIn {
+struct MoneyIn<'a> {
     currency: Iso4217,
-    amount: String,
+    #[serde(borrow)]
+    amount: Cow<'a, str>,
 }
 
 #[derive(Serialize)]
@@ -202,10 +215,11 @@ struct RateOut<'a> {
 }
 
 #[derive(Deserialize)]
-struct RateIn {
+struct RateIn<'a> {
     base: Iso4217,
     quote: Iso4217,
-    rate: String,
+    #[serde(borrow)]
+    rate: Cow<'a, str>,
 }
 
 impl<C: StaticCurrency> Serialize for Money<C> {
@@ -228,9 +242,10 @@ impl<'de, C: StaticCurrency> Deserialize<'de> for Money<C> {
         if raw.currency != C::CODE {
             return Err(to_de_error(&WireError::WrongCurrency { expected: C::CODE, found: raw.currency }));
         }
-        // Reuse the ONE parser. A second decimal reader would be a second set of rules, and
-        // the two would drift on exactly the inputs nobody tests.
-        Self::from_str(&format!("{} {}", C::CODE.alpha3(), raw.amount)).map_err(|e| to_de_error(&e))
+        // Parse the amount field directly. Reconstructing a tagged string here
+        // allocated and then made the text parser split a tag already checked
+        // above.
+        money_from_amount(raw.amount.as_ref()).map_err(|e| to_de_error(&e))
     }
 }
 
@@ -256,8 +271,7 @@ impl<'de, Base: StaticCurrency, Quote: StaticCurrency> Deserialize<'de> for Rate
         if raw.quote != Quote::CODE {
             return Err(to_de_error(&WireError::WrongCurrency { expected: Quote::CODE, found: raw.quote }));
         }
-        Self::from_str(&format!("{}/{}/{}", Base::CODE.alpha3(), Quote::CODE.alpha3(), raw.rate))
-            .map_err(|e| to_de_error(&e))
+        rate_from_amount(raw.rate.as_ref()).map_err(|e| to_de_error(&e))
     }
 }
 
@@ -274,8 +288,7 @@ pub mod transparent {
     use super::{
         StaticCurrency, money_from_binary, money_to_binary, rate_from_binary, rate_to_binary, to_de_error,
     };
-    use crate::money::Money;
-    use crate::rate::Rate;
+    use crate::{Money, Rate};
     use core::str::FromStr;
     use serde::{Deserialize, Deserializer, Serializer};
 
@@ -284,11 +297,8 @@ pub mod transparent {
     /// supertrait, did not enforce.
     mod sealed {
         pub trait Sealed {}
-        impl<C: crate::currency::StaticCurrency> Sealed for crate::money::Money<C> {}
-        impl<Base: crate::currency::StaticCurrency, Quote: crate::currency::StaticCurrency> Sealed
-            for crate::rate::Rate<Base, Quote>
-        {
-        }
+        impl<C: crate::StaticCurrency> Sealed for crate::Money<C> {}
+        impl<Base: crate::StaticCurrency, Quote: crate::StaticCurrency> Sealed for crate::Rate<Base, Quote> {}
     }
 
     /// Serialize a value as a single scalar.
@@ -310,7 +320,7 @@ pub mod transparent {
 
     /// The crate's value types, and **actually** sealed.
     ///
-    /// The seal is the `private::Sealed` supertrait, exactly as [`StaticCurrency`] does it.
+    /// The seal is the `sealed::Sealed` supertrait, exactly as [`StaticCurrency`] does it.
     /// An earlier version of this comment claimed the trait was *"effectively sealed: every
     /// impl is bounded on `StaticCurrency`, which is itself sealed, so no downstream type can
     /// satisfy it"*. That was wrong, and provably so — the bound was on the **impls**, not on
@@ -362,6 +372,22 @@ pub mod transparent {
             let text = String::deserialize(d)?;
             Self::from_str(&text).map_err(|e| to_de_error(&e))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MoneyIn, RateIn};
+    use std::borrow::Cow;
+
+    #[test]
+    fn structured_numbers_borrow_when_the_input_needs_no_unescaping() {
+        let money: MoneyIn<'_> = serde_json::from_str(r#"{"currency":"USD","amount":"10.50"}"#).unwrap();
+        let rate: RateIn<'_> =
+            serde_json::from_str(r#"{"base":"USD","quote":"IDR","rate":"16000"}"#).unwrap();
+
+        assert!(matches!(money.amount, Cow::Borrowed("10.50")));
+        assert!(matches!(rate.rate, Cow::Borrowed("16000")));
     }
 }
 

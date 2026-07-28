@@ -6,10 +6,9 @@
 //! directions**, so the tiny counter-direction of a hyperinflation quote is mandatory rather
 //! than hypothetical. This measures what survives there.
 
+use kamu_money_core::advanced::domain::POW10_SCALE;
 use kamu_money_core::iso::{IDR, USD};
-use kamu_money_core::rate::Rate;
-use kamu_money_core::rounding::Rounding;
-use kamu_money_core::{Money, POW10_SCALE};
+use kamu_money_core::{Money, Rate, Rounding};
 
 /// Significant decimal digits available to a rate of a given magnitude.
 fn significant_digits(units: i128) -> u32 {

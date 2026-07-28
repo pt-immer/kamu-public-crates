@@ -22,11 +22,10 @@
 //!
 //! # One codec, four consumers
 //!
-//! The bytes written here are exactly what [`Display`](core::fmt::Display) prints, what the
-//! serde wire carries (C7), and what `kmoney`'s in/out functions read (C8). Not a matching
-//! format — the *same* function. `kamu_money_core::text` is the only place this crate turns money
-//! into characters, which is why a value written by an application and a value written by the
-//! extension cannot disagree.
+//! Both Rust drivers encode through [`Display`](core::fmt::Display) and decode
+//! through [`FromStr`](core::str::FromStr). Serde's structured fields and
+//! `kmoney` use the same decimal parser and renderer in `text`; they do not
+//! maintain another numeric grammar.
 //!
 //! ```no_run
 //! # use kamu_money_core::{Money, iso::USD};
@@ -82,11 +81,9 @@
 //! `kamu-money-core/tests/pg_native_column.rs` (`just test-pg-driver`) — the write half since
 //! 2026-07-27, which is when it stopped being an inference.
 
-use crate::currency::StaticCurrency;
-use crate::money::Money;
-use crate::rate::Rate;
+use super::codec::{decode, encode};
+use crate::{Money, Rate, StaticCurrency};
 use bytes::BytesMut;
-use core::str::FromStr;
 use postgres_types::{FromSql, IsNull, ToSql, Type, to_sql_checked};
 use std::error::Error;
 
@@ -114,7 +111,7 @@ use std::error::Error;
 /// not accept `NUMERIC` for `&str` either.
 ///
 /// This used to hand-list `TEXT | VARCHAR | BPCHAR`, which quietly made the two drivers
-/// disagree about what a money column is: [`crate::sqlx_pg`] delegates to `&str`, whose sqlx
+/// disagree about what a money column is: `adapters::sqlx` delegates to `&str`, whose sqlx
 /// impl also covers `NAME`, `citext` and — the one that bites — `UNKNOWN`, the type
 /// PostgreSQL assigns a parameter it cannot infer. So a query that worked with a `&str` bound
 /// failed with `Money<C>`, in a pair of modules whose entire thesis is that they are the same
@@ -137,7 +134,7 @@ impl<C: StaticCurrency> ToSql for Money<C> {
     fn to_sql(&self, ty: &Type, out: &mut BytesMut) -> Result<IsNull, Box<dyn Error + Sync + Send>> {
         // `to_string` is Display, which is the canonical form by definition. Going through it
         // rather than re-rendering here is what makes the "one codec" claim structural.
-        <&str as ToSql>::to_sql(&self.to_string().as_str(), ty, out)
+        <&str as ToSql>::to_sql(&encode(self).as_str(), ty, out)
     }
 
     fn accepts(ty: &Type) -> bool {
@@ -153,7 +150,7 @@ impl<'a, C: StaticCurrency> FromSql<'a> for Money<C> {
         // `FromStr` checks the currency against `C` as well as parsing the digits, so a row
         // written as IDR cannot be read into a `Money<USD>` — the cross-check that catches a
         // column being read as the wrong currency, where types alone cannot help.
-        Ok(Self::from_str(text)?)
+        Ok(decode(text)?)
     }
 
     fn accepts(ty: &Type) -> bool {
@@ -163,7 +160,7 @@ impl<'a, C: StaticCurrency> FromSql<'a> for Money<C> {
 
 impl<Base: StaticCurrency, Quote: StaticCurrency> ToSql for Rate<Base, Quote> {
     fn to_sql(&self, ty: &Type, out: &mut BytesMut) -> Result<IsNull, Box<dyn Error + Sync + Send>> {
-        <&str as ToSql>::to_sql(&self.to_string().as_str(), ty, out)
+        <&str as ToSql>::to_sql(&encode(self).as_str(), ty, out)
     }
 
     fn accepts(ty: &Type) -> bool {
@@ -179,7 +176,7 @@ impl<'a, Base: StaticCurrency, Quote: StaticCurrency> FromSql<'a> for Rate<Base,
         // Checks BOTH ends of the pair, base first — accepting a reversed pair would invert
         // the price, which is the one error a quote feed can make that still looks like a
         // number.
-        Ok(Self::from_str(text)?)
+        Ok(decode(text)?)
     }
 
     fn accepts(ty: &Type) -> bool {

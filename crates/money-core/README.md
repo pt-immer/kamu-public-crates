@@ -55,6 +55,24 @@ because `impl ToSql for Money<C>` from an external crate is `E0117` — a foreig
 trait on a foreign type. That is the same reason `serde` is a feature here, and
 the same choice `chrono` and `uuid` make.
 
+## API map
+
+Start at the crate root: `Money`, `Rate`, `Iso4217`, `Rounding`, `Division`,
+`Residue`, and `MoneyError`.
+
+| Need | Path |
+| ---- | ---- |
+| ISO currency markers | `iso` |
+| Locale display and canonical text | `locale`, `text` |
+| Split iterator and narrow errors | `allocation`, `errors` |
+| Raw units, bounds, residue internals, stable hashing | `advanced` |
+| Serde formats | `wire` |
+| PostgreSQL driver traits | `adapters::postgres`, `adapters::sqlx` |
+
+The earlier flat module paths remain as deprecated, documentation-hidden
+migration shims through `0.1.x`. They are scheduled for removal in `0.2.0`;
+compiler notes name each replacement.
+
 ## Allocation conserves the total
 
 ```rust

@@ -13,8 +13,8 @@
 //! Credit and provenance -- source, publication date, capture date, checksum -- are in
 //! `VENDORED.md`.
 
-// `include!` rather than a `mod`: the generated code names `crate::currency::StaticCurrency`
-// and `crate::currency::private::Sealed` relative to the crate root, so it has to expand at
+// `include!` rather than a `mod`: the generated code names `crate::StaticCurrency`
+// and `crate::sealed::Sealed` relative to the crate root, so it has to expand at
 // this path. No `use` here on purpose — an import would be dead, and a reader who deleted it
 // as unused would previously have broken the build, because the emitted code depended on it
 // silently.
@@ -71,6 +71,19 @@ mod tests {
         assert_eq!(Iso4217::from_numeric(9999), None);
         assert_eq!(Iso4217::from_alpha3("ZZZ"), None);
         assert_eq!(Iso4217::from_alpha3("usd"), None, "case sensitive: ISO codes are uppercase");
+    }
+
+    #[test]
+    fn every_is_alpha_sorted_not_numeric_ord_sorted() {
+        assert!(
+            Iso4217::EVERY.windows(2).all(|pair| pair[0].alpha3() < pair[1].alpha3()),
+            "EVERY is the stable alpha-3 browsing order"
+        );
+
+        let aed = Iso4217::EVERY.iter().position(|code| *code == Iso4217::AED).unwrap();
+        let all = Iso4217::EVERY.iter().position(|code| *code == Iso4217::ALL).unwrap();
+        assert!(aed < all, "alpha order puts AED before ALL");
+        assert!(Iso4217::AED > Iso4217::ALL, "derived Ord compares numeric discriminants: AED 784, ALL 8");
     }
 
     /// The register is generated, so what needs pinning is not the individual rows but the

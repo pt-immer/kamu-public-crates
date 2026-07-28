@@ -10,10 +10,10 @@
 //! drop a bare residue. The API makes that choice visible without introducing a
 //! panic in `Drop`, including during cancellation or unwinding.
 
-use crate::currency::StaticCurrency;
-use crate::error::AmountError;
+use crate::Money;
+use crate::StaticCurrency;
+use crate::error_impl::AmountError;
 use crate::iso::Iso4217;
-use crate::money::Money;
 use core::marker::PhantomData;
 
 /// A quotient and residue that must be resolved together.
@@ -117,7 +117,7 @@ impl<C: StaticCurrency> Residue<C> {
     ///
     /// Returns [`AmountError`] outside the fixed money domain.
     pub const fn try_from_units(units: i128) -> Result<Self, AmountError> {
-        if crate::domain::in_domain(units) {
+        if crate::domain_impl::in_domain(units) {
             Ok(Self::from_units_unchecked(units))
         } else {
             Err(AmountError::out_of_domain(units))

@@ -1,8 +1,8 @@
 //! The canonical representation.
 
-use crate::currency::StaticCurrency;
-use crate::domain::in_domain;
-use crate::error::AmountError;
+use crate::StaticCurrency;
+use crate::domain_impl::in_domain;
+use crate::error_impl::AmountError;
 use crate::iso::Iso4217;
 use core::marker::PhantomData;
 
@@ -147,7 +147,7 @@ impl<C: StaticCurrency> Money<C> {
     /// money domain, or [`AmountError::MajorScaleOverflow`] when scaling itself overflows.
     #[inline]
     pub const fn try_from_major(major: i128) -> Result<Self, AmountError> {
-        match major.checked_mul(crate::domain::POW10_SCALE) {
+        match major.checked_mul(crate::domain_impl::POW10_SCALE) {
             Some(units) => Self::try_from_units(units),
             None => Err(AmountError::MajorScaleOverflow { attempted_major: major }),
         }
@@ -157,7 +157,7 @@ impl<C: StaticCurrency> Money<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::DOMAIN_MAX;
+    use crate::domain_impl::DOMAIN_MAX;
     use crate::iso::{IDR, Iso4217, USD};
 
     #[test]
@@ -202,8 +202,8 @@ mod tests {
 
     #[test]
     fn from_major_scales_by_pow10() {
-        assert_eq!(Money::<USD>::try_from_major(10).unwrap().units(), 10 * crate::domain::POW10_SCALE);
-        assert_eq!(Money::<USD>::try_from_major(-3).unwrap().units(), -3 * crate::domain::POW10_SCALE);
+        assert_eq!(Money::<USD>::try_from_major(10).unwrap().units(), 10 * crate::domain_impl::POW10_SCALE);
+        assert_eq!(Money::<USD>::try_from_major(-3).unwrap().units(), -3 * crate::domain_impl::POW10_SCALE);
         assert_eq!(Money::<USD>::ZERO.units(), 0);
     }
 
@@ -226,7 +226,7 @@ mod tests {
     #[test]
     fn from_major_spans_the_domain_and_rejects_beyond_it() {
         // DERIVED from the constants, never a literal, precisely so it survives a scale change.
-        const MAX_MAJOR: i128 = DOMAIN_MAX / crate::domain::POW10_SCALE; // 10^18 - 1 at SCALE 18
+        const MAX_MAJOR: i128 = DOMAIN_MAX / crate::domain_impl::POW10_SCALE; // 10^18 - 1 at SCALE 18
 
         assert!(Money::<USD>::try_from_major(MAX_MAJOR).is_ok(), "top of the domain");
         assert!(Money::<USD>::try_from_major(-MAX_MAJOR).is_ok(), "bottom of the domain");
@@ -249,7 +249,7 @@ mod tests {
 
         assert_eq!(
             MAX_MAJOR,
-            10i128.pow(crate::domain::PRECISION - crate::domain::SCALE) - 1,
+            10i128.pow(crate::domain_impl::PRECISION - crate::domain_impl::SCALE) - 1,
             "major range is 10^(PRECISION-SCALE) - 1, whatever SCALE happens to be"
         );
         assert!(Money::<USD>::try_from_major(0).is_ok());

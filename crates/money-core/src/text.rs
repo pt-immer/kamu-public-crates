@@ -30,12 +30,12 @@
 //! and re-renders as `"USD 10.50"`. That makes the pair a **retraction**, not the bijection
 //! C7 originally claimed.
 
-use crate::currency::StaticCurrency;
-use crate::domain::{POW10_SCALE, SCALE, in_domain};
-use crate::error::{AmountError, ParseMoneyError, RateError};
+use crate::Money;
+use crate::Rate;
+use crate::StaticCurrency;
+use crate::domain_impl::{POW10_SCALE, SCALE, in_domain};
+use crate::error_impl::{AmountError, ParseMoneyError, RateError};
 use crate::iso::Iso4217;
-use crate::money::Money;
-use crate::rate::Rate;
 use core::fmt;
 use core::str::FromStr;
 
@@ -154,6 +154,16 @@ fn parse_fixed_point(text: &str) -> Result<i128, ParseMoneyError> {
     } else {
         Ok(units)
     }
+}
+
+/// Parse the bare decimal carried by a structured rate representation.
+///
+/// Unlike [`parse_amount`], this does not apply the money domain. [`Rate`]'s
+/// constructor owns both the domain and strictly-positive checks, so every rate
+/// ingress reaches the same validation edge.
+#[cfg(feature = "serde")]
+pub(crate) fn parse_rate_amount(text: &str) -> Result<i128, ParseMoneyError> {
+    parse_fixed_point(text)
 }
 
 /// Split `"<ISO> <amount>"` into its currency and its still-unparsed amount.
@@ -393,7 +403,7 @@ mod tests {
 
     #[test]
     fn display_and_parse_agree_on_the_domain_edges() {
-        for units in [crate::domain::DOMAIN_MAX, -crate::domain::DOMAIN_MAX, 0, 1, -1] {
+        for units in [crate::domain_impl::DOMAIN_MAX, -crate::domain_impl::DOMAIN_MAX, 0, 1, -1] {
             let m = Money::<IDR>::try_from_units(units).unwrap();
             assert_eq!(Money::<IDR>::from_str(&m.to_string()).unwrap(), m, "{units}");
         }

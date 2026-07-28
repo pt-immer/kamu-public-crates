@@ -4,10 +4,10 @@
 
 #![cfg(feature = "serde")]
 
-use kamu_money_core::domain::DOMAIN_MAX;
+use kamu_money_core::Money;
+use kamu_money_core::Rate;
+use kamu_money_core::advanced::domain::DOMAIN_MAX;
 use kamu_money_core::iso::{IDR, Iso4217, JPY, USD};
-use kamu_money_core::money::Money;
-use kamu_money_core::rate::Rate;
 use proptest::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -69,7 +69,8 @@ fn a_struct_can_mix_both_modes_per_field() {
     let p = Payment {
         amount: Money::<USD>::try_from_major(10).unwrap(),
         fee: Money::<USD>::try_from_units(1_500_000_000_000_000_000).unwrap(),
-        rate: Rate::<USD, IDR>::try_from_units(16_000 * kamu_money_core::POW10_SCALE).unwrap(),
+        rate: Rate::<USD, IDR>::try_from_units(16_000 * kamu_money_core::advanced::domain::POW10_SCALE)
+            .unwrap(),
     };
     let json = serde_json::to_string(&p).unwrap();
     assert_eq!(
@@ -84,7 +85,8 @@ fn structured_is_the_default_for_money_and_rate() {
     let m = Money::<USD>::try_from_units(10_500_000_000_000_000_000).unwrap();
     assert_eq!(serde_json::to_string(&m).unwrap(), r#"{"currency":"USD","amount":"10.50"}"#);
 
-    let r = Rate::<USD, IDR>::try_from_units(16_000 * kamu_money_core::POW10_SCALE).unwrap();
+    let r =
+        Rate::<USD, IDR>::try_from_units(16_000 * kamu_money_core::advanced::domain::POW10_SCALE).unwrap();
     assert_eq!(serde_json::to_string(&r).unwrap(), r#"{"base":"USD","quote":"IDR","rate":"16000"}"#);
 }
 
@@ -189,7 +191,7 @@ fn binary_carries_the_iso_numeric_tag_before_the_units() {
 /// `Money<IDR>`. Before R2-F2 this succeeded, unit-for-unit, silently redenominating the money.
 #[test]
 fn binary_refuses_a_cross_currency_reinterpretation() {
-    let m = Money::<USD>::try_from_units(10 * kamu_money_core::POW10_SCALE).unwrap();
+    let m = Money::<USD>::try_from_units(10 * kamu_money_core::advanced::domain::POW10_SCALE).unwrap();
     let bytes = postcard::to_allocvec(&m).unwrap();
 
     assert!(postcard::from_bytes::<Money<IDR>>(&bytes).is_err(), "a USD payload must not decode as IDR");
@@ -202,7 +204,8 @@ fn binary_refuses_a_cross_currency_reinterpretation() {
 #[test]
 fn binary_refuses_a_rate_pair_reinterpretation() {
     use kamu_money_core::iso::{EUR, JPY};
-    let r = Rate::<USD, IDR>::try_from_units(16_000 * kamu_money_core::POW10_SCALE).unwrap();
+    let r =
+        Rate::<USD, IDR>::try_from_units(16_000 * kamu_money_core::advanced::domain::POW10_SCALE).unwrap();
     let bytes = postcard::to_allocvec(&r).unwrap();
 
     assert!(postcard::from_bytes::<Rate<EUR, JPY>>(&bytes).is_err(), "both ends changed");

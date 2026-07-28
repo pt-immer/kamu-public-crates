@@ -1,9 +1,9 @@
 //! Generates `kamu-money-core`'s ISO 4217 register at build time, from the maintenance agency's
 //! published list.
 //!
-//! **Internal to this crate.** The emitted code names `crate::currency::StaticCurrency` and
-//! `crate::currency::private::Sealed`, so it only compiles inside `kamu-money-core`. That is
-//! sound — `private` is `pub(crate)`, so nothing leaks and no foreign crate can forge a
+//! **Internal to this crate.** The emitted code names `crate::StaticCurrency` and
+//! `crate::sealed::Sealed`, so it only compiles inside `kamu-money-core`. That is
+//! sound — `sealed` is private, so nothing leaks and no foreign crate can forge a
 //! currency. It is also why this was collapsed out of a separate published crate: as a
 //! `#[proc_macro]` on crates.io it could never have been used by anyone, because invoking it
 //! anywhere else fails with `cannot find 'currency' in 'crate'`.
@@ -41,7 +41,7 @@
 //!
 //! - a currency appearing under several countries must agree with itself in every row
 //! - no two currencies may share a numeric code
-//! - no name may contain a character that would not survive a Rust string literal
+//! - every name must be non-empty; `quote` escapes all valid string contents
 //! - every alpha-3 must be three ASCII uppercase letters, and a legal Rust identifier
 //!
 //! The fixture tests covering those failure paths live in `tests/register_codegen.rs`, which
@@ -61,9 +61,9 @@ use std::collections::BTreeMap;
 
 /// The register itself, embedded at the time THIS crate is compiled.
 ///
-/// `include_str!` rather than a runtime read: a proc macro runs in the consumer's build, whose
-/// working directory is not this crate's, so a path lookup would be both non-hermetic and
-/// dependent on where cargo happened to invoke it.
+/// `include_str!` makes the path relative to this source file and embeds the
+/// bytes in the build-script binary. A runtime read would depend on Cargo's
+/// invocation directory and package layout.
 const REGISTER: &str = include_str!("../vendor/list-one.xml");
 
 /// The edition `list-one.xml` is pinned to — the machine-readable manifest.
@@ -151,8 +151,8 @@ struct Currency {
 /// parameterising it would imply a choice that does not exist.
 ///
 /// This was a `#[proc_macro]` in a separate published crate. It could never have been used by
-/// anyone: the tokens it emits name `crate::currency::StaticCurrency` and
-/// `crate::currency::private::Sealed`, so it only ever compiled inside `kamu-money-core`.
+/// anyone: the tokens it emits name `crate::StaticCurrency` and
+/// `crate::sealed::Sealed`, so it only ever compiled inside `kamu-money-core`.
 /// Generating from a build script instead deletes a crates.io package nobody could depend on,
 /// and matches how `kamu-iso3166` builds its tables from vendored data.
 ///
@@ -174,7 +174,7 @@ pub(crate) fn generate() -> TokenStream {
 
 /// Turn a validated register into the tokens `kamu-money-core` compiles.
 ///
-/// Split out of [`iso4217_register`] so the entry point is just "read, validate, emit" and
+/// Split out of [`generate`] so the entry point is just "read, validate, emit" and
 /// this is just the emission -- clippy's line limit was the prompt, but the seam is real.
 #[allow(clippy::too_many_lines)] // one `quote!` block; splitting it would hide the shape
 fn emit(currencies: &BTreeMap<String, Currency>) -> TokenStream {
@@ -236,11 +236,11 @@ fn emit(currencies: &BTreeMap<String, Currency>) -> TokenStream {
             #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
             pub struct #ident;
 
-            impl crate::currency::StaticCurrency for #ident {
+            impl crate::StaticCurrency for #ident {
                 const CODE: Iso4217 = Iso4217::#ident;
             }
 
-            impl crate::currency::private::Sealed for #ident {}
+            impl crate::sealed::Sealed for #ident {}
         }
     });
 
@@ -401,10 +401,6 @@ fn parse_register(xml: &str) -> Result<BTreeMap<String, Currency>, String> {
         if name.is_empty() {
             return Err(format!("{code} has no name"));
         }
-        if name.contains('"') || name.contains('\\') {
-            return Err(format!("{code}'s name would not survive a string literal: {name}"));
-        }
-
         let parsed = Currency { numeric, exponent, name };
 
         // A currency used in several countries appears once per country. Every such row must
@@ -434,7 +430,7 @@ fn parse_register(xml: &str) -> Result<BTreeMap<String, Currency>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Currency, parse_register};
+    use super::{Currency, emit, parse_register};
 
     /// A register with `rows` spliced in, so each fixture states only what it is testing.
     fn xml(rows: &str) -> String {
@@ -498,6 +494,19 @@ mod tests {
     fn no_minor_unit_means_no_exponent_not_zero() {
         let doc = xml(&row("X", "Gold", "XAU", "959", "N.A."));
         assert_eq!(parse_register(&doc).unwrap()["XAU"].exponent, None);
+    }
+
+    #[test]
+    fn names_with_quotes_and_backslashes_are_escaped_by_the_emitter() {
+        let doc = xml(&row("A", r"Alpha &quot;Quote&quot; \ Reserve", "AAA", "111", "2"));
+        let register = parse_register(&doc).unwrap();
+        assert_eq!(register["AAA"].name, r#"Alpha "Quote" \ Reserve"#);
+
+        let tokens = emit(&register).to_string();
+        assert!(
+            tokens.contains(r#"Alpha \"Quote\" \\ Reserve"#),
+            "emitted tokens did not preserve the escaped name: {tokens}"
+        );
     }
 
     #[test]

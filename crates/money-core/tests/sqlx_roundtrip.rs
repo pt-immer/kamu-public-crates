@@ -11,9 +11,9 @@
 
 #![cfg(all(feature = "sqlx", feature = "postgres"))]
 
+use kamu_money_core::advanced::domain::{DOMAIN_MAX, POW10_SCALE};
 use kamu_money_core::iso::{IDR, JPY, USD};
-use kamu_money_core::rate::Rate;
-use kamu_money_core::{DOMAIN_MAX, Money, POW10_SCALE};
+use kamu_money_core::{Money, Rate};
 use sqlx::{Row, postgres::PgPoolOptions};
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres as PgImage;

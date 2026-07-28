@@ -7,9 +7,9 @@
 //! cannot.
 
 use core::num::NonZeroU32;
+use kamu_money_core::Money;
+use kamu_money_core::Rounding;
 use kamu_money_core::iso::{IDR, JPY, KWD, USD};
-use kamu_money_core::money::Money;
-use kamu_money_core::rounding::Rounding;
 
 // Money implements Display, and this example used to hand-roll a formatter instead. That was
 // the finding that put Display in the crate: a money format is a contract (C7), so a library

@@ -1335,20 +1335,16 @@ pub struct Money<C: StaticCurrency> { units: i128, _c: PhantomData<C> }   // exa
 
 ### C2 — Currency identity
 
-```rust
-iso4217! {
-    USD = 840, exp = 2,  "US Dollar";
-    IDR = 360, exp = 2,  "Rupiah";
-    JPY = 392, exp = 0,  "Yen";
-    KWD = 414, exp = 3,  "Kuwaiti Dinar";
-    XAU = 959, exp = NA, "Gold";
-    // ... ~180 entries
-}
+```text
+vendor/list-one.xml
+    → build/iso4217.rs
+    → OUT_DIR/iso4217.rs
+    → src/iso.rs
 ```
 
-- **Invariant:** this table is the **sole** source of truth. It generates the `#[repr(u16)] Iso4217` enum, one ZST per currency, and every `const fn` lookup. `Usd::CODE` and `Iso4217::USD` cannot drift because one table wrote both.
+- **Invariant:** the vendored register is the **sole** source of truth. It generates the `#[repr(u16)] Iso4217` enum, one ZST per currency, and every `const fn` lookup. `USD::CODE` and `Iso4217::USD` cannot drift because one register wrote both.
 - **Invariant:** the set is **closed**. An unrecognized code is a parse error, never a silent pass.
-- **Invariant: the table is GENERATED, never authored.** All 178 codes of ISO 4217 as published 2026-01-01, expanded at COMPILE TIME by the `kamu-money-iso` proc macro from the maintenance agency's `list-one.xml`, vendored with its checksum and credit at `kamu-money-iso/`. There is no generated file and no verifier: the register and the table are the same object, and its invariants are checked as it is read, so a bad edition fails the build of every crate downstream rather than a test someone can skip. This is not tidiness: of the 178 codes, 17 take **0** fraction digits, 139 take **2**, 7 take **3**, 2 take **4**, and 13 have **none** — a hand-typed table would review as correct and settle amounts wrongly, which is this crate's own failure mode reached through its reference data. The twelve hand-written entries it replaced were checked against the source first; all twelve matched, which is why the pipeline is trusted rather than merely convenient.
+- **Invariant: the table is GENERATED, never authored.** All 178 codes of ISO 4217 as published 2026-01-01 are emitted by this crate's build script from `vendor/list-one.xml`, with checksum and credit beside it. There is no committed generated file: the register is checked as it is read, so a bad edition fails every downstream build. Of the 178 codes, 17 take **0** fraction digits, 139 take **2**, 7 take **3**, 2 take **4**, and 13 have **none**. The twelve hand-written entries this replaced all matched the source.
 - **Consequence, found on completion:** `Iso4217::ALL` had to become `Iso4217::EVERY`. `ALL` is the Albanian lek, so the associated const listing every currency was shadowed by its own variant the moment the register was complete — surfacing as `` `Iso4217` is not an iterator ``, a confusing way to be told a constant was overwritten by data. An associated item sharing a namespace with externally-defined identifiers will eventually collide, because the register grows and its names are not ours to choose.
 - **Invariant:** `exp` is the **ISO settlement exponent** — the standard's number, not the market's. IDR is `2` per ISO 4217, even though sen are extinct in practice.
 - **Invariant:** `exponent()` returns `Option<u8>`. `XAU`/`XDR`/`XXX` have no exponent. Gold has no cents.
@@ -1358,16 +1354,16 @@ iso4217! {
 ### C3 — The currency IS the type
 
 ```rust
-pub trait StaticCurrency: private::Sealed { const CODE: Iso4217; }   // sealed, macro-implemented
+pub trait StaticCurrency: sealed::Sealed { const CODE: Iso4217; } // sealed, generated
 pub struct Money<C: StaticCurrency> { units: i128, _c: PhantomData<C> }
 ```
 
 - **Invariant: there is no runtime-currency variant.** A `Money<C>` is 16 bytes — exactly an
   `i128` — because `C` is a ZST and the currency is carried entirely by the type. `Money<USD> +
   Money<IDR>` is a compile error with no runtime check to forget and no error arm to handle.
-- **Invariant: the trait is sealed.** `private::Sealed` is unnameable downstream, so no external
+- **Invariant: the trait is sealed.** `sealed::Sealed` is unnameable downstream, so no external
   crate can mint a counterfeit currency claiming `CODE = Iso4217::USD`. A doc comment saying
-  "implemented by the macro, never by hand" was **not** access control — verified: a counterfeit
+  "implemented by generated code, never by hand" was **not** access control — verified: a counterfeit
   compiled and impersonated genuine USD before the seal existed.
 - **Where a runtime currency is genuinely needed, the SCHEMA declares it, not Rust.** A money
   column is either single-currency (`kmoney(IDR)`, typmod-pinned) or mixed (`kmoney_mixed`),
@@ -1554,7 +1550,7 @@ Runnable: `cargo run -p kamu-money-core --example wire --features serde`.
   residue is an accounting obligation tied to an operation, and a division is
   unresolved local state; neither is a durable value to recreate from
   untrusted input.
-- **Invariant: one parser, not two.** The wire's human-readable form goes through the same `text` module that backs `Display`/`FromStr`, which is **not** feature-gated. A second decimal reader would be a second set of rules, and the two would drift on exactly the inputs nobody tests.
+- **Invariant: one parser, not two.** The wire's human-readable form uses the same bare decimal parser in `text` that backs `Display`/`FromStr`; the structured form parses its already-checked amount field directly instead of rebuilding a tagged string. A second decimal reader would be a second set of rules, and the two would drift on exactly the inputs nobody tests.
 - **Invariant: excess precision is REFUSED, never rounded**, and it has its own error variant so the refusal is greppable. This is the failure that disqualified `rust_decimal` for this crate (E2): its `from_str` silently rounded out-of-domain input and returned `Ok`.
 - **Invariant:** two named modes, selected per field by `#[serde(with = ...)]` — `wire::transparent` (one scalar) and `wire::structured` (an object with named fields). **Structured is the default**, so the common case needs no attribute at all. Measured: a `with`-path typo is `E0433: cannot find module` at **compile** time, so per-field selection is already compile-checked and a proc-macro derive would buy nothing for a syn/quote dependency.
 - **Rejected: a Cargo feature for rich-vs-transparent.** Cargo features are additive and unified across the dependency graph. Two crates wanting different wire formats would unify to one, silently, with no error. A wire format is the worst possible place for that. Per-field `#[serde(with = ...)]` gives the same compile-time selection with no global coupling.
@@ -1597,7 +1593,7 @@ would add a catalog entry whose text form is meaningless money. PostgreSQL copie
 
 Cross-currency is refused at run time, the fastest way (a `u16` code compare against the first
 operand), exactly as `+` refuses it. Both layers still share one kernel — `UnitSum` in
-`kamu_money_core::arith`, which `sum_units` is now a fold over (C9). Rust keeps **no** `impl Sum`:
+`kamu_money_core::advanced::arithmetic`, which `sum_units` is now a fold over (C9). Rust keeps **no** `impl Sum`:
 a fold through `+` is inherently narrow, and `Money::try_sum` is the wide form there.
 
 **This block was wrong in three ways at once, and every one of them would have failed on the

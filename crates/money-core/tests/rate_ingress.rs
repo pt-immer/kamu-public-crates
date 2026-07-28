@@ -31,9 +31,10 @@
 //! non-positive quote off a real server there.
 
 use core::str::FromStr;
+use kamu_money_core::Rate;
+use kamu_money_core::advanced::domain::POW10_SCALE;
+use kamu_money_core::errors::RateError;
 use kamu_money_core::iso::{IDR, USD};
-use kamu_money_core::rate::Rate;
-use kamu_money_core::{POW10_SCALE, RateError};
 
 /// `-2.0`, as canonical units. A plain, plausible-looking quote — not an edge case, which is
 /// the point: the dangerous input here is the one that looks like a price.
@@ -99,8 +100,8 @@ fn the_parser_names_the_sign_rather_than_blaming_the_domain() {
 #[cfg(feature = "serde")]
 mod wire {
     use super::minus_two;
+    use kamu_money_core::Rate;
     use kamu_money_core::iso::{IDR, Iso4217, USD};
-    use kamu_money_core::rate::Rate;
     use serde::Deserialize;
 
     /// The structured JSON form, and the transparent one beside it. Both are public API and a
@@ -131,7 +132,8 @@ mod wire {
         let accepted: T = serde_json::from_str(r#""USD/IDR/16000""#).unwrap();
         assert_eq!(
             accepted.0,
-            Rate::<USD, IDR>::try_from_units(16_000 * kamu_money_core::POW10_SCALE).unwrap()
+            Rate::<USD, IDR>::try_from_units(16_000 * kamu_money_core::advanced::domain::POW10_SCALE)
+                .unwrap()
         );
 
         // The positive control, so this cannot pass by refusing everything.
@@ -158,12 +160,16 @@ mod wire {
         // Positive control, and it doubles as a check that the tuple shape above is still the
         // codec's shape: if it were not, the negative cases would be failing to decode for the
         // wrong reason and would keep passing forever.
-        let good =
-            postcard::to_allocvec(&(Iso4217::USD, Iso4217::IDR, 16_000 * kamu_money_core::POW10_SCALE))
-                .unwrap();
+        let good = postcard::to_allocvec(&(
+            Iso4217::USD,
+            Iso4217::IDR,
+            16_000 * kamu_money_core::advanced::domain::POW10_SCALE,
+        ))
+        .unwrap();
         assert_eq!(
             postcard::from_bytes::<Rate<USD, IDR>>(&good).unwrap(),
-            Rate::<USD, IDR>::try_from_units(16_000 * kamu_money_core::POW10_SCALE).unwrap()
+            Rate::<USD, IDR>::try_from_units(16_000 * kamu_money_core::advanced::domain::POW10_SCALE)
+                .unwrap()
         );
     }
 }

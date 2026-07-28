@@ -1,7 +1,7 @@
-use kamu_money_core::domain::DOMAIN_MAX;
+use kamu_money_core::Money;
+use kamu_money_core::Rounding;
+use kamu_money_core::advanced::domain::DOMAIN_MAX;
 use kamu_money_core::iso::USD;
-use kamu_money_core::money::Money;
-use kamu_money_core::rounding::Rounding;
 use proptest::prelude::*;
 
 proptest! {

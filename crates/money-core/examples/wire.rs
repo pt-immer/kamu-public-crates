@@ -2,10 +2,10 @@
 //!
 //! Run with `cargo run -p kamu-money-core --example wire --features serde`.
 
-use kamu_money_core::POW10_SCALE;
+use kamu_money_core::Money;
+use kamu_money_core::Rate;
+use kamu_money_core::advanced::domain::POW10_SCALE;
 use kamu_money_core::iso::{IDR, Iso4217, JPY, USD};
-use kamu_money_core::money::Money;
-use kamu_money_core::rate::Rate;
 use serde::{Deserialize, Serialize};
 
 /// A payload mixing both modes. Which one a field uses is chosen **per field**, at compile

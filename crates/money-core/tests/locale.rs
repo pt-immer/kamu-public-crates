@@ -18,9 +18,11 @@
 //!    real digits off `16000.50` and print a number that is not the stored one. §0.1 calls
 //!    that a second number claiming to be the money, and rejects it.
 
+use kamu_money_core::advanced::domain::{DOMAIN_MAX, POW10_SCALE};
+use kamu_money_core::errors::LocaleError;
 use kamu_money_core::iso::{EUR, IDR, JPY, USD, XAU};
 use kamu_money_core::locale::{DE_EUR, EN_USD, FractionDigits, ID_IDR, JA_JPY, LocalePolicy, SymbolPosition};
-use kamu_money_core::{DOMAIN_MAX, Iso4217, LocaleError, Money, POW10_SCALE, text};
+use kamu_money_core::{Iso4217, Money, text};
 use proptest::prelude::*;
 
 /// 16 000.50 IDR — the amount the spec's own C2 example turns on.

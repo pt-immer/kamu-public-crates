@@ -49,8 +49,9 @@
 
 #![cfg(all(feature = "postgres", feature = "sqlx"))]
 
+use kamu_money_core::Money;
+use kamu_money_core::advanced::domain::DOMAIN_MAX;
 use kamu_money_core::iso::{IDR, USD};
-use kamu_money_core::{DOMAIN_MAX, Money};
 // `Row` is what brings `try_get` into scope: the sqlx negative half fetches the row first and
 // decodes separately, so that "rejected by OID" cannot be confused with a failed query.
 use sqlx::Row;

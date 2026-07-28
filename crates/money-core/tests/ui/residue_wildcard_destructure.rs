@@ -9,8 +9,8 @@
 
 use core::num::NonZeroU32;
 use kamu_money_core::iso::USD;
-use kamu_money_core::money::Money;
-use kamu_money_core::rounding::Rounding;
+use kamu_money_core::Money;
+use kamu_money_core::Rounding;
 
 fn main() {
     let m = Money::<USD>::try_from_units(10_000_000_000_000_000_000).unwrap();

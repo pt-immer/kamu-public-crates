@@ -1,10 +1,9 @@
 use core::num::NonZeroU32;
-use kamu_money_core::arith::div_int_units;
+use kamu_money_core::advanced::arithmetic::div_int_units;
+use kamu_money_core::advanced::domain::DOMAIN_MAX;
+use kamu_money_core::errors::AmountError;
 use kamu_money_core::iso::USD;
-use kamu_money_core::money::Money;
-use kamu_money_core::residue::Residue;
-use kamu_money_core::rounding::Rounding;
-use kamu_money_core::{AmountError, DOMAIN_MAX};
+use kamu_money_core::{Money, Residue, Rounding};
 
 #[test]
 fn residue_constructor_enforces_the_amount_domain() {

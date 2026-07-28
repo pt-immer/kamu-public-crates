@@ -7,9 +7,9 @@
 // and no runtime test in this crate could notice. (DESIGN.md C6)
 
 use kamu_money_core::iso::{EUR, IDR, USD};
-use kamu_money_core::money::Money;
-use kamu_money_core::rate::Rate;
-use kamu_money_core::rounding::Rounding;
+use kamu_money_core::Money;
+use kamu_money_core::Rate;
+use kamu_money_core::Rounding;
 
 fn main() {
     let usd = Money::<USD>::try_from_units(1).unwrap();

@@ -3,7 +3,7 @@
 // This is the headline claim of the whole Money<C> design. (DESIGN.md C3/C4)
 
 use kamu_money_core::iso::{IDR, USD};
-use kamu_money_core::money::Money;
+use kamu_money_core::Money;
 
 fn main() {
     let usd = Money::<USD>::try_from_units(1).unwrap();

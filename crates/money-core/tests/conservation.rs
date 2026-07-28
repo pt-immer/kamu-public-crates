@@ -1,7 +1,7 @@
-use kamu_money_core::domain::DOMAIN_MAX;
+use kamu_money_core::Money;
+use kamu_money_core::advanced::domain::DOMAIN_MAX;
+use kamu_money_core::errors::{AllocationError, AmountError};
 use kamu_money_core::iso::USD;
-use kamu_money_core::money::Money;
-use kamu_money_core::{AllocationError, AmountError};
 use proptest::prelude::*;
 
 fn m(u: i128) -> Money<USD> {
@@ -157,7 +157,7 @@ fn allocate_reports_bad_weights_instead_of_panicking() {
     for units in [0, 1, -1, 7, -7, DOMAIN_MAX, -DOMAIN_MAX] {
         for weights in [&[1u32, 1, 1][..], &[3, 1][..], &[1, 0, 2][..], &[5][..]] {
             let typed = m(units).allocate(weights).expect("weights are valid");
-            let raw = kamu_money_core::allocate::allocate_units(units, weights).unwrap();
+            let raw = kamu_money_core::advanced::arithmetic::allocate_units(units, weights).unwrap();
             assert_eq!(typed.iter().map(Money::units).collect::<Vec<_>>(), raw);
         }
     }
@@ -181,7 +181,7 @@ fn split_parts_differ_by_at_most_one_unit() {
 /// The raw allocator reports both invalid weights and invalid amounts.
 #[test]
 fn the_runtime_allocator_refuses_bad_weights_without_panicking() {
-    use kamu_money_core::allocate::allocate_units;
+    use kamu_money_core::advanced::arithmetic::allocate_units;
 
     assert_eq!(allocate_units(1, &[]), Err(AllocationError::InvalidWeights { weights: 0 }));
     assert_eq!(allocate_units(1, &[0, 0]), Err(AllocationError::InvalidWeights { weights: 2 }));
@@ -201,7 +201,7 @@ fn the_runtime_allocator_refuses_bad_weights_without_panicking() {
 /// distribution; assert the distribution, not only its sum.)
 #[test]
 fn the_allocator_never_pays_a_zero_weight_recipient() {
-    use kamu_money_core::allocate::allocate_units;
+    use kamu_money_core::advanced::arithmetic::allocate_units;
 
     // The measured defect: the whole odd unit used to land on the leading zero slot.
     assert_eq!(allocate_units(1, &[0, 1, 1]).unwrap(), vec![0, 1, 0]);

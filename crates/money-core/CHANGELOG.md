@@ -46,6 +46,13 @@ Initial release.
 - Optional `serde` (structured, plus a transparent-string adapter), `postgres`
   and `sqlx` adapters. The database adapters live here rather than in sibling
   crates because `impl ToSql for Money<C>` from an external crate is `E0117`.
+- A layered public facade: common types at the crate root; policy and errors in
+  named modules; raw-unit and persistence mechanics under `advanced`; database
+  integrations under `adapters`. Earlier flat paths are deprecated migration
+  shims scheduled for removal in `0.2.0`.
+- Direct structured-wire parsing without rebuilding tagged strings, a shared
+  private text codec for both database drivers, and generated ISO currency names
+  escaped by `quote` rather than rejected for quotes or backslashes.
 
 ### Notes
 

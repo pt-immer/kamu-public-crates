@@ -1,10 +1,10 @@
 //! Exact arithmetic. Rounding is not merely discouraged here — it is unrepresentable.
 
-use crate::currency::StaticCurrency;
-use crate::error::AmountError;
-use crate::money::Money;
-use crate::residue::{Division, UntaggedDivision};
-use crate::rounding::{Rounding, div_round_i256};
+use crate::Money;
+use crate::StaticCurrency;
+use crate::error_impl::AmountError;
+use crate::residue_impl::{Division, UntaggedDivision};
+use crate::rounding_impl::{Rounding, div_round_i256};
 use core::num::NonZeroU32;
 use core::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 use ethnum::I256;
@@ -120,12 +120,12 @@ pub const fn add_units(a: i128, b: i128) -> Option<i128> {
     // lets two out-of-domain operands CANCEL into a valid-looking answer —
     // `add_units(i128::MAX, -i128::MAX)` would return `Some(0)`, laundering corrupt input
     // into money. The same rule `allocate_units` and `div_int_units` already follow.
-    if !crate::domain::in_domain(a) || !crate::domain::in_domain(b) {
+    if !crate::domain_impl::in_domain(a) || !crate::domain_impl::in_domain(b) {
         return None;
     }
     match a.checked_add(b) {
         Some(v) => {
-            if crate::domain::in_domain(v) {
+            if crate::domain_impl::in_domain(v) {
                 Some(v)
             } else {
                 None
@@ -143,12 +143,12 @@ pub const fn add_units(a: i128, b: i128) -> Option<i128> {
 pub const fn sub_units(a: i128, b: i128) -> Option<i128> {
     // Operands enforced, not assumed — see `add_units`. Without this,
     // `sub_units(i128::MAX, i128::MAX)` returns `Some(0)`.
-    if !crate::domain::in_domain(a) || !crate::domain::in_domain(b) {
+    if !crate::domain_impl::in_domain(a) || !crate::domain_impl::in_domain(b) {
         return None;
     }
     match a.checked_sub(b) {
         Some(v) => {
-            if crate::domain::in_domain(v) {
+            if crate::domain_impl::in_domain(v) {
                 Some(v)
             } else {
                 None
@@ -163,7 +163,8 @@ pub const fn sub_units(a: i128, b: i128) -> Option<i128> {
 /// The non-generic core of [`Money::try_sum`], and the same kernel `kamu-money-pg`'s `kmoney_sum`
 /// calls — so the wide-accumulate-then-narrow rule lives in one place and the two layers cannot
 /// disagree about what a sum of money is. This is C9's principle applied to addition, the same
-/// way [`allocate_units`](crate::allocate::allocate_units) shares one distribution.
+/// way [`allocate_units`](crate::advanced::arithmetic::allocate_units) shares
+/// one distribution.
 ///
 /// Accumulating in [`I256`] and narrowing once is the whole point: a fold through `i128` `+`
 /// can leave the domain on a transient partial sum that the true total returns to, which is
@@ -240,7 +241,7 @@ impl UnitSum {
     /// each term is below 1e36 and `I256::MAX` is ~5.7e76, so that needs ~5.7e40 in-domain terms
     /// — but reachable for one that arrived through [`Self::from_le_bytes`].
     pub fn add_units(self, units: i128) -> Result<Self, AmountError> {
-        if !crate::domain::in_domain(units) {
+        if !crate::domain_impl::in_domain(units) {
             return Err(AmountError::out_of_domain(units));
         }
         match self.0.checked_add(I256::from(units)) {
@@ -271,7 +272,7 @@ impl UnitSum {
     /// [`AmountError::ArithmeticOverflow`] when the total cannot be represented as `i128`.
     pub fn finish(self) -> Result<i128, AmountError> {
         let attempted = i128::try_from(self.0).map_err(|_| AmountError::ArithmeticOverflow)?;
-        if crate::domain::in_domain(attempted) {
+        if crate::domain_impl::in_domain(attempted) {
             Ok(attempted)
         } else {
             Err(AmountError::out_of_domain(attempted))
@@ -377,7 +378,7 @@ impl<C: StaticCurrency> Money<C> {
 /// Panics only if the rounding kernel returns a quotient larger than the dividend or a
 /// residue at least as large as the divisor.
 pub fn div_int_units(units: i128, n: NonZeroU32, mode: Rounding) -> Result<UntaggedDivision, AmountError> {
-    if !crate::domain::in_domain(units) {
+    if !crate::domain_impl::in_domain(units) {
         return Err(AmountError::out_of_domain(units));
     }
     let (q, r) = div_round_i256(I256::from(units), I256::from(i128::from(n.get())), mode);
@@ -389,11 +390,11 @@ pub fn div_int_units(units: i128, n: NonZeroU32, mode: Rounding) -> Result<Untag
 
 #[cfg(test)]
 mod tests {
-    use crate::arith::{UnitSum, sum_units};
-    use crate::domain::DOMAIN_MAX;
-    use crate::error::AmountError;
+    use crate::Money;
+    use crate::arith_impl::{UnitSum, sum_units};
+    use crate::domain_impl::DOMAIN_MAX;
+    use crate::error_impl::AmountError;
     use crate::iso::USD;
-    use crate::money::Money;
 
     fn m(u: i128) -> Money<USD> {
         Money::<USD>::try_from_units(u).unwrap()
@@ -587,7 +588,7 @@ mod tests {
         assert_eq!(huge.finish(), Err(AmountError::ArithmeticOverflow));
     }
 
-    use crate::rounding::Rounding;
+    use crate::rounding_impl::Rounding;
     use core::num::NonZeroU32;
 
     #[test]
