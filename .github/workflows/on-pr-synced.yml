@@ -740,10 +740,21 @@ jobs:
           sudo apt-get install -y --no-install-recommends postgresql-18 postgresql-server-dev-18
       - uses: actions/cache@v4
         with:
+          # ~/.pgrx is where the BYTES are. `cargo pgrx init` ignores the `[env]`
+          # PGRX_HOME the lane's cargo config forces and writes to the default home
+          # path; the recipe below reconciles the two with a symlink. Caching the
+          # symlink's location instead would cache a dangling link.
           path: ~/.pgrx
           key: pgrx-0.19.1-pg18-${{ runner.os }}
       - name: Initialise PGRX_HOME against the installed server
-        run: cargo pgrx init --pg18 /usr/lib/postgresql/18/bin/pg_config
+        # `just pg pgrx-init`, NOT a raw `cargo pgrx init`. The recipe already knows
+        # the thing that broke this job twice: `cargo pgrx init` does not honour the
+        # forced `[env]` PGRX_HOME and writes to ~/.pgrx, while pgrx-pg-sys's BUILD
+        # SCRIPT does honour it and then fails with "$PGRX_HOME does not exist". The
+        # recipe symlinks the two together and asserts .pgrx/config.toml exists
+        # afterwards, so it fails loudly rather than reporting success and leaving
+        # the next command to break. It is also the repository's rule: CI calls just.
+        run: just pg pgrx-init /usr/lib/postgresql/18/bin/pg_config
       # ONE MAJOR, NEVER --all-features: pgrx's pg15..pg18 features are mutually
       # exclusive, so an --all-features sweep does not lint this crate strictly,
       # it fails to build it.
@@ -779,10 +790,21 @@ jobs:
           sudo apt-get install -y --no-install-recommends postgresql-18 postgresql-server-dev-18
       - uses: actions/cache@v4
         with:
+          # ~/.pgrx is where the BYTES are. `cargo pgrx init` ignores the `[env]`
+          # PGRX_HOME the lane's cargo config forces and writes to the default home
+          # path; the recipe below reconciles the two with a symlink. Caching the
+          # symlink's location instead would cache a dangling link.
           path: ~/.pgrx
           key: pgrx-0.19.1-pg18-${{ runner.os }}
       - name: Initialise PGRX_HOME against the installed server
-        run: cargo pgrx init --pg18 /usr/lib/postgresql/18/bin/pg_config
+        # `just pg pgrx-init`, NOT a raw `cargo pgrx init`. The recipe already knows
+        # the thing that broke this job twice: `cargo pgrx init` does not honour the
+        # forced `[env]` PGRX_HOME and writes to ~/.pgrx, while pgrx-pg-sys's BUILD
+        # SCRIPT does honour it and then fails with "$PGRX_HOME does not exist". The
+        # recipe symlinks the two together and asserts .pgrx/config.toml exists
+        # afterwards, so it fails loudly rather than reporting success and leaving
+        # the next command to break. It is also the repository's rule: CI calls just.
+        run: just pg pgrx-init /usr/lib/postgresql/18/bin/pg_config
       - run: just pg doc-pg
 
   test-money-pg-matrix:

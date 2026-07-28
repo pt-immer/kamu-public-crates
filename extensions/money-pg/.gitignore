@@ -5,8 +5,10 @@
 # PGRX_HOME. `.cargo/config.toml` forces it to `.pgrx` relative to this directory,
 # deliberately: a build must not depend on whatever happens to be in `~/.pgrx` on
 # someone's machine. It holds an initialised PostgreSQL install per major and is
-# hundreds of megabytes.
-.pgrx/
+# hundreds of megabytes. NO TRAILING SLASH: `cargo pgrx init` ignores the forced
+# [env] path and writes to ~/.pgrx, so `just pgrx-init` leaves a SYMLINK here -- and a
+# trailing slash matches only real directories, leaving the link untracked-but-offered.
+.pgrx
 
 # The suites' scratch root. Extracted extension triplets, battery output and its
 # PG15 reference, the regress and cluster and concurrency work directories, the
