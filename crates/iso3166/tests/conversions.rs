@@ -57,20 +57,6 @@ fn numeric_traits_and_errors() {
 }
 
 #[test]
-fn unassigned_numeric_conversions_fail_gracefully() {
-    // `new_unchecked` is the only way to obtain an unassigned Numeric, which
-    // lets us exercise the `None` / `InvalidNumeric` branches.
-    let bogus = Numeric::new_unchecked(1);
-    assert_eq!(bogus.get(), 1);
-    assert_eq!(bogus.to_alpha2(), None);
-    assert_eq!(bogus.to_alpha3(), None);
-    assert_eq!(Alpha2::try_from(bogus), Err(ParseCountryError::InvalidNumeric));
-    assert_eq!(Alpha3::try_from(bogus), Err(ParseCountryError::InvalidNumeric));
-    assert_eq!(Numeric::new(1), None);
-    assert_eq!(Numeric::try_from_u16(1), Err(ParseCountryError::InvalidNumeric));
-}
-
-#[test]
 fn subdivision_traits_and_errors() {
     let jk = Subdivision::try_from_str("ID-JK").unwrap();
 
@@ -81,7 +67,10 @@ fn subdivision_traits_and_errors() {
     assert_eq!(owned2, *jk);
     assert_eq!(<Subdivision as AsRef<str>>::as_ref(&owned), "ID-JK");
 
-    assert_eq!(Subdivision::try_from_str("ID").unwrap_err(), ParseSubdivisionError::InvalidLength { got: 2 },);
+    assert_eq!(
+        Subdivision::try_from_str("ID").unwrap_err(),
+        ParseSubdivisionError::InvalidLength { min: 4, max: 6, got: 2 },
+    );
     assert_eq!(Subdivision::try_from_str("IDJKK").unwrap_err(), ParseSubdivisionError::MissingSeparator);
     assert_eq!(Subdivision::try_from_str("ZZ-JK").unwrap_err(), ParseSubdivisionError::InvalidParent);
     assert_eq!(Subdivision::try_from_str("ID-ZZ").unwrap_err(), ParseSubdivisionError::UnknownSubdivision);

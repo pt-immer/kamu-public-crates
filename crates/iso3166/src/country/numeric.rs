@@ -10,6 +10,15 @@ use crate::error::ParseCountryError;
 ///
 /// Stored as a `u16`. [`Display`](core::fmt::Display) renders the canonical
 /// zero-padded three-digit form (e.g. `"004"` for Afghanistan).
+///
+/// Construction is checked. Unassigned and out-of-range values cannot be
+/// represented:
+///
+/// ```compile_fail,E0624
+/// use kamu_iso3166::Numeric;
+///
+/// let _ = Numeric::new_unchecked(999);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Numeric(u16);
 
@@ -21,9 +30,8 @@ impl Numeric {
     /// that it can be called from `const fn` conversion helpers where the
     /// caller has already proven validity (e.g. converting from an
     /// [`Alpha2`] discriminant).
-    #[doc(hidden)]
     #[must_use]
-    pub const fn new_unchecked(value: u16) -> Self {
+    pub(crate) const fn new_unchecked(value: u16) -> Self {
         Numeric(value)
     }
 
@@ -153,5 +161,20 @@ impl TryFrom<Numeric> for Alpha3 {
     type Error = ParseCountryError;
     fn try_from(n: Numeric) -> Result<Self, Self::Error> {
         n.to_alpha3().ok_or(ParseCountryError::InvalidNumeric)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crate_private_constructor_covers_internal_unassigned_state() {
+        let numeric = Numeric::new_unchecked(999);
+        assert_eq!(numeric.get(), 999);
+        assert_eq!(numeric.to_alpha2(), None);
+        assert_eq!(numeric.to_alpha3(), None);
+        assert_eq!(Alpha2::try_from(numeric), Err(ParseCountryError::InvalidNumeric));
+        assert_eq!(Alpha3::try_from(numeric), Err(ParseCountryError::InvalidNumeric));
     }
 }

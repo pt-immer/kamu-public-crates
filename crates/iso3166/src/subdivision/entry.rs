@@ -32,14 +32,21 @@ pub struct Subdivision {
 }
 
 impl Subdivision {
+    const MIN_CODE_LEN: usize = 4;
+    const MAX_CODE_LEN: usize = 6;
+
     /// Look up a subdivision by its canonical ISO 3166-2 code, case-insensitively.
     ///
     /// # Errors
     /// See the variants of [`ParseSubdivisionError`].
     pub fn try_from_str(s: &str) -> Result<&'static Self, ParseSubdivisionError> {
         let bytes = s.as_bytes();
-        if bytes.len() < 4 || bytes.len() > 6 {
-            return Err(ParseSubdivisionError::InvalidLength { got: bytes.len() });
+        if bytes.len() < Self::MIN_CODE_LEN || bytes.len() > Self::MAX_CODE_LEN {
+            return Err(ParseSubdivisionError::InvalidLength {
+                min: Self::MIN_CODE_LEN,
+                max: Self::MAX_CODE_LEN,
+                got: bytes.len(),
+            });
         }
         if !bytes.iter().all(u8::is_ascii) {
             return Err(ParseSubdivisionError::NonAscii);

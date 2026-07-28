@@ -6,6 +6,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0]
+
+Breaking API and wire-format cleanup.
+
+### Changed
+
+- **Breaking:** `Subdivision` now serializes to its canonical code string, the
+  same representation its deserializer accepts. For example, Jakarta
+  serializes as `"ID-JK"` instead of a seven-field object.
+- **Breaking:** removed `Category::Other`. Every category in the pinned dataset
+  has a generated named variant; downstream matches must retain a wildcard
+  because `Category` remains `#[non_exhaustive]`.
+- **Breaking:** made `Numeric::new_unchecked` crate-private. Use
+  `Numeric::new`, `Numeric::try_from_u16`, or `TryFrom<u16>` for checked
+  construction.
+- **Breaking:** removed the deprecated `one` and `two` module aliases. Import
+  country types from the crate root or `country`, and subdivision types from
+  the crate root or `subdivision`.
+- **Breaking:** removed the unused `alloc` feature. The `serde` feature works
+  without `std` or an allocator.
+- **Breaking:** `ParseSubdivisionError::InvalidLength` now reports `min`, `max`,
+  and `got`.
+- Renamed generated sources and generator modules from `one` / `two` to
+  `country` / `subdivision`.
+- Generated Rust is formatted before Cargo compiles it, making build failures
+  and debugger views readable.
+
 ## [0.4.0]
 
 Toolchain maintenance only. No code or public API changes.

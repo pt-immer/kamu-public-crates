@@ -1,4 +1,4 @@
-//! ISO 3166-2 code generator.
+//! ISO 3166-2 subdivision generator.
 
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;
@@ -36,7 +36,7 @@ pub fn emit(countries: &[Country], subs: &[Subdivision]) -> TokenStream {
         quote! { Category::#id => #raw_lit }
     });
 
-    // Known-category string -> Category (no Other fallback).
+    // Known-category string -> Category.
     let cat_from_known_arms = cats.iter().map(|(raw, v)| {
         let raw_lit = raw.as_str();
         let id = ident(v);
@@ -82,7 +82,6 @@ pub fn emit(countries: &[Country], subs: &[Subdivision]) -> TokenStream {
     // Per-country offsets (subdivisions are already sorted by parent order).
     // Emit a match arm per Alpha2 with its (start, end) slice.
     let mut offsets: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
-    let cursor = 0usize;
     let mut current: Option<&str> = None;
     for (i, s) in subs.iter().enumerate() {
         match current {
@@ -96,8 +95,6 @@ pub fn emit(countries: &[Country], subs: &[Subdivision]) -> TokenStream {
                 current = Some(s.parent.as_str());
             }
         }
-        let _ = cursor;
-        let _ = i;
     }
     if let Some(p) = current {
         let start = offsets[p].0;
@@ -123,30 +120,24 @@ pub fn emit(countries: &[Country], subs: &[Subdivision]) -> TokenStream {
     };
 
     quote! {
-        /// Category of an ISO 3166-2 subdivision (`province`, `state`, etc.).
+        /// Category of an ISO 3166-2 subdivision (`"PROVINCE"`, `"STATE"`, etc.).
         ///
-        /// Variants are generated from the upstream data at build time. New
-        /// categories introduced upstream surface as [`Category::Other`]. The
-        /// enum is `#[non_exhaustive]`; downstream `match` expressions must
-        /// include a wildcard arm.
+        /// Variants are generated from the pinned upstream data. The enum is
+        /// `#[non_exhaustive]`; a data update may add variants, so downstream
+        /// `match` expressions must include a wildcard arm.
         #[non_exhaustive]
         #[allow(non_camel_case_types, missing_docs)]
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
         pub enum Category {
             #(#category_variants,)*
-            /// Unknown or future-added category. Holds the raw upstream string.
-            Other(&'static str),
         }
 
         impl Category {
             /// Return the upstream raw string for this category.
-            ///
-            /// For [`Category::Other`], returns the wrapped string.
             #[must_use]
             pub const fn as_str(&self) -> &'static str {
                 match self {
                     #(#cat_as_str_arms,)*
-                    Category::Other(s) => s,
                 }
             }
         }

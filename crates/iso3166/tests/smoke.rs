@@ -1,7 +1,7 @@
 #![allow(missing_docs, clippy::assertions_on_constants)]
 #![forbid(unsafe_code)]
 
-use kamu_iso3166::{Alpha2, Alpha3, Category, Numeric, Subdivision};
+use kamu_iso3166::{Alpha2, Alpha3, Numeric, Subdivision};
 
 #[test]
 fn counts_are_expected() {
@@ -73,14 +73,13 @@ fn subdivisions_indonesia() {
     assert_eq!(jk.parent, Alpha2::ID);
     assert_eq!(jk.code, "ID-JK");
     assert_eq!(Subdivision::try_from_str("id-jk").unwrap().code, "ID-JK");
-    let _ = jk.category; // just ensure it's readable
-    let _ = Category::Other("unused"); // ensure fallback variant exists
+    assert!(!jk.category.as_str().is_empty());
 }
 
 #[test]
 fn subdivision_parse_errors() {
     use kamu_iso3166::ParseSubdivisionError::*;
-    assert!(matches!(Subdivision::try_from_str("ID"), Err(InvalidLength { got: 2 })));
+    assert!(matches!(Subdivision::try_from_str("ID"), Err(InvalidLength { min: 4, max: 6, got: 2 })));
     assert!(matches!(Subdivision::try_from_str("IDJK"), Err(MissingSeparator)));
     assert!(matches!(Subdivision::try_from_str("ZZ-JK"), Err(InvalidParent)));
     assert!(matches!(Subdivision::try_from_str("ID-ZZ"), Err(UnknownSubdivision)));

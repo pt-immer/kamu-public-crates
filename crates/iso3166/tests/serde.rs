@@ -56,18 +56,11 @@ fn category_serializes_as_raw_string() {
 }
 
 #[test]
-fn subdivision_deserializes_from_code() {
-    let sub: Subdivision = serde_json::from_str("\"ID-JK\"").unwrap();
-    assert_eq!(sub.parent, Alpha2::ID);
-    assert_eq!(sub.code, "ID-JK");
-}
-
-#[test]
-fn subdivision_serializes_as_struct() {
+fn subdivision_roundtrips_as_canonical_code() {
     let sub: Subdivision = *Subdivision::try_from_str("ID-JK").unwrap();
     let j = serde_json::to_string(&sub).unwrap();
-    assert!(j.contains("\"parent\":\"ID\""));
-    assert!(j.contains("\"code\":\"ID-JK\""));
+    assert_eq!(j, "\"ID-JK\"");
+    assert_eq!(serde_json::from_str::<Subdivision>(&j).unwrap(), sub);
 }
 
 #[test]
@@ -92,20 +85,12 @@ fn every_country_serde_roundtrips() {
 #[test]
 fn every_subdivision_serde_roundtrips() {
     for sd in kamu_iso3166::subdivision::ALL_SUBDIVISIONS {
-        // Deserializes from its canonical code string into the static entry.
-        let from_code: Subdivision = serde_json::from_str(&format!("\"{}\"", sd.code)).unwrap();
-        assert_eq!(from_code.code, sd.code);
-        assert_eq!(from_code.parent, sd.parent);
+        let json = serde_json::to_string(sd).unwrap();
+        assert_eq!(json, format!("\"{}\"", sd.code));
+        assert_eq!(serde_json::from_str::<Subdivision>(&json).unwrap(), *sd);
 
-        // Every category present at the pinned commit is a named (non-`Other`)
-        // variant and round-trips through its raw upstream string.
-        match sd.category {
-            Category::Other(_) => panic!("pinned data should contain no Category::Other ({})", sd.code),
-            cat => {
-                let cj = serde_json::to_string(&cat).unwrap();
-                assert_eq!(serde_json::from_str::<Category>(&cj).unwrap(), cat);
-            }
-        }
+        let category_json = serde_json::to_string(&sd.category).unwrap();
+        assert_eq!(serde_json::from_str::<Category>(&category_json).unwrap(), sd.category);
     }
 }
 

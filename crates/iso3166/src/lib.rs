@@ -6,13 +6,13 @@
 //!
 //! - ISO 3166-1: [`Alpha2`], [`Alpha3`], [`Numeric`] (see [`country`])
 //! - ISO 3166-2: subdivisions keyed by parent country (see [`subdivision`])
-//! - ISO 3166-3: *out of scope*; planned for a later release.
+//! - ISO 3166-3: out of scope.
 //!
 //! ## Features
 //!
-//! - `std` (default) — enables `std::error::Error` integrations.
-//! - `alloc` — reserved for future API surfaces that may accept owned strings.
-//! - `serde` — derive `Serialize`/`Deserialize` for all public types.
+//! - `std` (default) — enables standard-library support in dependencies.
+//! - `serde` — implements serde traits for all public types. Subdivisions use
+//!   their canonical code string in both directions.
 //!
 //! All lookups return `&'static` data; no runtime allocation is performed.
 //!
@@ -38,17 +38,3 @@ mod serde_impl;
 pub use country::{Alpha2, Alpha3, Numeric};
 pub use error::{ParseCountryError, ParseSubdivisionError};
 pub use subdivision::{Category, Subdivision};
-
-/// Deprecated alias for [`country`] (ISO 3166-1), renamed in 0.2.0.
-/// Use [`crate::country`] instead.
-#[deprecated(since = "0.2.0", note = "module `one` was renamed to `country`")]
-pub mod one {
-    pub use crate::country::{Alpha2, Alpha3, Numeric};
-}
-
-/// Deprecated alias for [`subdivision`] (ISO 3166-2), renamed in 0.2.0.
-/// Use [`crate::subdivision`] instead.
-#[deprecated(since = "0.2.0", note = "module `two` was renamed to `subdivision`")]
-pub mod two {
-    pub use crate::subdivision::{Category, Subdivision};
-}

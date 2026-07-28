@@ -2,7 +2,7 @@
 
 mod generated {
     #![allow(clippy::all, clippy::pedantic, clippy::nursery)]
-    include!(concat!(env!("OUT_DIR"), "/one_generated.rs"));
+    include!(concat!(env!("OUT_DIR"), "/country_generated.rs"));
 }
 
 pub use generated::{Alpha2, Alpha3};

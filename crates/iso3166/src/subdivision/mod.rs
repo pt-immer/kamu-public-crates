@@ -2,7 +2,7 @@
 
 mod generated {
     #![allow(clippy::all, clippy::pedantic, clippy::nursery)]
-    include!(concat!(env!("OUT_DIR"), "/two_generated.rs"));
+    include!(concat!(env!("OUT_DIR"), "/subdivision_generated.rs"));
 
     // The generated module defines `pub const ALL_SUBDIVISIONS: &[Subdivision]`
     // which references the `Subdivision` type. That type is defined in the

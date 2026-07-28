@@ -1,4 +1,4 @@
-//! ISO 3166-1 code generator.
+//! ISO 3166-1 country-code generator.
 
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::quote;

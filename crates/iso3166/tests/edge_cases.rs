@@ -1,10 +1,9 @@
-//! Edge-case coverage: numeric-string boundaries, the `try_from_bytes` byte
-//! APIs, `Category::Other`, `new_unchecked`, and serde error arms.
+//! Edge-case coverage for numeric strings, byte APIs, and serde error arms.
 
 #![allow(missing_docs)]
 #![forbid(unsafe_code)]
 
-use kamu_iso3166::{Alpha2, Alpha3, Category, Numeric, ParseCountryError};
+use kamu_iso3166::{Alpha2, Alpha3, Numeric, ParseCountryError};
 
 // --- Numeric::try_from_str boundaries -------------------------------------
 
@@ -43,16 +42,6 @@ fn numeric_empty_and_non_digit_inputs() {
     assert_eq!(Numeric::try_from_str("1é"), Err(ParseCountryError::NonAscii));
 }
 
-// --- new_unchecked ---------------------------------------------------------
-
-#[test]
-fn new_unchecked_skips_validation() {
-    // 999 is unassigned, but new_unchecked constructs it anyway.
-    let n = Numeric::new_unchecked(999);
-    assert_eq!(n.get(), 999);
-    assert_eq!(n.to_alpha2(), None);
-}
-
 // --- Alpha2 / Alpha3 try_from_bytes ---------------------------------------
 
 #[test]
@@ -85,19 +74,12 @@ fn alpha3_from_bytes_error_paths() {
     assert_eq!(Alpha3::try_from_bytes(b"zzz"), Err(ParseCountryError::InvalidAlpha3));
 }
 
-// --- Category::Other -------------------------------------------------------
-
-#[test]
-fn category_other_round_trips_through_as_str() {
-    let cat = Category::Other("FUTURE-CATEGORY");
-    assert_eq!(cat.as_str(), "FUTURE-CATEGORY");
-}
-
 // --- serde error arms ------------------------------------------------------
 
 #[cfg(feature = "serde")]
 mod serde_arms {
-    use super::{Category, Numeric};
+    use super::Numeric;
+    use kamu_iso3166::Category;
 
     #[test]
     fn numeric_from_unsigned_integer() {
@@ -131,14 +113,8 @@ mod serde_arms {
     }
 
     #[test]
-    fn category_other_serializes_as_its_raw_string() {
-        let json = serde_json::to_string(&Category::Other("CUSTOM")).expect("serialize");
-        assert_eq!(json, "\"CUSTOM\"");
-    }
-
-    #[test]
     fn category_unknown_string_fails_to_deserialize() {
-        // Exercises the visit_str error arm (Other cannot be deserialized).
+        // Exercises the visit_str error arm.
         assert!(serde_json::from_str::<Category>("\"NOT-A-CATEGORY\"").is_err());
     }
 

@@ -4,9 +4,8 @@
 //!   - [`Alpha2`] and [`Alpha3`] serialize as their canonical uppercase string.
 //!   - [`Numeric`] serializes as a raw `u16` (not zero-padded).
 //!   - [`Category`] serializes as the upstream raw string (e.g. `"PROVINCE"`).
-//!   - [`Subdivision`] serializes as a struct; deserializes from the
-//!     canonical code string (`"ID-JK"`) via a phf lookup into the static
-//!     table.
+//!   - [`Subdivision`] serializes and deserializes as its canonical code string
+//!     (e.g. `"ID-JK"`).
 
 use core::fmt;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
@@ -103,13 +102,8 @@ impl<'de> Deserialize<'de> for Category {
                 f.write_str("ISO 3166-2 subdivision category string")
             }
             fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
-                crate::subdivision::category_from_known_str(v).ok_or_else(|| {
-                    de::Error::custom(
-                        "unknown ISO 3166-2 subdivision category; `Category::Other` \
-                         variants cannot be deserialized because the crate stores no \
-                         owned strings",
-                    )
-                })
+                crate::subdivision::category_from_known_str(v)
+                    .ok_or_else(|| de::Error::custom("unknown ISO 3166-2 subdivision category"))
             }
         }
         d.deserialize_str(V)
@@ -118,16 +112,7 @@ impl<'de> Deserialize<'de> for Category {
 
 impl Serialize for Subdivision {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeStruct;
-        let mut st = s.serialize_struct("Subdivision", 7)?;
-        st.serialize_field("parent", &self.parent)?;
-        st.serialize_field("code", &self.code)?;
-        st.serialize_field("name", &self.name)?;
-        st.serialize_field("language", &self.language)?;
-        st.serialize_field("parent_subdivision", &self.parent_subdivision)?;
-        st.serialize_field("category", &self.category)?;
-        st.serialize_field("local_variant", &self.local_variant)?;
-        st.end()
+        s.serialize_str(self.code)
     }
 }
 

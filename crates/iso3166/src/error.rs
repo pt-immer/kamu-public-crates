@@ -50,9 +50,13 @@ pub enum ParseSubdivisionError {
     /// The input contained non-ASCII bytes.
     #[error("input contains non-ASCII bytes")]
     NonAscii,
-    /// The input length was not in the expected range (4..=6).
-    #[error("subdivision code length {got} is out of range (expected 4..=6)")]
+    /// The input length was outside the accepted byte range.
+    #[error("subdivision code length {got} is out of range (expected {min}..={max})")]
     InvalidLength {
+        /// Minimum accepted length in bytes.
+        min: usize,
+        /// Maximum accepted length in bytes.
+        max: usize,
         /// Actual length in bytes.
         got: usize,
     },
