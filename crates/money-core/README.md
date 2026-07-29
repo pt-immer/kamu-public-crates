@@ -1,6 +1,9 @@
 # kamu-money-core
 
+[![Crates.io][badge-crates]][link-crates]
+[![docs.rs][badge-docs]][link-docs]
 [![CI][badge-ci]][link-ci]
+
 [![License][badge-license]][link-license]
 [![MSRV][badge-msrv]][link-msrv]
 
@@ -146,10 +149,14 @@ your option.
 `vendor/list-one.xml` is **not** covered by that licence. It is third-party data,
 redistributed unmodified with credit to SIX Group AG; see [`NOTICE`](NOTICE).
 
+[badge-crates]: https://img.shields.io/crates/v/kamu-money-core?style=flat-square&logo=rust
+[badge-docs]: https://img.shields.io/docsrs/kamu-money-core?style=flat-square&logo=docs.rs&label=docs.rs
 [badge-ci]: https://img.shields.io/github/actions/workflow/status/pt-immer/kamu-public-crates/on-pr-synced.yml?branch=main&style=flat-square&label=CI
-[badge-license]: https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue?style=flat-square
-[badge-msrv]: https://img.shields.io/badge/MSRV-1.94-blue?style=flat-square&logo=rust
+[badge-license]: https://img.shields.io/crates/l/kamu-money-core?style=flat-square
+[badge-msrv]: https://img.shields.io/crates/msrv/kamu-money-core?style=flat-square&logo=rust&label=MSRV
 
+[link-crates]: https://crates.io/crates/kamu-money-core
+[link-docs]: https://docs.rs/kamu-money-core
 [link-ci]: https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-pr-synced.yml
 [link-license]: https://github.com/pt-immer/kamu-public-crates/blob/main/crates/money-core
 [link-msrv]: https://github.com/pt-immer/kamu-public-crates/blob/main/Cargo.toml

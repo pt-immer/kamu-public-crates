@@ -167,7 +167,11 @@ the manifest and stops before crates.io.
 ## Known limits
 
 - The `pt-immer/pgrx-yugabytedb` fork is maintained by this project.
-- One pinned YugabyteDB image is supported at a time.
+- Certified against `yugabytedb/yugabyte:2025.2.5.1-b1`, the pinned image every
+  suite boots. Other versions are not certified rather than known-broken: any
+  YugabyteDB whose PostgreSQL fork the pgrx fork supports should work, and
+  re-pinning plus a green `just pg gate-pg-release` is what turns that into a
+  claim.
 - Same-version dump/restore is gated. A two-version rolling YugabyteDB upgrade
   has not been rehearsed.
 - Managed platforms that reject third-party native extensions require the

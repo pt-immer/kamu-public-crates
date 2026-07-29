@@ -13,7 +13,8 @@ all-features = true
 ignore = [
   # RUSTSEC-2023-0071: "Marvin Attack" timing side-channel in the `rsa` crate.
   # `rsa` enters via the kamu-snap-* SNAP BI crates (kamu-snap-crypto and the
-  # crates that depend on it). There is NO patched release — RustCrypto/RSA#626
+  # crates that depend on it). There is NO patched release —
+  # https://github.com/RustCrypto/RSA/issues/626
   # is still open and cargo-deny reports "No safe upgrade is available"; `rsa`
   # is also the only maintained pure-Rust PKCS#8 RSA implementation, so there is
   # no drop-in alternative. SNAP BI's default signing path is HMAC-SHA512; RSA
