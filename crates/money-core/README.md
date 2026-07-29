@@ -153,7 +153,7 @@ redistributed unmodified with credit to SIX Group AG; see [`NOTICE`](NOTICE).
 [badge-docs]: https://img.shields.io/docsrs/kamu-money-core?style=flat-square&logo=docs.rs&label=docs.rs
 [badge-ci]: https://img.shields.io/github/actions/workflow/status/pt-immer/kamu-public-crates/on-pr-synced.yml?branch=main&style=flat-square&label=CI
 [badge-license]: https://img.shields.io/crates/l/kamu-money-core?style=flat-square
-[badge-msrv]: https://img.shields.io/badge/MSRV-1.94-blue?style=flat-square&logo=rust
+[badge-msrv]: https://img.shields.io/crates/msrv/kamu-money-core?style=flat-square&logo=rust&label=MSRV
 
 [link-crates]: https://crates.io/crates/kamu-money-core
 [link-docs]: https://docs.rs/kamu-money-core
