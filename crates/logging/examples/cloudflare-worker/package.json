@@ -2,10 +2,11 @@
     "name": "kamu-logging-cloudflare-worker-example",
     "private": true,
     "scripts": {
+        "build": "wrangler deploy --dry-run --outdir target/wrangler",
         "deploy": "wrangler deploy",
         "dev": "wrangler dev"
     },
     "devDependencies": {
-        "wrangler": "^4.0.0"
+        "wrangler": "4.114.0"
     }
 }

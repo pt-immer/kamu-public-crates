@@ -2,6 +2,7 @@
 edition = "2024"
 name = "kamu-logging-cloudflare-worker-example"
 publish = false
+rust-version = "1.94"
 version = "0.1.0"
 
 [lib]
@@ -9,7 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 kamu-logging = { path = "../..", default-features = false, features = ["wasm32"] }
-worker = "0.8"
+worker = "=0.8.5"
 
 [profile.release]
 codegen-units = 1

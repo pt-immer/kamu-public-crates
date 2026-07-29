@@ -26,14 +26,13 @@ pub struct HmacSigner {
 }
 
 impl HmacSigner {
-    /// Initialise from a raw secret. Any byte slice is accepted by HMAC-SHA512;
-    /// this constructor only fails if the upstream primitive rejects the key
-    /// (current `hmac` 0.12 never does, but the error is surfaced for
-    /// forward-compatibility).
-    pub fn new(secret: impl AsRef<[u8]>) -> Result<Self> {
-        let inner =
-            <Hmac<Sha512> as Mac>::new_from_slice(secret.as_ref()).map_err(|_| Error::InvalidSecretLength)?;
-        Ok(Self { inner })
+    /// Initialise from a raw secret.
+    ///
+    /// HMAC accepts keys of every length, so construction is infallible.
+    pub fn new(secret: impl AsRef<[u8]>) -> Self {
+        let inner = <Hmac<Sha512> as Mac>::new_from_slice(secret.as_ref())
+            .expect("HMAC-SHA512 accepts keys of every length");
+        Self { inner }
     }
 
     /// Compute the HMAC-SHA512 signature of `payload`. Returns raw signature

@@ -1,4 +1,4 @@
-//! The serde wire. (DESIGN.md C7)
+//! Serde wire formats.
 //!
 //! Feature-gated behind `serde`, **default off** — turning it on only adds trait impls.
 //!
@@ -18,11 +18,11 @@
 //! }
 //! ```
 //!
-//! **Not a Cargo feature.** C7 rejects feature-selected wire formats: features are additive and
+//! **Not a Cargo feature.** Features are additive and
 //! unified across a dependency graph, so two crates wanting different formats would silently
 //! get one, with no error. Per-field `#[serde(with = ...)]` gives the same compile-time
 //! selection with no global coupling — and it *is* compile-time: a typo in the path is
-//! `E0433: cannot find module`, measured, not a runtime surprise.
+//! `E0433: cannot find module`.
 //!
 //! # Binary is the same in both modes
 //!
@@ -30,58 +30,30 @@
 //! code ahead of the units, `(base, quote, units)` for a `Rate`. The transparent/structured
 //! split is a human-readable concern only; binary is one tagged shape either way.
 //!
-//! It did not always carry the tag. Through C7 the binary form was a bare `i128` — "the currency
-//! is in the type, it costs zero bytes" — until an external review (R2-F2) showed that a bare
-//! `i128` is exactly what lets `Money<USD>` bytes decode as `Money<IDR>`: the type is chosen by
-//! the *reader*, independently of the writer, so serialization is the one boundary the
-//! compile-time currency does not cross. The human-readable form always carried identity for
-//! this reason; binary now does too. Two ISO-numeric bytes are the price of not silently
-//! redenominating money, which is the one thing this crate exists to refuse.
+//! Binary data carries the ISO numeric tag because the reader chooses the Rust currency type.
+//! A bare `i128` could otherwise cross-decode unchanged into a different denomination.
 //!
-//! # What deliberately has NO codec
+//! # Types without codecs
 //!
-//! `MoneyError`, `Rounding`, `Residue` and `Division`. The first two are this crate's own
-//! vocabulary, and a wire form for them ships house style to every consumer of a published
-//! crate. The last two are stronger than style: **`Residue` is a drop-bomb**, so deserializing
-//! one would materialise a panic-on-drop from an attacker-controlled field — a remote denial
-//! of service, not a preference. `Division` holds money that has not been accounted for and
-//! has no meaning outside the call that produced it.
+//! Error types, [`Rounding`](crate::Rounding), [`Residue`](crate::Residue), and
+//! [`Division`](crate::Division). Errors and rounding policy are application
+//! vocabulary. A residue is an accounting obligation tied to an operation, and
+//! a division is unresolved local state; neither is a durable value to recreate
+//! from untrusted input.
 
-use crate::currency::StaticCurrency;
-use crate::domain::MoneyError;
+use crate::Money;
+use crate::Rate;
+use crate::StaticCurrency;
+use crate::error_impl::{RateError, WireError};
 use crate::iso::Iso4217;
-use crate::money::Money;
-use crate::rate::Rate;
-use crate::text::{render_amount, render_rate};
+use crate::text::{parse_amount, parse_rate_amount, render_amount, render_rate};
 use core::fmt;
-use core::str::FromStr;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::borrow::Cow;
 
-// ---------------------------------------------------------------------------------------
-// Iso4217 — hand-written, and this is the one that MUST NOT be derived.
-// ---------------------------------------------------------------------------------------
-
-/// Hand-written on purpose. `#[derive(Serialize)]` encodes an enum variant by its **ordinal
-/// position**, not its discriminant — measured: after inserting one currency mid-table, stored
-/// `IDR` decoded as `GBP`, silently, with `#[repr(u16)]` and `IDR = 360` unchanged in both
-/// versions.
-///
-/// That insert is still the plan, though the reason has changed and this comment used to give
-/// the old one ("12 of ~180 and WILL grow"). The register is now complete at 178 codes, so it
-/// no longer grows by being filled in — it grows because ISO issues codes. The variants are
-/// emitted in alpha-3 order, so a new code is overwhelmingly likely to land *between* existing
-/// ones rather than at the end, which is exactly the shift that moves every later ordinal.
-/// Completeness removed the frequent case and left the dangerous one.
-///
-/// A JSON test suite **cannot** catch it: human-readable formats emit the variant *name* and
-/// are unaffected. It surfaces only when old binary data meets a newer build.
-///
-/// `rename_all` is likewise forbidden: `SCREAMING_SNAKE_CASE` emits `"I_D_R"`, and it reads
-/// *more* correct in the source than it behaves.
-///
-/// Both forms here are assigned by the standard — alpha-3 human, ISO **numeric** binary — so
-/// neither is this crate's choice to make.
+/// Hand-written because derived binary enum representations follow variant order, not ISO
+/// numeric discriminants. Human-readable form uses alpha-3; binary form uses numeric-3.
 impl Serialize for Iso4217 {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         if s.is_human_readable() { s.serialize_str(self.alpha3()) } else { s.serialize_u16(self.numeric()) }
@@ -119,13 +91,12 @@ impl<'de> Deserialize<'de> for Iso4217 {
 // Shared helpers
 // ---------------------------------------------------------------------------------------
 
-fn to_de_error<E: de::Error>(e: &MoneyError) -> E {
+fn to_de_error<E: de::Error>(e: &impl fmt::Display) -> E {
     E::custom(format_args!("{e}"))
 }
 
 fn money_from_units<C: StaticCurrency, E: de::Error>(units: i128) -> Result<Money<C>, E> {
-    Money::<C>::from_units(units)
-        .ok_or_else(|| to_de_error(&MoneyError::DomainOverflow { attempted_units: units }))
+    Money::<C>::try_from_units(units).map_err(|error| to_de_error(&error))
 }
 
 // Unlike its `Money` twin above, this cannot synthesise the error: a `Rate` is refused for two
@@ -137,14 +108,20 @@ fn rate_from_units<Base: StaticCurrency, Quote: StaticCurrency, E: de::Error>(
     Rate::try_from_units(units).map_err(|e| to_de_error(&e))
 }
 
-// --- binary codec (R2-F2) --------------------------------------------------------------
-//
-// The tag lives in ONE place, called by both the default impls and the transparent module, for
-// the same reason the parser does: two encoders of the same value drift on exactly the inputs
-// nobody tests. Binary carries the ISO numeric code because a bare `i128` has no identity — the
-// R2-F2 defect was that `Money<USD>` bytes decoded as `Money<IDR>`, units preserved and currency
-// silently reassigned. `(Iso4217, i128)` reuses the hand-written numeric codec, so the tag is the
-// standards-assigned number, never the enum ordinal that shifts when a currency is inserted.
+fn money_from_amount<C: StaticCurrency>(amount: &str) -> Result<Money<C>, WireError> {
+    let units = parse_amount(amount)?;
+    Ok(Money::try_from_units(units)?)
+}
+
+fn rate_from_amount<Base: StaticCurrency, Quote: StaticCurrency>(
+    amount: &str,
+) -> Result<Rate<Base, Quote>, WireError> {
+    let units = parse_rate_amount(amount).map_err(RateError::from)?;
+    Ok(Rate::try_from_units(units)?)
+}
+
+// Both serde modes share these tagged binary helpers. The standards-assigned ISO numeric code
+// remains stable if the generated enum changes order.
 
 fn money_to_binary<C: StaticCurrency, S: Serializer>(m: Money<C>, s: S) -> Result<S::Ok, S::Error> {
     (C::CODE, m.units()).serialize(s)
@@ -153,7 +130,7 @@ fn money_to_binary<C: StaticCurrency, S: Serializer>(m: Money<C>, s: S) -> Resul
 fn money_from_binary<'de, C: StaticCurrency, D: Deserializer<'de>>(d: D) -> Result<Money<C>, D::Error> {
     let (code, units) = <(Iso4217, i128)>::deserialize(d)?;
     if code != C::CODE {
-        return Err(to_de_error(&MoneyError::WrongCurrency { expected: C::CODE, found: code }));
+        return Err(to_de_error(&WireError::WrongCurrency { expected: C::CODE, found: code }));
     }
     money_from_units(units)
 }
@@ -172,10 +149,10 @@ fn rate_from_binary<'de, Base: StaticCurrency, Quote: StaticCurrency, D: Deseria
     // Both ends are checked, in declaration order, because a refactor moves a rate's pair far
     // more easily than its magnitude.
     if base != Base::CODE {
-        return Err(to_de_error(&MoneyError::WrongCurrency { expected: Base::CODE, found: base }));
+        return Err(to_de_error(&WireError::WrongCurrency { expected: Base::CODE, found: base }));
     }
     if quote != Quote::CODE {
-        return Err(to_de_error(&MoneyError::WrongCurrency { expected: Quote::CODE, found: quote }));
+        return Err(to_de_error(&WireError::WrongCurrency { expected: Quote::CODE, found: quote }));
     }
     rate_from_units(units)
 }
@@ -191,9 +168,10 @@ struct MoneyOut<'a> {
 }
 
 #[derive(Deserialize)]
-struct MoneyIn {
+struct MoneyIn<'a> {
     currency: Iso4217,
-    amount: String,
+    #[serde(borrow)]
+    amount: Cow<'a, str>,
 }
 
 #[derive(Serialize)]
@@ -204,10 +182,11 @@ struct RateOut<'a> {
 }
 
 #[derive(Deserialize)]
-struct RateIn {
+struct RateIn<'a> {
     base: Iso4217,
     quote: Iso4217,
-    rate: String,
+    #[serde(borrow)]
+    rate: Cow<'a, str>,
 }
 
 impl<C: StaticCurrency> Serialize for Money<C> {
@@ -228,11 +207,12 @@ impl<'de, C: StaticCurrency> Deserialize<'de> for Money<C> {
         let raw = MoneyIn::deserialize(d)?;
         // The redundancy is the point: it catches an IDR amount in a USD field.
         if raw.currency != C::CODE {
-            return Err(to_de_error(&MoneyError::WrongCurrency { expected: C::CODE, found: raw.currency }));
+            return Err(to_de_error(&WireError::WrongCurrency { expected: C::CODE, found: raw.currency }));
         }
-        // Reuse the ONE parser. A second decimal reader would be a second set of rules, and
-        // the two would drift on exactly the inputs nobody tests.
-        Self::from_str(&format!("{} {}", C::CODE.alpha3(), raw.amount)).map_err(|e| to_de_error(&e))
+        // Parse the amount field directly. Reconstructing a tagged string here
+        // allocated and then made the text parser split a tag already checked
+        // above.
+        money_from_amount(raw.amount.as_ref()).map_err(|e| to_de_error(&e))
     }
 }
 
@@ -253,13 +233,12 @@ impl<'de, Base: StaticCurrency, Quote: StaticCurrency> Deserialize<'de> for Rate
         }
         let raw = RateIn::deserialize(d)?;
         if raw.base != Base::CODE {
-            return Err(to_de_error(&MoneyError::WrongCurrency { expected: Base::CODE, found: raw.base }));
+            return Err(to_de_error(&WireError::WrongCurrency { expected: Base::CODE, found: raw.base }));
         }
         if raw.quote != Quote::CODE {
-            return Err(to_de_error(&MoneyError::WrongCurrency { expected: Quote::CODE, found: raw.quote }));
+            return Err(to_de_error(&WireError::WrongCurrency { expected: Quote::CODE, found: raw.quote }));
         }
-        Self::from_str(&format!("{}/{}/{}", Base::CODE.alpha3(), Quote::CODE.alpha3(), raw.rate))
-            .map_err(|e| to_de_error(&e))
+        rate_from_amount(raw.rate.as_ref()).map_err(|e| to_de_error(&e))
     }
 }
 
@@ -270,14 +249,13 @@ impl<'de, Base: StaticCurrency, Quote: StaticCurrency> Deserialize<'de> for Rate
 /// One scalar instead of an object: `"USD 10.50"`, `"USD/IDR/16000"`.
 ///
 /// Use per field: `#[serde(with = "kamu_money_core::wire::transparent")]`. Binary is identical to the
-/// default form — the same `(ISO numeric, units)` tagged shape (R2-F2) — because the mode a
+/// default form — the same `(ISO numeric, units)` tagged shape — because the mode a
 /// field picks for humans must not change whether its bytes carry a currency.
 pub mod transparent {
     use super::{
         StaticCurrency, money_from_binary, money_to_binary, rate_from_binary, rate_to_binary, to_de_error,
     };
-    use crate::money::Money;
-    use crate::rate::Rate;
+    use crate::{Money, Rate};
     use core::str::FromStr;
     use serde::{Deserialize, Deserializer, Serializer};
 
@@ -286,11 +264,8 @@ pub mod transparent {
     /// supertrait, did not enforce.
     mod sealed {
         pub trait Sealed {}
-        impl<C: crate::currency::StaticCurrency> Sealed for crate::money::Money<C> {}
-        impl<Base: crate::currency::StaticCurrency, Quote: crate::currency::StaticCurrency> Sealed
-            for crate::rate::Rate<Base, Quote>
-        {
-        }
+        impl<C: crate::StaticCurrency> Sealed for crate::Money<C> {}
+        impl<Base: crate::StaticCurrency, Quote: crate::StaticCurrency> Sealed for crate::Rate<Base, Quote> {}
     }
 
     /// Serialize a value as a single scalar.
@@ -310,19 +285,7 @@ pub mod transparent {
         T::from_scalar(d)
     }
 
-    /// The crate's value types, and **actually** sealed.
-    ///
-    /// The seal is the `private::Sealed` supertrait, exactly as [`StaticCurrency`] does it.
-    /// An earlier version of this comment claimed the trait was *"effectively sealed: every
-    /// impl is bounded on `StaticCurrency`, which is itself sealed, so no downstream type can
-    /// satisfy it"*. That was wrong, and provably so — the bound was on the **impls**, not on
-    /// the trait, so a downstream `impl Scalar for MyType` compiled fine. `#[doc(hidden)]`
-    /// hides a method from the docs; it does not restrict who may write one.
-    ///
-    /// Two things the mistake would have cost: `#[serde(with = "...transparent")]` would
-    /// silently accept foreign types, and adding a method here would be a breaking change for
-    /// impls this crate does not know about — the precise outcome the comment believed it had
-    /// ruled out.
+    /// The crate's sealed scalar value types.
     pub trait Scalar: sealed::Sealed + Sized {
         #[doc(hidden)]
         fn to_scalar<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error>;
@@ -364,6 +327,22 @@ pub mod transparent {
             let text = String::deserialize(d)?;
             Self::from_str(&text).map_err(|e| to_de_error(&e))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MoneyIn, RateIn};
+    use std::borrow::Cow;
+
+    #[test]
+    fn structured_numbers_borrow_when_the_input_needs_no_unescaping() {
+        let money: MoneyIn<'_> = serde_json::from_str(r#"{"currency":"USD","amount":"10.50"}"#).unwrap();
+        let rate: RateIn<'_> =
+            serde_json::from_str(r#"{"base":"USD","quote":"IDR","rate":"16000"}"#).unwrap();
+
+        assert!(matches!(money.amount, Cow::Borrowed("10.50")));
+        assert!(matches!(rate.rate, Cow::Borrowed("16000")));
     }
 }
 

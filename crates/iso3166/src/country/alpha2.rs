@@ -32,7 +32,7 @@ impl Alpha2 {
     /// Convert to the corresponding [`Numeric`] code (infallible).
     #[must_use]
     pub const fn to_numeric(self) -> Numeric {
-        // Safety by construction: discriminant equals ISO numeric code.
+        // Every generated discriminant is its assigned ISO numeric code.
         Numeric::new_unchecked(self as u16)
     }
 

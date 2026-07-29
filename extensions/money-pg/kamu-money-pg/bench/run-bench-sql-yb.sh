@@ -7,9 +7,8 @@
 # WHY THIS EXISTS SEPARATELY FROM `just bench-pg`. The same fixture, on the engine this actually
 # deploys to. It is not a formality:
 #
-#   - Stock PostgreSQL scans a local heap; YugabyteDB scans DocDB over the network. E20 measured
-#     YB's scan floor at ~378 ms against stock PostgreSQL's ~23 ms for the same table. A type
-#     difference of tens of nanoseconds per row sits on top of a floor sixteen times larger.
+#   - Stock PostgreSQL scans a local heap; YugabyteDB scans DocDB over the network, so their scan
+#     floors differ materially.
 #   - Whether that floor SWAMPS the kmoney-versus-numeric difference is itself the answer a
 #     schema designer needs. If it does, the type choice is free at the storage layer and should
 #     be made on correctness alone. If it does not, the per-row figures carry over. Either way

@@ -1,42 +1,15 @@
 //! `sum(kmoney)`: the row aggregate and its wide transition state.
 //!
-//! Split out of `lib.rs` on 2026-07-27. The code is UNCHANGED -- this file is
-//! a relocation, verified by `just schema-hash`, which fingerprints the generated SQL surface
-//! with pgrx's non-reproducible ordering normalised away (E21).
-//!
-//! The state is a `bytea` carrying `UnitSum` plus the ISO code, because a fold through `+`
-//! cannot widen (R2-F4b). `PARALLEL = SAFE` rests on the combine function, which is here too.
+//! The state is a `bytea` carrying `UnitSum` plus the ISO code. `PARALLEL = SAFE` rests on the
+//! matching combine function.
 
-use super::{currency_or_error, describe, kmoney};
-use kamu_money_core::arith::UnitSum;
+use super::{currency_or_error, describe, kmoney, validated_or_error};
+use kamu_money_core::advanced::arithmetic::UnitSum;
 use pgrx::prelude::*;
 
-// =========================================================================================
-// `sum(kmoney)` — the row aggregate, restored with a WIDE transition state.
-//
-// R2-F4 removed a `sum(kmoney)` whose transition state was a `kmoney`. That state re-checked the
-// domain on every partial total, so `[MAX, MAX, -MAX]` succeeded or failed depending on the order
-// PostgreSQL combined rows — and `PARALLEL = SAFE` made the order a planner decision. The removal
-// was correct; the aggregate was genuinely wrong.
-//
-// What it left behind was `kmoney_sum(VARIADIC array_agg(col))` as the only way to total a column,
-// and that is not a row aggregate at all: it materialises every value into one PostgreSQL array,
-// iterates it, and allocates a second vector — memory linear in the number of rows, on a type
-// whose whole purpose is ledger columns. A reconciliation over a large table was the one shape
-// this extension could not do.
-//
-// So the state is widened instead of the operation being deleted. `UnitSum` is the same kernel
-// `kmoney_sum` and Rust's `Money::try_sum` use: the domain is enforced per TERM as each row
-// arrives, accumulation is `I256`, and the domain is checked ONCE in the final function. Merging
-// is associative and commutative, so the total belongs to the multiset rather than to the plan —
-// which is what makes `PARALLEL = SAFE` honest here where it was a lie before.
-//
-// `kmoney_sum(VARIADIC)` stays. It is the explicit-values form, the analogue of `try_sum` taking
-// values rather than a column, and nothing about a working row aggregate makes it redundant.
-//
-// `kmoney_mixed` still gets NOTHING — see C8 below. `SELECT sum(amount)` on a mixed column must
-// keep failing when the statement is PLANNED, before a row is read.
-// =========================================================================================
+// `[MAX, MAX, -MAX]` succeeds regardless of row or partial-combine order. `UnitSum` enforces
+// each input's domain, accumulates in I256, and checks the final domain once. The variadic
+// `kmoney_sum` remains the explicit-values form; `kmoney_mixed` intentionally has no aggregate.
 
 /// Width of the `sum(kmoney)` transition state: a wide accumulator plus the ISO numeric code.
 const SUM_STATE_BYTES: usize = UnitSum::ENCODED_BYTES + 2;
@@ -86,16 +59,17 @@ fn kmoney_sum_accum(state: Option<Vec<u8>>, value: Option<kmoney>) -> Option<Vec
     let Some(value) = value else {
         return state;
     };
+    let value = validated_or_error(value.payload(), "sum(kmoney)");
 
     let (acc, code) = match state {
         // First non-NULL row: it names the currency for the rest of the group.
-        None => (UnitSum::ZERO, value.code()),
+        None => (UnitSum::ZERO, value.currency().numeric()),
         Some(bytes) => {
             let (acc, code) = sum_state_decode(&bytes, "sum(kmoney)");
-            if code != value.code() {
+            if code != value.currency().numeric() {
                 // The fastest check available, a raw `u16` compare, and the same rule `+` and
                 // `kmoney_sum` apply. A column holding two currencies has no total.
-                let (left, right) = (describe(code), describe(value.code()));
+                let (left, right) = (describe(code), value.currency().alpha3());
                 error!("kmoney: cannot sum {left} and {right}: different currencies");
             }
             (acc, code)
@@ -168,9 +142,8 @@ mod tests {
 
     /// `sum(kmoney)` totals a COLUMN, which is what a ledger schema actually asks for.
     ///
-    /// The aggregate R2-F4 removed had a `kmoney` transition state; this one is wide. What it
-    /// replaces in practice is `kmoney_sum(VARIADIC array_agg(col))`, which had to materialise
-    /// every row into a single array first.
+    /// The wide state avoids materializing a whole column through
+    /// `kmoney_sum(VARIADIC array_agg(col))`.
     #[pg_test]
     fn the_sum_aggregate_totals_a_column() {
         Spi::run("CREATE TABLE ledger (amount kmoney)").expect("table created");
@@ -204,13 +177,8 @@ mod tests {
         assert_eq!(total, "USD 3.00");
     }
 
-    /// **The R2-F4 property, tested through the path a parallel plan actually takes.**
-    ///
-    /// Driving the transition and combine functions by hand is deliberate: it simulates two
-    /// workers deterministically, where waiting for the planner to choose a parallel plan would
-    /// make the test a statement about the planner's mood. One worker's partial (`MAX + MAX`) has
-    /// LEFT the domain; the other's (`-MAX`) brings the total back inside it. The old narrow state
-    /// failed on that transient, and failed differently depending on which side arrived first.
+    /// Calls transition and combine functions directly for a deterministic two-worker plan.
+    /// One partial (`MAX + MAX`) leaves the domain; the other (`-MAX`) brings the total back.
     #[pg_test]
     fn the_sum_aggregate_is_plan_independent_across_a_domain_edge_transient() {
         let max = "USD 999999999999999999.999999999999999999";
@@ -239,10 +207,8 @@ mod tests {
     /// which. The one above drives `kmoney_sum_accum` / `kmoney_sum_combine` BY HAND: that makes
     /// it deterministic, portable to `YugabyteDB`, and a statement about the KERNEL. What it cannot
     /// see is the catalog. `CREATE AGGREGATE` can be declared in ways that leave the hand-driven
-    /// behaviour perfect while stopping PostgreSQL from ever choosing partial aggregation --- drop
-    /// `COMBINEFUNC`, or mark the aggregate `PARALLEL UNSAFE`, and every existing test still
-    /// passes while `sum(kmoney)` silently becomes serial-only. An external review named that gap
-    /// (2026-07-25, M-1); this closes it.
+    /// behaviour perfect while stopping PostgreSQL from choosing partial aggregation: drop
+    /// `COMBINEFUNC` or mark the aggregate `PARALLEL UNSAFE`.
     ///
     /// **`NOT-PORTABLE` on purpose.** This asserts a PLAN, and `YugabyteDB`'s planner need not
     /// choose the same shape as stock PostgreSQL's --- which is exactly why the portable case
@@ -254,9 +220,8 @@ mod tests {
     #[pg_test]
     fn the_planner_splits_the_sum_aggregate_and_both_plans_agree() {
         Spi::run("CREATE TABLE ledger (amount kmoney)").expect("table created");
-        // Domain-edge values in the DATA, so a parallel split is exercised on the transient the
-        // narrow state used to fail: any worker boundary that lands between them has a partial
-        // sum outside the domain.
+        // Domain-edge rows force partial sums outside the stored-value domain at some worker
+        // boundaries.
         Spi::run(
             "INSERT INTO ledger
              SELECT ('USD ' || (g % 7) || '.25')::kmoney FROM generate_series(1, 5000) g",
@@ -272,13 +237,7 @@ mod tests {
         .expect("edge rows inserted");
         Spi::run("ANALYZE ledger").expect("analyzed");
 
-        // THE BASELINE IS FORCED, NOT ASSUMED. This used to compute `serial` under whatever the
-        // server's defaults happened to be and then call it the serial half of a
-        // serial-versus-parallel comparison. On a small table with stock costs it almost
-        // certainly was serial --- and "almost certainly" is the whole defect: a server already
-        // configured to favour parallel scans would run BOTH queries in parallel while the test
-        // went on claiming the two plans agreed. It would then pass without ever comparing the
-        // two things it is named after.
+        // Force and inspect the serial baseline before comparing it with the parallel plan.
         Spi::run("SET max_parallel_workers_per_gather = 0").expect("guc set");
         let serial_plan = explain_of("SELECT sum(amount) FROM ledger");
         assert!(
@@ -314,11 +273,7 @@ mod tests {
         let parallel = Spi::get_one::<String>("SELECT sum(amount)::text FROM ledger")
             .expect("parallel query ran")
             .expect("row");
-        assert_eq!(
-            serial, parallel,
-            "serial and parallel totals disagree, so the total is a property of the plan --- \
-             which is the R2-F4 defect, back through the catalog rather than the state width"
-        );
+        assert_eq!(serial, parallel, "serial and parallel totals disagree, so the total depends on the plan");
     }
 
     /// `EXPLAIN` as one string. Its own function because `Spi::get_one` wants a single row and
@@ -361,7 +316,7 @@ mod tests {
     }
 
     #[pg_test(
-        error = "sum(kmoney): money domain overflow: 1000000000000000000000000000000000000 units is outside the domain |units| <= 999999999999999999999999999999999999 (NUMERIC(36,18) admits |v| < 10^18)"
+        error = "sum(kmoney): 1000000000000000000000000000000000000 canonical units is outside the supported range -999999999999999999999999999999999999..=999999999999999999999999999999999999"
     )]
     fn the_sum_aggregate_rejects_a_total_that_leaves_the_domain() {
         Spi::run("CREATE TABLE ledger (amount kmoney)").expect("table created");

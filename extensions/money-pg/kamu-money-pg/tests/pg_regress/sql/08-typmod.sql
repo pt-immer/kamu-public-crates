@@ -39,7 +39,7 @@ CREATE TEMP TABLE bad_typmod (amount kmoney('ZWL'));
 CREATE TEMP TABLE two_mods (amount kmoney('IDR', 'USD'));
 
 \echo -- typmod_does_not_reach_operators_so_the_value_check_still_fires
--- C8 measured this: two differently pinned columns still meet as bare kmoney + kmoney, so the
+-- Two differently pinned columns still meet as bare kmoney + kmoney, so the
 -- refusal comes from the value-carried currency code rather than from the column types. Both
 -- mechanisms are required.
 CREATE TEMP TABLE lhs (amount kmoney('IDR'));

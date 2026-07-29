@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# `kmoney` on a REAL YugabyteDB cluster: 3 nodes, RF=3, tablets that move.
+# `kmoney` on a three-node YugabyteDB cluster with RF=3 and moving tablets.
 #
 #   kamu-money-pg/yb/run-yb-cluster.sh [yb-image] [artifact-dir]
 #
-# P0.2 of the readiness plan (gap G2, and the cross-node half of G8). Everything YugabyteDB was
-# previously known to do here came from `yugabyted start` -- one node, one session. That says
-# nothing about the situations a distributed deployment actually has:
+# This suite verifies distributed behavior:
 #
 #   * the .so must exist on EVERY node at the same version, and a node that lacks it must fail
 #     loudly rather than diverge quietly;
@@ -14,8 +12,8 @@
 #     DocDB's encoding rather than PostgreSQL's;
 #   * tablets split and move between nodes while `kmoney` values sit in columns.
 #
-# Each of those is a probe below, and each asserts a VALUE -- the four pinned kmoney_hash i32, the
-# exact 18-byte payload, the exact text form -- rather than "the query succeeded".
+# Each probe asserts a value: pinned `kmoney_hash` results, the exact 18-byte payload, or the exact
+# text form.
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
@@ -46,7 +44,7 @@ yb_install_extension_on_all "$ART"
 echo
 echo "=== 1. CREATE EXTENSION on ONE node, then use the type from EVERY node ==="
 # The DDL is issued exactly once, on node 0. If it does not propagate, the probes on nodes 1 and 2
-# fail -- which is the point. `IF NOT EXISTS` is deliberately absent: this statement must be the
+# fail. `IF NOT EXISTS` is deliberately absent: this statement must be the
 # one that creates it.
 yb_sql 0 -c 'CREATE EXTENSION kmoney' >/dev/null
 ok "CREATE EXTENSION kmoney issued on ${YB_NODES[0]}"
@@ -195,10 +193,8 @@ elif printf '%s' "$out" | grep -q 'USD 1.00'; then
 else
     bad "node 2 failed, but not with a recognisable missing-library error: $(printf '%s' "$out" | head -2 | tr '\n' ' ')"
 fi
-# Put it back, so nothing downstream inherits a deliberately broken node. From node 0, which is
-# still running the very library node 2 lost -- and which exists whether this cluster was baked or
-# copied. (It used to restore from `$YB_ART_SO` on the host, which only worked at all because
-# every run was a copied one; a baked run may have no host artifact to restore from.)
+# Restore from node 0 so downstream checks do not inherit a deliberately broken node. This works
+# for both baked and copied clusters without requiring a host artifact.
 yb_restore_extension_on "${YB_NODES[2]}" "${YB_NODES[0]}"
 
 echo

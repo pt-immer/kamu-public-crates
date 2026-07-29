@@ -3,17 +3,10 @@
 #
 #   kamu-money-pg/yb/run-yb-resilience.sh [yb-image] [artifact-dir]
 #
-# P1.2 of the readiness plan (gap G5). These are routine YugabyteDB operations -- a node restarts,
-# a node dies, a node comes back -- and "the extension survives them" was an assumption rather than
-# a measurement. An extension is a shared library the postmaster loads per backend, and its data is
-# 18 opaque bytes DocDB stores and replicates without understanding; neither fact guarantees the
-# other still works after a process comes back.
+# Probe routine node restart, failure, and rejoin while `kmoney` data remains resident.
 #
-# WHAT IS NOT HERE, AND WHY. A ROLLING VERSION UPGRADE is not implemented. It needs a second
-# YugabyteDB image digest AND a second from-source artifact build against that image's headers,
-# because the shimmed .so is compiled against one fork's PG15 headers and glibc. That is a
-# deliberate scope decision, not an oversight, and it leaves G5 partially open -- see
-# yb/RUNBOOK.md, which carries the same statement where an operator will actually look.
+# A rolling version upgrade is out of scope because it requires a second YugabyteDB image digest
+# and a second artifact built against that image's headers. See `yb/RUNBOOK.md`.
 #
 # THE ASSERTION IS ALWAYS A VALUE. Every probe re-takes the same fingerprint: the ordered text of
 # every row, folded with the pinned kmoney_hash, plus the row count. "The query succeeded after the
@@ -21,13 +14,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
-# ONE WRITER AT A TIME, TAKEN BEFORE ANYTHING SHARED IS TOUCHED. This script reads and writes under
-# ${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}, which with that variable unset is the single tree
-# every other suite also uses; a 2026-07-26 review found several entry points reaching those paths
-# before -- or entirely without -- taking the lock, so a stray run could overwrite the artefact
-# triplet a release was in the middle of hashing. Setting KMONEY_RUN_ROOT gives a run its own tree,
-# which removes the contention rather than serialising it; the lock stays for the shared default.
-# Re-entrant: a suite started by `release-check` inherits the descriptor and proceeds.
+# Lock before touching the shared default run root. A distinct `KMONEY_RUN_ROOT` isolates a run;
+# descendants of the release gate inherit the descriptor and re-enter.
 # shellcheck source=kamu-money-pg/yb/workspace-lock.sh
 source ./kamu-money-pg/yb/workspace-lock.sh
 workspace_lock "$(basename "$0")" || exit 1

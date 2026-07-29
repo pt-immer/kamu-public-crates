@@ -1,5 +1,8 @@
 //! Configuration for [`init_with`](crate::init_with).
 
+use std::fmt;
+use std::str::FromStr;
+
 /// Output format for the fmt layer.
 ///
 /// `Auto` is replaced at init time by [`Format::Pretty`] when the chosen sink
@@ -24,29 +27,47 @@ pub enum Format {
 }
 
 impl Format {
-    /// Parse from an env-var value. Unknown values resolve to `Auto`.
-    #[must_use]
-    pub fn from_env_value(value: &str) -> Self {
+    /// Parse an env-var value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParseFormatError`] instead of silently selecting [`Self::Auto`]
+    /// when the value is unknown.
+    pub fn from_env_value(value: &str) -> Result<Self, ParseFormatError> {
+        value.parse()
+    }
+}
+
+impl FromStr for Format {
+    type Err = ParseFormatError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value.trim().to_ascii_lowercase().as_str() {
-            "compact" => Self::Compact,
-            "pretty" => Self::Pretty,
-            "json" => Self::Json,
-            _ => Self::Auto,
+            "auto" => Ok(Self::Auto),
+            "compact" => Ok(Self::Compact),
+            "pretty" => Ok(Self::Pretty),
+            "json" => Ok(Self::Json),
+            _ => Err(ParseFormatError),
         }
     }
 }
 
+/// An unknown logging format.
+#[non_exhaustive]
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[error("expected one of: auto, compact, pretty, json")]
+pub struct ParseFormatError;
+
 /// Where to write log events.
 ///
-/// `Auto` (default) emits to the console when stdout is a TTY and to journald
-/// otherwise. Set `KAMU_LOG_SINK` (`auto`, `stdout`, `stderr`, `journald`) to
-/// override without code changes. `Journald` is rejected on targets without
-/// the `systemd` feature. On wasm32, `Auto`, `Stdout`, and `Stderr` all map to
-/// the JavaScript console.
+/// `Auto` (default) emits to stderr on native targets. Set `KAMU_LOG_SINK`
+/// (`auto`, `stdout`, `stderr`, `journald`) to override without code changes.
+/// `Journald` is rejected on targets without the `systemd` feature. On wasm32,
+/// `Auto`, `Stdout`, and `Stderr` all map to the JavaScript console.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Sink {
-    /// TTY → console, non-TTY → journald (on systemd) or stderr (otherwise).
+    /// Portable default: stderr on native targets, JavaScript console on wasm32.
     #[default]
     Auto,
     /// Write to stdout.
@@ -58,17 +79,36 @@ pub enum Sink {
 }
 
 impl Sink {
-    /// Parse from an env-var value. Unknown values resolve to `Auto`.
-    #[must_use]
-    pub fn from_env_value(value: &str) -> Self {
+    /// Parse an env-var value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParseSinkError`] instead of silently selecting [`Self::Auto`]
+    /// when the value is unknown.
+    pub fn from_env_value(value: &str) -> Result<Self, ParseSinkError> {
+        value.parse()
+    }
+}
+
+impl FromStr for Sink {
+    type Err = ParseSinkError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value.trim().to_ascii_lowercase().as_str() {
-            "stdout" => Self::Stdout,
-            "stderr" => Self::Stderr,
-            "journald" => Self::Journald,
-            _ => Self::Auto,
+            "auto" => Ok(Self::Auto),
+            "stdout" => Ok(Self::Stdout),
+            "stderr" => Ok(Self::Stderr),
+            "journald" => Ok(Self::Journald),
+            _ => Err(ParseSinkError),
         }
     }
 }
+
+/// An unknown logging sink.
+#[non_exhaustive]
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[error("expected one of: auto, stdout, stderr, journald")]
+pub struct ParseSinkError;
 
 /// Configuration for [`init_with`](crate::init_with).
 ///
@@ -86,7 +126,7 @@ impl Sink {
 /// )?;
 /// # Ok::<(), kamu_logging::Error>(())
 /// ```
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct InitOptions {
     pub(crate) service_name: Option<String>,
     pub(crate) default_filter: Option<String>,
@@ -98,9 +138,25 @@ pub struct InitOptions {
     pub(crate) otlp: Option<crate::otlp::OtlpConfig>,
 }
 
+impl fmt::Debug for InitOptions {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut debug = formatter.debug_struct("InitOptions");
+        debug
+            .field("service_name", &self.service_name)
+            .field("default_filter", &self.default_filter)
+            .field("env_var", &self.env_var)
+            .field("format", &self.format)
+            .field("sink", &self.sink)
+            .field("idempotent", &self.idempotent);
+        #[cfg(feature = "with-otlp")]
+        debug.field("otlp", &self.otlp);
+        debug.finish()
+    }
+}
+
 impl InitOptions {
-    /// Attach a `service.name` field to every event. Used by log aggregators
-    /// to route logs across services.
+    /// Attach `service.name` to the startup event and, when configured, use it
+    /// as the default OTLP resource service name.
     #[must_use]
     pub fn with_service_name(mut self, name: impl Into<String>) -> Self {
         self.service_name = Some(name.into());
@@ -139,7 +195,7 @@ impl InitOptions {
     }
 
     /// When `true`, a second [`init_with`](crate::init_with) call returns
-    /// `Ok(())` instead of [`Error::TracingGlobal`](crate::Error::TracingGlobal).
+    /// `Ok(())` when this crate installed the global subscriber.
     ///
     /// Default is `false` so library double-init surfaces as an error. Set
     /// `true` from test harnesses and embedded CLI runs where re-init is
@@ -164,15 +220,6 @@ impl InitOptions {
         self.env_var.as_deref().unwrap_or("RUST_LOG")
     }
 
-    #[cfg(feature = "systemd")]
-    pub(crate) fn resolved_default_filter(&self) -> &str {
-        if let Some(filter) = self.default_filter.as_deref() {
-            return filter;
-        }
-        if cfg!(debug_assertions) { "debug" } else { "info" }
-    }
-
-    #[cfg(feature = "wasm32")]
     pub(crate) fn resolved_default_filter(&self) -> &str {
         if let Some(filter) = self.default_filter.as_deref() {
             return filter;

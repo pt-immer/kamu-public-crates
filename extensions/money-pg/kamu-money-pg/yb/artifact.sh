@@ -1,30 +1,14 @@
 #!/usr/bin/env bash
-# Resolve the `kmoney` extension triplet in ONE directory, coherently. Sourced, not executed.
+# Resolve one coherent `kmoney` extension triplet. Sourced, not executed.
 #
 #   source kamu-money-pg/yb/artifact.sh
 #   yb_resolve_artifacts kamu-money-pg/yb/out
 #   # -> YB_ART_SO / YB_ART_CTL / YB_ART_SQL / YB_ART_VERSION / YB_ART_DIR / YB_ART_VERIFIED
 #
-# WHY THIS EXISTS. Every consumer used to write `find "$ART" -name 'kmoney*.so' | head -1`, three
-# times, once per file. That is wrong in three independent ways, and each one can produce a green
-# run against something nobody built:
-#
-#   1. `find` has no defined traversal order. `head -1` is therefore "whichever the filesystem
-#      happened to hand back first" -- not "the newest", and not "the only".
-#   2. The search was RECURSIVE over a directory that deliberately accumulates the stock-PG15
-#      reference output and one subdirectory per run. A file under `ref/` or `regress-*/` was
-#      always eligible.
-#   3. The three searches were INDEPENDENT. Nothing tied the `.so` to the control file to the SQL
-#      script, so a triplet could be assembled from two different builds -- and a mismatched
-#      triplet installs cleanly. `CREATE EXTENSION` reads the control file for a version and runs
-#      the script that names it; neither of them checks the shared library it binds.
-#
-# So: exact names, ONE directory, exactly one install script, the control file's `default_version`
-# must be the version in that script's filename, and every hash in ARTIFACT-MANIFEST.txt must match
-# -- which is what turns a stale decoy from a coin flip into a failure. The manifest is REQUIRED,
-# not checked-if-present: see the comment at the check itself for why "coherent names" is not
-# provenance. `YB_ART_ALLOW_UNVERIFIED=1` downgrades it for a developer run and says so in every
-# log line, and sets `YB_ART_VERIFIED=no` so no caller can record that run as evidence by accident.
+# Resolution requires exact names in one directory, one install script, agreement between the
+# control file's `default_version` and that script's filename, and matching hashes in
+# ARTIFACT-MANIFEST.txt. `YB_ART_ALLOW_UNVERIFIED=1` permits a non-evidence developer run and sets
+# `YB_ART_VERIFIED=no`.
 #
 # `set -euo pipefail` is deliberately NOT set here: this file is sourced into scripts that already
 # set it, and shell options set from a sourced file change the caller's shell.
@@ -112,12 +96,8 @@ yb_resolve_artifacts() {
         return 2
     fi
 
-    # MANDATORY. This warned and carried on until 2026-07-26, which meant the same call could
-    # return release evidence or unverified bytes depending on how the directory came to exist --
-    # and the caller could not tell, because the difference was one line on stderr in a log nobody
-    # reads on the happy path. Coherent NAMES are not provenance: names and versions match by
-    # construction for any triplet copied out of any build, including a stale one left in `out/`
-    # by a previous revision, which is precisely the substitution the manifest exists to catch.
+    # A coherent filename triplet is not provenance. Require the manifest so stale or substituted
+    # bytes cannot look release-verified.
     #
     # The escape hatch is loud, must be asked for by name, and MARKS THE RESULT. A gate that can be
     # silently downgraded is not a gate; one that can be downgraded only by an environment variable
@@ -138,9 +118,8 @@ yb_resolve_artifacts() {
         echo "artifact: *** release evidence and must not be recorded as any.                 ***" >&2
     else
         echo "artifact: $dir has no $YB_ART_MANIFEST_NAME -- these bytes have no provenance." >&2
-        echo "artifact: names and version are coherent, which proves nothing: a stale triplet left" >&2
-        echo "artifact: by an earlier revision is coherent too. The manifest is what ties these" >&2
-        echo "artifact: exact bytes to the build that produced them." >&2
+        echo "artifact: names and version are coherent, but only the manifest ties these exact" >&2
+        echo "artifact: bytes to the build that produced them." >&2
         echo "artifact:" >&2
         echo "artifact:   rebuild (writes the manifest):  just yb-build" >&2
         echo "artifact:   or, for a NON-EVIDENCE run:     YB_ART_ALLOW_UNVERIFIED=1 <command>" >&2

@@ -1,27 +1,15 @@
-//! Money through **YugabyteDB**, over the same canonical text form. (DESIGN.md C9, E15)
+//! Money through YugabyteDB using the canonical text form.
 //!
 //! # What this file covers, and what it does NOT
 //!
 //! This is the **text-adapter** route to YugabyteDB, not the whole of YugabyteDB support.
 //!
-//! E15 measured that the *naive* build cannot host `kamu-money-pg`: YugabyteDB's shipped `elog.h`
-//! includes `yb/yql/pggate/util/ybc_util.h`, which the image does not distribute, so nothing
-//! that includes `postgres.h` compiles against it — and separately, a `.so` built elsewhere
-//! fails on its older glibc. An earlier revision of this comment concluded from that the
-//! extension route was closed *permanently*. **E16 supersedes that conclusion:** built FROM the
-//! YB image with a three-symbol pgrx shim, `kamu-money-pg` loads natively on YugabyteDB and is
-//! byte-exact against stock PostgreSQL 15 (`just yb-ab`).
-//!
-//! So there are two routes, and this file is one of them. It needs nothing from the database —
-//! a `text` column, the wire protocol, and all arithmetic in Rust — which is what makes it the
-//! portability path for managed PostgreSQL that will not load an extension at all. By §0.1's
-//! own axiom it is also the *safer* half: no SQL-side arithmetic means no second implementation
-//! that could disagree with the first.
+//! This covers the portable text-adapter route. Native `kmoney` support has its own extension
+//! gate. The text route needs only a text column and keeps arithmetic in Rust.
 //!
 //! # No `testcontainers-modules` image for YugabyteDB
 //!
-//! There isn't one, so this drives a `GenericImage` directly. Two things that cost time to
-//! learn and are cheap to write down:
+//! There is no module-specific image wrapper, so this drives a `GenericImage` directly:
 //!
 //! - `yugabyted` binds YSQL to the node's **advertised address**, never to loopback. Inside the
 //!   container that is `hostname -i`; from the host it is the mapped port, which is what this
@@ -36,9 +24,9 @@
 
 #![cfg(feature = "postgres")]
 
+use kamu_money_core::advanced::domain::{DOMAIN_MAX, POW10_SCALE};
 use kamu_money_core::iso::{IDR, JPY, KWD, USD};
-use kamu_money_core::rate::Rate;
-use kamu_money_core::{DOMAIN_MAX, Money, POW10_SCALE};
+use kamu_money_core::{Money, Rate};
 use postgres::{Client, NoTls};
 use std::time::Duration;
 use testcontainers::core::{IntoContainerPort, WaitFor};
@@ -47,15 +35,8 @@ use testcontainers::{GenericImage, ImageExt};
 
 /// The YugabyteDB image this runs against, **supplied by the caller and recorded by it**.
 ///
-/// This used to be a pair of constants naming `yugabytedb/yugabyte:2025.2.4.1-b4`: a MUTABLE tag,
-/// one release behind the digest the native extension path is pinned to. `release-check` runs this
-/// test through `check-all`, so the run exercised two YugabyteDB identities while reading as one —
-/// and a retag could change what `check-all` tested with nothing in the tree moving.
-///
-/// `just test-yb` resolves the identity through `yb/yb-image.sh` — the same pin file, the same
-/// refusal when a tag has drifted off its validated digest — and hands it here. Absent, this
-/// REFUSES rather than falling back to a hard-coded tag, because a fallback is exactly how the
-/// stale one survived being noticed.
+/// `just test-yb` resolves the pinned identity through `yb/yb-image.sh`. Absence is an error;
+/// this test has no mutable-tag fallback.
 fn yb_image() -> (String, String) {
     let reference = std::env::var("KMONEY_YB_IMAGE").unwrap_or_else(|_| {
         panic!(
@@ -130,12 +111,12 @@ fn money_survives_yugabytedb_exactly_as_it_survives_postgresql() {
 
     // --- the domain edges round-trip -----------------------------------------------------
     let values = [
-        Money::<USD>::from_units(0).unwrap(),
-        Money::<USD>::from_units(10_500_000_000_000_000_000).unwrap(),
-        Money::<USD>::from_units(1).unwrap(),
-        Money::<USD>::from_units(-1).unwrap(),
-        Money::<USD>::from_units(DOMAIN_MAX).unwrap(),
-        Money::<USD>::from_units(-DOMAIN_MAX).unwrap(),
+        Money::<USD>::try_from_units(0).unwrap(),
+        Money::<USD>::try_from_units(10_500_000_000_000_000_000).unwrap(),
+        Money::<USD>::try_from_units(1).unwrap(),
+        Money::<USD>::try_from_units(-1).unwrap(),
+        Money::<USD>::try_from_units(DOMAIN_MAX).unwrap(),
+        Money::<USD>::try_from_units(-DOMAIN_MAX).unwrap(),
     ];
     for (i, value) in values.iter().enumerate() {
         yb.client
@@ -155,9 +136,9 @@ fn money_survives_yugabytedb_exactly_as_it_survives_postgresql() {
         .execute(
             "INSERT INTO shapes VALUES (1, $1), (2, $2), (3, $3)",
             &[
-                &Money::<USD>::from_units(half).unwrap(),
-                &Money::<JPY>::from_units(half).unwrap(),
-                &Money::<KWD>::from_units(half).unwrap(),
+                &Money::<USD>::try_from_units(half).unwrap(),
+                &Money::<JPY>::try_from_units(half).unwrap(),
+                &Money::<KWD>::try_from_units(half).unwrap(),
             ],
         )
         .expect("inserted");
@@ -177,12 +158,12 @@ fn money_survives_yugabytedb_exactly_as_it_survives_postgresql() {
     // --- the currency cross-check still fires --------------------------------------------
     let idr_row = yb
         .client
-        .query_one("SELECT $1::text", &[&Money::<IDR>::from_major(16_000).unwrap()])
+        .query_one("SELECT $1::text", &[&Money::<IDR>::try_from_major(16_000).unwrap()])
         .expect("query ran");
     assert!(idr_row.try_get::<_, Money<USD>>(0).is_err(), "IDR must not decode as USD, on YugabyteDB too");
 
     // --- rates, both ends of the pair ----------------------------------------------------
-    let rate = Rate::<USD, IDR>::from_units(16_000 * POW10_SCALE).unwrap();
+    let rate = Rate::<USD, IDR>::try_from_units(16_000 * POW10_SCALE).unwrap();
     let rate_row = yb.client.query_one("SELECT $1::text", &[&rate]).expect("query ran");
     assert_eq!(rate_row.get::<_, String>(0), "USD/IDR/16000");
     assert_eq!(rate_row.get::<_, Rate<USD, IDR>>(0), rate);
@@ -192,7 +173,8 @@ fn money_survives_yugabytedb_exactly_as_it_survives_postgresql() {
     yb.client
         .execute("CREATE TABLE wrong_type (id int PRIMARY KEY, amount numeric(36,18))", &[])
         .expect("table created");
-    let refused =
-        yb.client.execute("INSERT INTO wrong_type VALUES (1, $1)", &[&Money::<USD>::from_major(10).unwrap()]);
+    let refused = yb
+        .client
+        .execute("INSERT INTO wrong_type VALUES (1, $1)", &[&Money::<USD>::try_from_major(10).unwrap()]);
     assert!(refused.is_err(), "a numeric column must not accept Money");
 }

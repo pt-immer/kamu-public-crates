@@ -1,16 +1,6 @@
-//! The native `kmoney` column, read through the Rust drivers. (DESIGN.md C8/C9; review F8)
+//! Native `kmoney` columns through the Rust drivers.
 //!
-//! # The gap this closes
-//!
-//! Two halves were each proven, and the join between them was not. `kamu-money-pg`'s own suite shows
-//! that `kmoney::text` equals the canonical text form, but it runs *inside* the backend through
-//! SPI and so cannot exercise a client driver at all. The driver suites (`pg_roundtrip`,
-//! `sqlx_roundtrip`) decode that same canonical text perfectly — from `text` columns, with no
-//! extension installed. Nothing put a live `kamu-money-pg`, a native `kmoney` column, and a Rust
-//! driver in one process.
-//!
-//! That join is exactly where the contract is easy to misread. "A Rust driver reads the native
-//! column as text" (R2-F5) does **not** mean the client negotiates a text format: both adapters
+//! The adapters do not negotiate a text representation for the native OID. They
 //! delegate `accepts`/`compatible` to `&str`, so they reject by **OID before any parsing**. The
 //! cast is what changes the OID, and it is therefore part of the query contract:
 //!
@@ -19,18 +9,7 @@
 //! SELECT amount        FROM ledger;  -- type error: kmoney is not text-family
 //! ```
 //!
-//! Both directions are asserted below. The negative one matters as much as the positive: without
-//! it, the deliberate absence of a native codec is indistinguishable from an accidental
-//! regression that happens to still work.
-//!
-//! # And the write half, added 2026-07-27
-//!
-//! The above is all READ. Until 2026-07-27 the checked-in contract stopped there, so the primary
-//! write query — the thing a service does first — existed only as an inference from "the
-//! adapters reject the native OID". The second half of this file executes it: a `Money<C>` bound
-//! as a parameter, cast server-side into a typmod-pinned column, updated with SQL arithmetic,
-//! and read back through the projection above. It also asserts the refusal that makes the
-//! typmod worth declaring — a bound `Money<IDR>` does not reach a `kmoney('USD')` column.
+//! The suite covers reads, bound writes, SQL arithmetic, and typmod currency refusal.
 //!
 //! # Why this one is env-gated instead of using `testcontainers`
 //!
@@ -49,8 +28,9 @@
 
 #![cfg(all(feature = "postgres", feature = "sqlx"))]
 
+use kamu_money_core::Money;
+use kamu_money_core::advanced::domain::DOMAIN_MAX;
 use kamu_money_core::iso::{IDR, USD};
-use kamu_money_core::{DOMAIN_MAX, Money};
 // `Row` is what brings `try_get` into scope: the sqlx negative half fetches the row first and
 // decodes separately, so that "rejected by OID" cannot be confused with a failed query.
 use sqlx::Row;
@@ -110,18 +90,15 @@ const SETUP_SQLX_WRITE: [&str; 3] = [
 
 /// The values a write has to survive, as `(id, amount)`.
 ///
-/// Zero, one canonical unit either way, and **both domain edges** — the last pair matters
-/// because the 18-byte fixed datum has no varlena header to absorb a wrong width, so a value at
-/// `DOMAIN_MAX` is where a truncation or a sign error in the parameter path would show up. They
-/// are bound as PARAMETERS here, which is the whole point: the read suites reached these same
-/// values through SQL literals, so the literal parser was doing the work.
+/// Covers zero, one canonical unit in both directions, and both domain edges. Values are bound
+/// as parameters so this tests the client adapter rather than SQL literal parsing.
 fn write_cases() -> [(i32, Money<USD>); 5] {
     [
-        (1, Money::<USD>::from_units(0).expect("zero is in domain")),
-        (2, Money::<USD>::from_units(1).expect("one canonical unit")),
-        (3, Money::<USD>::from_units(-1).expect("one negative unit")),
-        (4, Money::<USD>::from_units(DOMAIN_MAX).expect("the top edge")),
-        (5, Money::<USD>::from_units(-DOMAIN_MAX).expect("the bottom edge")),
+        (1, Money::<USD>::try_from_units(0).expect("zero is in domain")),
+        (2, Money::<USD>::try_from_units(1).expect("one canonical unit")),
+        (3, Money::<USD>::try_from_units(-1).expect("one negative unit")),
+        (4, Money::<USD>::try_from_units(DOMAIN_MAX).expect("the top edge")),
+        (5, Money::<USD>::try_from_units(-DOMAIN_MAX).expect("the bottom edge")),
     ]
 }
 
@@ -152,7 +129,8 @@ fn postgres_types_reads_a_native_column_through_an_explicit_cast() {
     let got: Money<USD> = row.get(0);
     assert_eq!(
         got,
-        Money::<USD>::from_major(10).unwrap() + Money::<USD>::from_units(500_000_000_000_000_000).unwrap()
+        Money::<USD>::try_from_major(10).unwrap()
+            + Money::<USD>::try_from_units(500_000_000_000_000_000).unwrap()
     );
 
     // The domain edge survives the whole path: extension -> text -> driver.
@@ -161,8 +139,7 @@ fn postgres_types_reads_a_native_column_through_an_explicit_cast() {
     let got: Money<USD> = row.get(0);
     assert_eq!(got.units(), -1, "one canonical unit, through the native type");
 
-    // NEGATIVE: the bare column is rejected by OID, before parsing. This is the deliberate
-    // absence of a native codec (R2-F5) — asserted so it cannot be mistaken for a regression.
+    // The bare column is rejected by OID before parsing.
     let row = client
         .query_one("SELECT amount FROM native_pt WHERE id = 1", &[])
         .expect("the query itself is valid SQL");
@@ -170,13 +147,12 @@ fn postgres_types_reads_a_native_column_through_an_explicit_cast() {
     assert!(
         direct.is_err(),
         "a bare native kmoney column must NOT decode: the adapters accept text-family OIDs only, \
-         so `SELECT amount::text` is required. If this ever succeeds, a native codec was added \
-         and DESIGN.md C8 / R2-F5 need revisiting."
+         so `SELECT amount::text` is required. If this succeeds, document and test the new \
+         native codec."
     );
 }
 
-/// The same contract through `sqlx`, because C9 requires the two drivers to agree about what a
-/// money column is — including about which columns they refuse.
+/// The same read contract through `sqlx`.
 #[tokio::test(flavor = "multi_thread")]
 async fn sqlx_reads_a_native_column_through_an_explicit_cast() {
     let Some(url) = native_url() else { return };
@@ -208,28 +184,13 @@ async fn sqlx_reads_a_native_column_through_an_explicit_cast() {
     );
 }
 
-// ============================================================================================
-// THE WRITE HALF.
-//
-// Everything above is a READ. Until 2026-07-27 that was the entire checked-in contract for the
-// native column: `amount::text` decodes, the bare column does not. How a value gets IN was
-// documented nowhere and executed nowhere — a service had to infer the primary write query from
-// the fact that the adapters reject the native OID, which is an argument, not a contract.
-//
-// The shape below is the canonical one, and it follows from R2-F5 rather than working around it.
-// The adapters accept text-family OIDs, so the parameter travels as text and the SERVER casts:
+// The adapters accept text-family OIDs, so the parameter travels as text and the server casts:
 //
 //     INSERT INTO ledger (amount) VALUES (($1::text)::kmoney);
 //     UPDATE ledger SET amount = amount + (($1::text)::kmoney) WHERE id = $2;
 //
-// `$1::text` fixes the parameter's OID to one the adapter writes; `::kmoney` runs the extension's
-// own input function, which is the same codec `Display` uses. The column's typmod coercion then
-// checks the currency, so a `Money<IDR>` bound at a `kmoney('USD')` column is refused by the
-// database rather than by a convention someone has to remember. That refusal is asserted too —
-// it is the half that makes the typmod worth declaring.
-//
-// This deliberately does NOT add a native-OID binary codec. The text codec stays the only one.
-// ============================================================================================
+// `$1::text` selects a supported parameter OID; `::kmoney` runs the extension parser, and the
+// column typmod checks the currency. No native-OID binary client codec is provided.
 
 /// `postgres-types`: bind, cast, update with SQL arithmetic, read back, and be refused on a
 /// currency the column does not accept.
@@ -272,7 +233,7 @@ fn postgres_types_writes_a_native_column_through_a_bound_parameter() {
     // UPDATE with SQL-side arithmetic on a bound parameter. `+` here is the extension's
     // operator over the shared Rust kernel, not a client-side add — which is the reason the
     // native type exists at all.
-    let ten = Money::<USD>::from_major(10).unwrap();
+    let ten = Money::<USD>::try_from_major(10).unwrap();
     client
         .execute("UPDATE write_pt SET amount = amount + (($1::text)::kmoney) WHERE id = $2", &[&ten, &2i32])
         .expect("the canonical update shape must work");
@@ -281,12 +242,12 @@ fn postgres_types_writes_a_native_column_through_a_bound_parameter() {
     let got: Money<USD> = row.get(0);
     assert_eq!(
         got,
-        ten + Money::<USD>::from_units(1).unwrap(),
+        ten + Money::<USD>::try_from_units(1).unwrap(),
         "the database added a bound parameter to a stored value and kept the unit"
     );
 
     // NEGATIVE: the typmod refuses a foreign currency, and the DATABASE is what refuses it.
-    let idr = Money::<IDR>::from_major(1).unwrap();
+    let idr = Money::<IDR>::try_from_major(1).unwrap();
     let refused =
         client.execute("INSERT INTO write_pt (id, amount) VALUES (99, ($1::text)::kmoney)", &[&idr]);
     let err = refused.expect_err("a Money<IDR> must not reach a kmoney('USD') column");
@@ -305,8 +266,7 @@ fn postgres_types_writes_a_native_column_through_a_bound_parameter() {
     );
 }
 
-/// The same contract through `sqlx`. C9 requires the two drivers to agree about what a money
-/// column is; H2 extends that to how a value is written to one.
+/// The same write contract through `sqlx`.
 #[tokio::test(flavor = "multi_thread")]
 async fn sqlx_writes_a_native_column_through_a_bound_parameter() {
     let Some(url) = native_url() else { return };
@@ -333,7 +293,7 @@ async fn sqlx_writes_a_native_column_through_a_bound_parameter() {
         assert_eq!(got, amount, "id={id} did not survive the parameter round trip");
     }
 
-    let ten = Money::<USD>::from_major(10).unwrap();
+    let ten = Money::<USD>::try_from_major(10).unwrap();
     sqlx::query("UPDATE write_sqlx SET amount = amount + (($1::text)::kmoney) WHERE id = $2")
         .bind(ten)
         .bind(2i32)
@@ -344,11 +304,11 @@ async fn sqlx_writes_a_native_column_through_a_bound_parameter() {
         .fetch_one(&pool)
         .await
         .expect("cast query decodes");
-    assert_eq!(got, ten + Money::<USD>::from_units(1).unwrap());
+    assert_eq!(got, ten + Money::<USD>::try_from_units(1).unwrap());
 
     // NEGATIVE, matching the sync driver: the typmod is the database's rule, so both drivers
     // must hit it identically. A contract only one driver enforces is not a contract.
-    let idr = Money::<IDR>::from_major(1).unwrap();
+    let idr = Money::<IDR>::try_from_major(1).unwrap();
     let refused = sqlx::query("INSERT INTO write_sqlx (id, amount) VALUES (99, ($1::text)::kmoney)")
         .bind(idr)
         .execute(&pool)

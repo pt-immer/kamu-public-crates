@@ -1,29 +1,23 @@
-//! The serde wire. (DESIGN.md C7)
+//! Serde wire contracts.
 //!
 //! Runs only with `--features serde`. `cargo test --workspace --all-features` covers it.
 
 #![cfg(feature = "serde")]
 
-use kamu_money_core::domain::DOMAIN_MAX;
+use kamu_money_core::Money;
+use kamu_money_core::Rate;
+use kamu_money_core::advanced::domain::DOMAIN_MAX;
 use kamu_money_core::iso::{IDR, Iso4217, JPY, USD};
-use kamu_money_core::money::Money;
-use kamu_money_core::rate::Rate;
 use proptest::prelude::*;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------------------
-// THE measured trap: serde encodes an enum variant by POSITION, not by discriminant.
+// Serde derives binary enum values from variant position, not numeric discriminants.
 // ---------------------------------------------------------------------------------------
 
 /// Binary must carry the ISO **numeric** code, which a standards body assigns permanently —
 /// never the variant's ordinal position, which moves the moment a currency is inserted
-/// mid-table. The register is complete at 178 codes and still grows — ISO issues them — and
-/// because variants are emitted in alpha-3 order, a new code lands between existing ones rather
-/// than after them. (This comment previously justified the risk with "12 of ~180 and WILL
-/// grow", which stopped being true when the table was generated from the published list.)
-///
-/// Measured previously with a derived impl: after inserting one currency, stored `IDR` decoded
-/// as `GBP`, silently, with `#[repr(u16)]` and `IDR = 360` unchanged in both versions.
+/// mid-table. The register is generated in alpha-3 order, so new codes can shift later variants.
 ///
 /// A JSON suite cannot catch this — human-readable formats emit the NAME. That is why this
 /// test is binary, and why it is the most important one in the file.
@@ -43,8 +37,7 @@ fn binary_encodes_the_iso_numeric_never_the_variant_position() {
 
 #[test]
 fn human_readable_uses_the_alpha3_code_with_no_rename_all_mangling() {
-    // `rename_all = "SCREAMING_SNAKE_CASE"` would emit "I_D_R" here — measured, and it reads
-    // MORE correct in the source than it behaves.
+    // `SCREAMING_SNAKE_CASE` would incorrectly emit "I_D_R".
     assert_eq!(serde_json::to_string(&Iso4217::IDR).unwrap(), r#""IDR""#);
     assert_eq!(serde_json::from_str::<Iso4217>(r#""IDR""#).unwrap(), Iso4217::IDR);
     assert!(serde_json::from_str::<Iso4217>(r#""I_D_R""#).is_err());
@@ -67,9 +60,10 @@ struct Payment {
 #[test]
 fn a_struct_can_mix_both_modes_per_field() {
     let p = Payment {
-        amount: Money::<USD>::from_major(10).unwrap(),
-        fee: Money::<USD>::from_units(1_500_000_000_000_000_000).unwrap(),
-        rate: Rate::<USD, IDR>::from_units(16_000 * kamu_money_core::POW10_SCALE).unwrap(),
+        amount: Money::<USD>::try_from_major(10).unwrap(),
+        fee: Money::<USD>::try_from_units(1_500_000_000_000_000_000).unwrap(),
+        rate: Rate::<USD, IDR>::try_from_units(16_000 * kamu_money_core::advanced::domain::POW10_SCALE)
+            .unwrap(),
     };
     let json = serde_json::to_string(&p).unwrap();
     assert_eq!(
@@ -81,10 +75,11 @@ fn a_struct_can_mix_both_modes_per_field() {
 
 #[test]
 fn structured_is_the_default_for_money_and_rate() {
-    let m = Money::<USD>::from_units(10_500_000_000_000_000_000).unwrap();
+    let m = Money::<USD>::try_from_units(10_500_000_000_000_000_000).unwrap();
     assert_eq!(serde_json::to_string(&m).unwrap(), r#"{"currency":"USD","amount":"10.50"}"#);
 
-    let r = Rate::<USD, IDR>::from_units(16_000 * kamu_money_core::POW10_SCALE).unwrap();
+    let r =
+        Rate::<USD, IDR>::try_from_units(16_000 * kamu_money_core::advanced::domain::POW10_SCALE).unwrap();
     assert_eq!(serde_json::to_string(&r).unwrap(), r#"{"base":"USD","quote":"IDR","rate":"16000"}"#);
 }
 
@@ -94,12 +89,12 @@ fn structured_is_the_default_for_money_and_rate() {
 fn the_wire_amount_uses_the_same_trim_rule_as_display() {
     let units = 10_500_000_000_000_000_000;
     assert_eq!(
-        serde_json::to_string(&Money::<JPY>::from_units(units).unwrap()).unwrap(),
+        serde_json::to_string(&Money::<JPY>::try_from_units(units).unwrap()).unwrap(),
         r#"{"currency":"JPY","amount":"10.5"}"#,
         "JPY settles at 0dp"
     );
     assert_eq!(
-        serde_json::to_string(&Money::<USD>::from_units(units).unwrap()).unwrap(),
+        serde_json::to_string(&Money::<USD>::try_from_units(units).unwrap()).unwrap(),
         r#"{"currency":"USD","amount":"10.50"}"#,
         "USD settles at 2dp"
     );
@@ -149,7 +144,7 @@ fn a_rate_checks_both_ends_of_the_pair_on_the_wire() {
 fn out_of_domain_and_over_precise_payloads_are_refused_not_rounded() {
     assert!(
         serde_json::from_str::<Money<USD>>(r#"{"currency":"USD","amount":"0.0000000000000000005"}"#).is_err(),
-        "19dp must be refused, never rounded — this is the rust_decimal failure (E2)"
+        "19dp must be refused, never rounded"
     );
     assert!(
         serde_json::from_str::<Money<USD>>(r#"{"currency":"USD","amount":"1000000000000000000.00"}"#)
@@ -165,31 +160,26 @@ fn out_of_domain_and_over_precise_payloads_are_refused_not_rounded() {
 /// Binary carries the currency as its ISO **numeric** code, ahead of the units — the same
 /// stable tag the human-readable form carries as alpha-3.
 ///
-/// This replaces a test that asserted the opposite: that the binary encoding was byte-identical
-/// to a bare `i128`, "the currency costs zero bytes". That elegance was the R2-F2 defect — a
-/// bare `i128` carries no identity, so `Money<USD>` bytes decoded as `Money<IDR>` with the units
-/// preserved and the currency silently reassigned. A number without its currency is not money,
-/// which is this crate's whole thesis; the wire may not spend the one thing it refuses to.
+/// A bare `i128` carries no identity and could be decoded under a different currency type.
 #[test]
 fn binary_carries_the_iso_numeric_tag_before_the_units() {
     let units = 10_500_000_000_000_000_000i128;
-    let bytes = postcard::to_allocvec(&Money::<USD>::from_units(units).unwrap()).unwrap();
+    let bytes = postcard::to_allocvec(&Money::<USD>::try_from_units(units).unwrap()).unwrap();
 
     // The tag is exactly what the standalone `Iso4217` codec emits (USD = numeric 840), never
     // the enum ordinal — so it inherits `binary_encodes_the_iso_numeric_never_the_variant_position`.
     let expected = postcard::to_allocvec(&(Iso4217::USD, units)).unwrap();
     assert_eq!(bytes, expected, "binary is (ISO numeric, i128 units)");
 
-    // And it must NOT be the bare `i128` that reinterpreted silently before R2-F2.
+    // The currency tag makes this distinct from a bare amount.
     let bare = postcard::to_allocvec(&units).unwrap();
     assert_ne!(bytes, bare, "the currency must now be on the wire");
 }
 
-/// The defect itself, as a regression guard: a `Money<USD>` payload must not decode as
-/// `Money<IDR>`. Before R2-F2 this succeeded, unit-for-unit, silently redenominating the money.
+/// A `Money<USD>` payload must not decode as `Money<IDR>`.
 #[test]
 fn binary_refuses_a_cross_currency_reinterpretation() {
-    let m = Money::<USD>::from_units(10 * kamu_money_core::POW10_SCALE).unwrap();
+    let m = Money::<USD>::try_from_units(10 * kamu_money_core::advanced::domain::POW10_SCALE).unwrap();
     let bytes = postcard::to_allocvec(&m).unwrap();
 
     assert!(postcard::from_bytes::<Money<IDR>>(&bytes).is_err(), "a USD payload must not decode as IDR");
@@ -202,7 +192,8 @@ fn binary_refuses_a_cross_currency_reinterpretation() {
 #[test]
 fn binary_refuses_a_rate_pair_reinterpretation() {
     use kamu_money_core::iso::{EUR, JPY};
-    let r = Rate::<USD, IDR>::from_units(16_000 * kamu_money_core::POW10_SCALE).unwrap();
+    let r =
+        Rate::<USD, IDR>::try_from_units(16_000 * kamu_money_core::advanced::domain::POW10_SCALE).unwrap();
     let bytes = postcard::to_allocvec(&r).unwrap();
 
     assert!(postcard::from_bytes::<Rate<EUR, JPY>>(&bytes).is_err(), "both ends changed");
@@ -224,21 +215,21 @@ fn transparent_binary_also_refuses_a_cross_currency_reinterpretation() {
         Money<IDR>,
     );
 
-    let bytes = postcard::to_allocvec(&U(Money::<USD>::from_major(10).unwrap())).unwrap();
+    let bytes = postcard::to_allocvec(&U(Money::<USD>::try_from_major(10).unwrap())).unwrap();
     assert!(
         postcard::from_bytes::<I>(&bytes).is_err(),
         "transparent binary must reject a mismatched currency too"
     );
-    assert_eq!(postcard::from_bytes::<U>(&bytes).unwrap(), U(Money::<USD>::from_major(10).unwrap()));
+    assert_eq!(postcard::from_bytes::<U>(&bytes).unwrap(), U(Money::<USD>::try_from_major(10).unwrap()));
 }
 
 #[test]
 fn binary_round_trips_in_both_modes() {
-    let m = Money::<USD>::from_units(-10_500_000_000_000_000_000).unwrap();
+    let m = Money::<USD>::try_from_units(-10_500_000_000_000_000_000).unwrap();
     let bytes = postcard::to_allocvec(&m).unwrap();
     assert_eq!(postcard::from_bytes::<Money<USD>>(&bytes).unwrap(), m);
 
-    let r = Rate::<USD, IDR>::from_units(DOMAIN_MAX).unwrap();
+    let r = Rate::<USD, IDR>::try_from_units(DOMAIN_MAX).unwrap();
     let bytes = postcard::to_allocvec(&r).unwrap();
     assert_eq!(postcard::from_bytes::<Rate<USD, IDR>>(&bytes).unwrap(), r);
 }
@@ -254,14 +245,14 @@ fn a_binary_payload_outside_the_domain_is_refused() {
 proptest! {
     #[test]
     fn prop_money_round_trips_through_json(units in -DOMAIN_MAX..=DOMAIN_MAX) {
-        let m = Money::<USD>::from_units(units).unwrap();
+        let m = Money::<USD>::try_from_units(units).unwrap();
         let json = serde_json::to_string(&m).unwrap();
         prop_assert_eq!(serde_json::from_str::<Money<USD>>(&json).unwrap(), m);
     }
 
     #[test]
     fn prop_money_round_trips_through_binary(units in -DOMAIN_MAX..=DOMAIN_MAX) {
-        let m = Money::<IDR>::from_units(units).unwrap();
+        let m = Money::<IDR>::try_from_units(units).unwrap();
         let bytes = postcard::to_allocvec(&m).unwrap();
         prop_assert_eq!(postcard::from_bytes::<Money<IDR>>(&bytes).unwrap(), m);
     }
@@ -272,7 +263,7 @@ proptest! {
         #[derive(Serialize, Deserialize, PartialEq, Debug)]
         struct T(#[serde(with = "kamu_money_core::wire::transparent")] Money<USD>);
 
-        let m = Money::<USD>::from_units(units).unwrap();
+        let m = Money::<USD>::try_from_units(units).unwrap();
         let via_structured: Money<USD> =
             serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
         let via_transparent: T =
@@ -281,15 +272,13 @@ proptest! {
         prop_assert_eq!(via_structured, m);
     }
 
-    /// Positive-only since H1 (2026-07-27). The wire is one of the four ingresses that made
-    /// `Rate` enforce positivity at all; what a non-positive rate does on the way IN is
-    /// asserted in `rate_ingress.rs` rather than here, where the property is round-tripping.
+    /// Non-positive ingress cases live in `rate_ingress.rs`; this property covers valid values.
     #[test]
     fn prop_rate_round_trips_through_both_shapes(units in 1..=DOMAIN_MAX) {
         #[derive(Serialize, Deserialize, PartialEq, Debug)]
         struct T(#[serde(with = "kamu_money_core::wire::transparent")] Rate<USD, IDR>);
 
-        let r = Rate::<USD, IDR>::from_units(units).unwrap();
+        let r = Rate::<USD, IDR>::try_from_units(units).unwrap();
         let structured: Rate<USD, IDR> =
             serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
         let transparent: T = serde_json::from_str(&serde_json::to_string(&T(r)).unwrap()).unwrap();

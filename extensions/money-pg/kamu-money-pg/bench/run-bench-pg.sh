@@ -3,10 +3,6 @@
 #
 #   kamu-money-pg/bench/run-bench-pg.sh [major]      # default 18
 #
-# WHY THIS EXISTS. E20's SQL figures were measured with code that was deliberately discarded,
-# which left kamu-money-core's DESIGN.md §1 saying "reproduce before trusting" directly above an entry nobody could
-# reproduce. This is the fixture that closes that. It reports; it never fails on a number.
-#
 # NO THRESHOLD, ON PURPOSE -- the same rule `just bench-yb` states: a limit invented before there
 # is a baseline to regress against either never fires or fires on somebody else's hardware. If
 # these are ever to gate, a baseline on known hardware comes first, and that is a decision.
@@ -17,13 +13,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
-# ONE WRITER AT A TIME, TAKEN BEFORE ANYTHING SHARED IS TOUCHED. This script reads and writes under
-# ${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}, which with that variable unset is the single tree
-# every other suite also uses; a 2026-07-26 review found several entry points reaching those paths
-# before -- or entirely without -- taking the lock, so a stray run could overwrite the artefact
-# triplet a release was in the middle of hashing. Setting KMONEY_RUN_ROOT gives a run its own tree,
-# which removes the contention rather than serialising it; the lock stays for the shared default.
-# Re-entrant: a suite started by `release-check` inherits the descriptor and proceeds.
+# Lock before touching the shared default run root. A distinct `KMONEY_RUN_ROOT` isolates a run;
+# descendants of the release gate inherit the descriptor and re-enter.
 # shellcheck source=kamu-money-pg/yb/workspace-lock.sh
 source ./kamu-money-pg/yb/workspace-lock.sh
 workspace_lock "$(basename "$0")" || exit 1
@@ -50,12 +41,8 @@ trap cleanup EXIT INT TERM HUP
 
 # Built by the ordinary test matrix, so the extension under measurement is the one the tests ran.
 #
-# RESOLVED TO AN IMAGE ID ONCE, AND THE ID IS WHAT RUNS. The tag is mutable and this daemon is
-# shared across several organisations' runners: this script used to `docker image inspect` the tag
-# for the ID it printed into the log and then `docker run` the TAG, so a retag between those two
-# lines would label a measurement with one image's ID while timing another's code. Even without a
-# race it never checked that the image was built from the source it was about to name.
-# `test-matrix.sh` already fixes exactly this class with `--iidfile` and runs the ID.
+# Resolve the mutable tag once and run the resulting image ID. The revision-label check below
+# also ties the measurement to the named source revision.
 TAG="kamu-money-pg:pg${PG}"
 if ! IMAGE="$(docker image inspect --format '{{ .Id }}' "$TAG" 2>/dev/null)"; then
     echo "bench-pg: $TAG is not built. Run 'just test-pg $PG' first -- this measures the same" >&2
@@ -63,15 +50,9 @@ if ! IMAGE="$(docker image inspect --format '{{ .Id }}' "$TAG" 2>/dev/null)"; th
     exit 2
 fi
 
-# AND THE IMAGE MUST BE THIS SOURCE. `test-matrix.sh` stamps every image it builds with
-# `kamu-money-pg.revision`. Without this check the log's `source sha` line is the sha of whatever
-# is checked out NOW, attached to timings from whenever that image happened to be built -- which
-# is a provenance claim the file cannot support, in the fixture that exists because E20's figures
-# could not be reproduced.
+# Require the tested image to match this source revision.
 REVISION="$(git rev-parse HEAD 2>/dev/null || echo UNKNOWN)"
-# `--short`, because that is what `test-matrix.sh` stamps. Comparing against the full sha made
-# this refuse EVERY image on its first run -- caught by exercising it rather than by reading it,
-# which is the argument for exercising it.
+# The test matrix stamps the short revision.
 REVISION_SHORT="$(git rev-parse --short HEAD 2>/dev/null || echo nogit)"
 IMAGE_REVISION="$(docker image inspect --format '{{ index .Config.Labels "kamu-money-pg.revision" }}' "$IMAGE" 2>/dev/null || true)"
 if [ "$IMAGE_REVISION" != "$REVISION_SHORT" ]; then
@@ -87,7 +68,7 @@ if [ "$IMAGE_REVISION" != "$REVISION_SHORT" ]; then
 fi
 
 {
-    echo "kmoney SQL cost benchmark -- NOT A GATE, no pass/fail threshold"
+    echo "kmoney SQL cost benchmark -- informational; no pass/fail threshold"
     echo
     echo "  measured at    $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "  source sha     $REVISION"

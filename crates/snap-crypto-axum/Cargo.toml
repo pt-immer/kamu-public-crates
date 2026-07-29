@@ -1,7 +1,7 @@
 [package]
 name = "kamu-snap-crypto-axum"
-version = "2.2.0"
-description = "axum/tower inbound-verify layer for kamu-snap-crypto SNAP BI signatures"
+version = "3.0.0"
+description = "http request-parts adapter for kamu-snap-crypto SNAP BI signature verification"
 documentation = "https://docs.rs/kamu-snap-crypto-axum"
 categories = ["web-programming::http-server", "authentication", "api-bindings"]
 keywords = ["snap-bi", "axum", "crypto", "signature", "verify"]
@@ -16,6 +16,10 @@ rust-version.workspace = true
 [dependencies]
 http.workspace = true
 kamu-snap-crypto = { workspace = true, features = ["snap-bi"] }
+
+[dev-dependencies]
+axum.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true

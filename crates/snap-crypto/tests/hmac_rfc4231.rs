@@ -6,7 +6,7 @@
 use kamu_snap_crypto::HmacSigner;
 
 fn check(secret: &[u8], data: &[u8], expected_hex: &str) {
-    let signer = HmacSigner::new(secret).expect("HMAC init");
+    let signer = HmacSigner::new(secret);
     let sig = signer.sign(data);
     assert_eq!(sig.to_hex_lower(), expected_hex);
     // Round-trip verify against the same payload.
@@ -77,7 +77,7 @@ fn rfc4231_case_7_large_key_and_data() {
 
 #[test]
 fn verify_rejects_wrong_signature() {
-    let signer = HmacSigner::new(b"secret").unwrap();
+    let signer = HmacSigner::new(b"secret");
     let sig = signer.sign(b"payload-a");
     let result = signer.verify(&sig, b"payload-b");
     assert!(matches!(result, Err(kamu_snap_crypto::Error::SymmetricVerifyFailed)));
@@ -85,8 +85,8 @@ fn verify_rejects_wrong_signature() {
 
 #[test]
 fn verify_rejects_wrong_secret() {
-    let signer_a = HmacSigner::new(b"secret-a").unwrap();
-    let signer_b = HmacSigner::new(b"secret-b").unwrap();
+    let signer_a = HmacSigner::new(b"secret-a");
+    let signer_b = HmacSigner::new(b"secret-b");
     let sig = signer_a.sign(b"payload");
     let result = signer_b.verify(&sig, b"payload");
     assert!(matches!(result, Err(kamu_snap_crypto::Error::SymmetricVerifyFailed)));
@@ -94,7 +94,7 @@ fn verify_rejects_wrong_secret() {
 
 #[test]
 fn signer_is_shareable_across_calls() {
-    let signer = HmacSigner::new(b"secret").unwrap();
+    let signer = HmacSigner::new(b"secret");
     let sig_1 = signer.sign(b"first");
     let sig_2 = signer.sign(b"second");
     assert_ne!(sig_1, sig_2);

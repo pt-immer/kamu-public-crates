@@ -5,7 +5,7 @@
 #   kamu-money-pg/yb/run-yb.sh [yb-image] [artifact-dir] [out-file]
 #
 # Prereq: kamu-money-pg/yb/out/{kmoney.so,kmoney.control,kmoney--*.sql} built by
-#   docker build -f kamu-money-pg/yb/Dockerfile --target artifact -o kamu-money-pg/yb/out .
+#   just pg yb-build
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
@@ -19,21 +19,17 @@ cd "$(dirname "$0")/../.."   # repo root
 source "$(dirname "$0")/workspace-lock.sh"
 workspace_lock "$(basename "$0")" || exit 1
 
-# Default resolves the mutable tag to an immutable digest rather than passing the tag through
-# (review-3 N9). Every Justfile path already passes a resolved "$YB_REF"; this closes the
-# hand-invocation route, which was the only one left that could straddle a retag.
+# Resolve the default mutable tag to an immutable digest.
 YB_IMAGE="${1:-$(./kamu-money-pg/yb/yb-image.sh)}"
-ART="${2:-kamu-money-pg/yb/out}"
-# Under out/, matching what the Justfile passes and what .gitignore covers (review-3 N10). The
-# old default wrote to kamu-money-pg/yb/out-yb.txt -- one directory up, NOT ignored, so a hand run
-# left an untracked battery output sitting in the tree.
-OUT="${3:-kamu-money-pg/yb/out/out-yb.txt}"
+RUN_ROOT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}"
+ART="${2:-$RUN_ROOT}"
+# Keep default output under the ignored run root.
+OUT="${3:-$RUN_ROOT/out-yb.txt}"
 SQLFILE="${4:-kamu-money-pg/yb/abi_battery.sql}"
 
 # Baked or copied, verified by hash either way -- one implementation, shared with the cluster
 # harnesses. install.sh sources artifact.sh, which resolves the triplet by exact name against the
-# build's manifest (three independent recursive `find | head -1`s could pair a new control file
-# with an old library, and a mismatched triplet installs cleanly).
+# build's manifest.
 # shellcheck source=kamu-money-pg/yb/install.sh
 source ./kamu-money-pg/yb/install.sh
 
@@ -56,12 +52,8 @@ docker run -d --name "$NAME" --label "kamu-money-pg.ybtest=$RUN_ID" \
     --tserver_flags="memory_limit_hard_bytes=$YB_TSERVER_MEM_BYTES" \
     --master_flags="memory_limit_hard_bytes=$YB_MASTER_MEM_BYTES" >/dev/null
 
-# yugabyted binds YSQL to the node's advertised address, not loopback -- discover it.
-# READINESS IS A QUERY THAT ANSWERED, NOT AN ADDRESS THAT RESOLVED. The guard after this loop
-# used to be `[ -n "$HOST" ]`, and `hostname -i` succeeds within a second of the container
-# starting -- so a node whose YSQL never came up at all still reported ready, four minutes later,
-# and the real failure surfaced as a confusing error from whatever ran next. The loop already
-# broke only on a successful `SELECT 1`; nothing recorded that it had.
+# yugabyted binds YSQL to the node's advertised address, not loopback. Readiness requires a
+# successful `SELECT 1`; resolving an address alone is insufficient.
 HOST=""
 READY=0
 for _ in $(seq 1 120); do
@@ -86,21 +78,11 @@ echo "kmoney present on YB ($YB_INSTALL_MODE, sha256 $YB_INSTALL_SHA); running $
 # The client's exit status is CAPTURED, not erased. The previous unconditional `|| true` threw
 # away the one signal that distinguishes "the battery ran and some probes errored as designed"
 # from "ysqlsh could not connect / the file was missing / the backend died" -- under
-# ON_ERROR_STOP=0 an expected SQL error does NOT set the status, so a nonzero one is structural
-# (review F4).
+# With ON_ERROR_STOP=0 an expected SQL error does not set the status, so a nonzero one is
+# structural.
 #
-# THE STREAMS ARE MERGED INSIDE THE CONTAINER, and that is not a style choice. `docker exec`
-# carries stdout and stderr as two SEPARATELY MULTIPLEXED channels over one connection, so a
-# host-side `2>&1` merges two streams that have already lost their relative order in transit --
-# it can only interleave whatever arrived, whenever it arrived. This script merged on the host
-# until 2026-07-26, and it produced exactly the failure that predicts: the 2026-07-25 release run
-# failed `yb-ab` with a single diff hunk in which one expected ERROR line and the `== 4. ... ==`
-# section marker that should follow it had swapped places. Both engines had independently passed
-# all 20 oracle assertions; re-running against the same commit, artifacts and image digest passed
-# byte-exactly. A gate that fails once in N on stream scheduling is not a gate -- the next person
-# re-runs it, it goes green, and the re-run teaches everyone that red means "try again".
-#
-# `run-yb-regress.sh` already knew this and merges inside the container (it measured the same
+# Merge stdout and stderr inside the container. `docker exec` transports them as separately
+# multiplexed streams, so host-side `2>&1` cannot recover their original order.
 # defect putting expected-error lines one `\echo` section late, in 2 of 11 cases). The fix here is
 # that pattern, not a new idea: one `bash -c` in the container, `2>&1` applied by that shell to
 # ysqlsh's own two file descriptors, so ordering is settled at the source and the host only ever

@@ -3,17 +3,12 @@
 #
 #   kamu-money-pg/yb/run-yb-soak.sh [minutes] [yb-image] [artifact-dir]
 #
-# P2.2 of the readiness plan. run-yb-concurrent.sh answers "does conservation hold under
-# concurrency?"; this answers "does it still hold at minute forty?" -- which is a different
-# question, because the failures it is looking for are cumulative rather than immediate: a slow
-# leak of one canonical unit per thousand transfers, a palloc that is never freed inside a
-# long-lived backend, a tablet that splits under sustained write pressure and loses a row.
+# Unlike the bounded concurrent suite, this run looks for cumulative failures: slow unit loss,
+# long-lived backend allocation growth, and tablet changes under sustained writes.
 #
-# THE INVARIANT IS CHECKED EVERY ROUND, NOT ONLY AT THE END. A soak that reports one number after
-# an hour cannot say WHEN it broke, and "somewhere in the last hour" is not a debuggable fact.
+# Check conservation every round so the first failing interval is known.
 #
-# LOGS GO UNDER kamu-money-pg/yb/out/soak/, NOT /tmp. /tmp is tmpfs on this fleet, so a long run's
-# evidence would not survive the reboot that a long run makes more likely.
+# Logs live under `kamu-money-pg/yb/out/soak/`, not ephemeral `/tmp`.
 #
 # The default duration is a smoke run. A real soak is `just yb-soak 120` or longer, on purpose, by
 # someone who means it. POSITIONAL -- `just` has no name=value call syntax, and `minutes=120` would
@@ -21,20 +16,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
-# ONE WRITER AT A TIME, TAKEN BEFORE ANYTHING SHARED IS TOUCHED. This script reads and writes under
-# ${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}, which with that variable unset is the single tree
-# every other suite also uses; a 2026-07-26 review found several entry points reaching those paths
-# before -- or entirely without -- taking the lock, so a stray run could overwrite the artefact
-# triplet a release was in the middle of hashing. Setting KMONEY_RUN_ROOT gives a run its own tree,
-# which removes the contention rather than serialising it; the lock stays for the shared default.
-# Re-entrant: a suite started by `release-check` inherits the descriptor and proceeds.
+# Lock before touching the shared default run root. A distinct `KMONEY_RUN_ROOT` isolates a run;
+# descendants of the release gate inherit the descriptor and re-enter.
 # shellcheck source=kamu-money-pg/yb/workspace-lock.sh
 source ./kamu-money-pg/yb/workspace-lock.sh
 workspace_lock "$(basename "$0")" || exit 1
 
 MINUTES="${1:-3}"
 YB_IMAGE="${2:-$(./kamu-money-pg/yb/yb-image.sh)}"
-ART="${3:-kamu-money-pg/yb/out}"
+RUN_ROOT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}"
+ART="${3:-$RUN_ROOT}"
 WORKERS=6
 ACCOUNTS=12
 SEED_EACH="IDR 10000.00"
@@ -43,7 +34,7 @@ N=3
 # shellcheck source=kamu-money-pg/yb/cluster.sh
 source ./kamu-money-pg/yb/cluster.sh
 
-OUT="kamu-money-pg/yb/out/soak"
+OUT="$RUN_ROOT/soak"
 mkdir -p "$OUT"
 LOG="$OUT/soak.log"
 : > "$LOG"
@@ -56,10 +47,8 @@ yb_sql 0 -c 'CREATE EXTENSION kmoney' >/dev/null
 yb_sql 0 -c "CREATE TABLE account (id int PRIMARY KEY, balance kmoney('IDR')) SPLIT INTO 6 TABLETS" >/dev/null
 yb_sql 0 -c "INSERT INTO account SELECT g, '$SEED_EACH'::kmoney FROM generate_series(1, $ACCOUNTS) g" >/dev/null
 
-# The ROW AGGREGATE (R2-F4b), not `kmoney_sum(VARIADIC array_agg(...))`. A soak is the right place
-# to run the production totalling path: it executes this every fifteen seconds for the whole run,
-# against a table being written concurrently, which is exactly the shape a reconciliation query has
-# and exactly where a leak in the transition state would show up.
+# Exercise the row aggregate every fifteen seconds against a table under concurrent writes, matching
+# the shape of a reconciliation query.
 TOTAL_SQL="SELECT sum(balance)::text FROM account"
 OPENING="$(yb_sql 0 -c "$TOTAL_SQL" | tr -d ' ')"
 
@@ -116,8 +105,7 @@ SQL
             if [ "$rc" -eq 0 ]; then
                 committed=$((committed + 1)); exhausted=0; break
             fi
-            # The classifier is cluster.sh's `YB_RETRYABLE`, shared with run-yb-concurrent.sh.
-            # This script used to carry its own copy, and that copy was already missing `Restart`.
+            # cluster.sh owns the retry classifier shared by all concurrent suites.
             if printf '%s' "$out" | grep -qiE "$YB_RETRYABLE"; then
                 retried=$((retried + 1)); sleep 0.$((RANDOM % 3 + 1)); continue
             fi
@@ -125,9 +113,7 @@ SQL
             printf '%s %s %s\n' "$attempted" "$committed" "$retried" > "$OUT/worker-$w.stat"
             return 1
         done
-        # EXHAUSTING THE RETRY BUDGET IS A FAILURE, not a transfer that quietly did not happen.
-        # Falling through the loop used to be indistinguishable from success, which is precisely
-        # what let a soak that committed nothing report that conservation held.
+        # Exhausting the retry budget is a failed transfer, not a successful no-op.
         if [ "$exhausted" -eq 1 ]; then
             echo "soak worker $w: RETRY BUDGET EXHAUSTED after $attempt attempts: $(printf '%s' "$out" | head -2 | tr '\n' ' ')" >&2
             printf '%s %s %s\n' "$attempted" "$committed" "$retried" > "$OUT/worker-$w.stat"

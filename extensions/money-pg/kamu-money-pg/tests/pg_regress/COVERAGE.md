@@ -1,26 +1,17 @@
 # Case-suite coverage of the `#[pg_test]` contract
 
-This file is the manifest mapping every `#[pg_test]` in `kamu-money-pg` to the SQL case that
-restates it. It is **machine-checked**: `kamu-money-core/tests/repo_hygiene.rs`
-(`the_case_suite_accounts_for_every_pg_test`) parses **every `.rs` file under
-`kamu-money-pg/src/`** for `#[pg_test]` and `#[pg_test(...)]` attributes, reads the table below,
-and fails if a test is missing from it, if a named case file does not exist, or if the table names
-a test that no longer does.
-
-It scans the crate rather than `lib.rs` because the 2026-07-27 module split moved the suite beside
-the code it tests — `ops.rs`, `wire.rs`, `typmod.rs` and the rest. A manifest check keyed to one
-file stops checking the moment the tests move, which is exactly when one can go missing.
-
-That check runs in `just test` — no Docker, no database. It is the mechanism the readiness plan
-asks for: *a skipped test that is silently counted as a pass is worse than an absent one.*
+This manifest maps every `#[pg_test]` in `kamu-money-pg` to the portable SQL case that restates it.
+`hygiene/tests/pg_cases.rs` recursively scans `kamu-money-pg/src/`, checks both directions of
+the mapping, verifies every referenced SQL/golden pair, and requires a reason for each
+`NOT-PORTABLE` row. Its test output derives the total, portable count, exception count, and source
+locations from the current tree; none is a maintained constant.
 
 ## Why the port exists
 
-`cargo pgrx test` manages its own PostgreSQL and cannot be aimed at YugabyteDB. Until this suite,
-everything known about `kmoney` on YugabyteDB came from one ~112-line script
-(`kamu-money-pg/yb/abi_battery.sql`), while the 54 tests that actually encode this type's contract
-had only ever run on PGDG PostgreSQL. Restating them as `sql/` + `expected/` pairs makes them run
-against any live server: a single YB node, any node of a YB cluster, or the stock-PG15 reference.
+`cargo pgrx test` manages its own PostgreSQL and cannot target YugabyteDB.
+Restating the contract as `sql/` + `expected/` pairs makes the same cases run
+against a single YB node, every node of a YB cluster, and the stock-PG15
+reference.
 
 ## What is deliberately different from the Rust originals
 
@@ -33,29 +24,27 @@ against any live server: a single YB node, any node of a YB cluster, or the stoc
   top), exactly as the Rust test does. The measured values 7 and 23 are not pinned, because
   `numeric`'s encoding is PostgreSQL's business and pinning it here would turn a change in someone
   else's type into a `kmoney` divergence.
-- **Crafted `recv` payloads.** The Rust tests build the malformed BINARY COPY files inside the
-  backend with `std::fs`. `sql/09-wire.setup.sh` writes them on the server from pinned constants
-  instead. That is stronger provenance, not weaker: the payload is fixed in the repository rather
-  than produced by the code under test — and `09-wire.sql` asserts that a live `kmoney_send` still
-  emits exactly those bytes, so the two cannot drift apart.
+- **Crafted `recv` payloads.** The Rust tests build malformed BINARY COPY
+  fixtures inside the backend. `sql/09-wire.setup.sh` writes equivalent pinned
+  fixtures on the server; `09-wire.sql` also checks live `kmoney_send` bytes.
 
-**Nothing is unported.** If a test ever cannot be expressed here, its row must read
-`NOT-PORTABLE: <reason>` and the guard accepts it — but it has to say so out loud.
+If a test cannot be expressed here, its row must read
+`NOT-PORTABLE: <reason>`. Silent omission fails the hygiene guard.
 
 ## The map
 
 | # | `#[pg_test]` | Case | Assertion label in the golden |
 |---|---|---|---|
 | 1 | `kmoney_is_eighteen_bytes_with_no_header` | `01-layout` | `stored=18 in_memory=18` |
-| 2 | `the_catalog_says_fixed_length_plain_and_byte_aligned` | `01-layout` | `18/f/c/p` |
+| 2 | `the_catalog_says_fixed_length_plain_and_byte_aligned` | `01-layout` | both types report `18/f/c/p` |
 | 3 | `the_size_tradeoff_against_numeric_is_measured_not_assumed` | `01-layout` | `kmoney_fixed_at_18=` |
 | 4 | `the_size_does_not_depend_on_the_value` | `01-layout` | `distinct_sizes=1` |
 | 5 | `the_text_form_matches_money_core` | `02-text` | the five-form line |
 | 6 | `numeric_silently_rounds_four_e_minus_nineteen_to_zero` | `01-layout` | `numeric_rounds_4e_minus_19_to_zero=true` |
 | 7 | `kmoney_refuses_what_numeric_silently_rounds` | `02-text` | ERROR, 19 fractional digits |
 | 8 | `the_domain_top_round_trips` | `02-text` | `IDR 999999999999999999.999999999999999999` |
-| 9 | `one_unit_past_the_domain_is_refused` | `02-text` | ERROR, money domain overflow |
-| 10 | `an_unknown_currency_is_refused_at_the_boundary` | `02-text` | ERROR, not a money literal |
+| 9 | `one_unit_past_the_domain_is_refused` | `02-text` | ERROR, outside supported range |
+| 10 | `an_unknown_currency_is_refused_at_the_boundary` | `02-text` | ERROR, invalid money literal |
 | 11 | `addition_within_one_currency_is_exact` | `03-arith` | `USD 11.00 \| USD 10.00` |
 | 12 | `addition_is_exact_at_one_unit_of_the_eighteenth_decimal` | `03-arith` | the domain top |
 | 13 | `addition_across_currencies_is_refused_at_runtime` | `03-arith` | ERROR, USD + IDR |
@@ -110,6 +99,7 @@ against any live server: a single YB node, any node of a YB cluster, or the stoc
 | 62 | `two_type_modifiers_are_refused` | `08-typmod` | ERROR, got 2 |
 | 63 | `typmod_does_not_reach_operators_so_the_value_check_still_fires` | `08-typmod` | ERROR, IDR + USD |
 | 64 | `the_planner_splits_the_sum_aggregate_and_both_plans_agree` | NOT-PORTABLE: it asserts a stock-PostgreSQL PLAN (`Partial Aggregate` + `Finalize Aggregate`), and YugabyteDB's planner need not choose the same shape — which is the whole reason `04-sum` drives the transition and combine functions by hand instead. Running on PG15–18 via `just test-pg` is the point: it catches a `CREATE AGGREGATE` declared so that partial aggregation is never available, which every hand-driven test passes straight through. | — |
+| 65 | `the_conversion_out_of_mixed_refuses_corrupt_units` | NOT-PORTABLE: SQL text and binary receive reject out-of-domain units before they can become a `kmoney_mixed`; this defense-in-depth test constructs the otherwise unreachable corrupt Rust value directly. | — |
 
 ## Running it
 

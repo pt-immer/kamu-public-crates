@@ -3,22 +3,14 @@
 #
 #   kamu-money-pg/yb/run-yb-concurrent.sh [yb-image] [artifact-dir] [workers] [transfers-each]
 #
-# P0.3 of the readiness plan (gap G4). Nothing in this repository had ever run two sessions at
-# once, on any engine. That matters more on YugabyteDB than on PostgreSQL: the transaction layer
-# is DocDB, not PostgreSQL's, so snapshot semantics, conflict detection and the retry contract are
-# a different implementation from the one the 54 tests exercise -- and they are the layer a
-# double-entry ledger's correctness rests on.
+# YugabyteDB's DocDB transaction layer owns snapshot semantics, conflict detection, and retry
+# behavior, so in-backend PostgreSQL tests cannot establish this contract.
 #
-# THE CENTRAL ASSERTION IS CONSERVATION. N workers move money between accounts concurrently; each
-# transfer debits one row and credits another inside one BEGIN..COMMIT. Afterwards the sum over
-# every account must equal the seeded total EXACTLY -- computed with kmoney_sum, which accumulates
-# in I256 and so cannot lose a unit to its own arithmetic. A torn 18-byte payload, a lost update,
-# or a half-applied distributed transaction all show up as a total that moved.
+# N workers transfer money between accounts. The exact final sum must equal the seed; a torn
+# payload, lost update, or half-applied transaction changes that total.
 #
-# AND A POSITIVE CONTROL FOR THE RETRY PATH. YugabyteDB surfaces retryable errors PostgreSQL does
-# not, and a run that happened to hit zero conflicts would report green while proving nothing
-# about them. So one probe DELIBERATELY forces a serialization failure and fails if it does not
-# get one -- the same reason assert-battery-selftest.sh exists.
+# A positive control forces a serialization failure so a conflict-free run cannot leave retry
+# handling untested.
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
@@ -71,8 +63,7 @@ yb_sql 0 -c "CREATE TABLE ledger (seq bigserial PRIMARY KEY, account_id int NOT 
 
 # The ROW AGGREGATE, not `kmoney_sum(VARIADIC array_agg(...))`. This is the path an application
 # actually writes to total a ledger column, so it is the path that should be under concurrent load
-# here. The array_agg form materialises every row first and was only ever a stand-in for the
-# aggregate R2-F4 removed; R2-F4b brought the aggregate back with a wide transition state.
+# here. The array_agg form materialises every row first.
 #
 # The ledger-leg check further down deliberately KEEPS the variadic form, so conservation is
 # cross-checked by two different entry points rather than by one function agreeing with itself.
@@ -164,13 +155,9 @@ shopt -u nullglob
 distinct_nodes="$(printf '%s' "$nodes_used" | sort -u | grep -c . || true)"
 if [ "$worker_fail" -eq 0 ]; then
     ok "$committed transfers committed across $WORKERS workers on $distinct_nodes node(s) ($retries retryable conflicts retried)"
-    # Said out loud, because the alternative is that a reader takes this probe as evidence about
-    # the conflict path when it may not have touched it at all. Whether these transfers happen to
-    # collide depends on scheduling; probe 5 forces one on purpose and is the actual evidence.
+    # Scheduling may produce no conflict; probe 5 deterministically covers retry.
     [ "$retries" -eq 0 ] && echo "        (no conflicts arose here -- probe 5 forces one, and is what covers the retry path)"
-    # THE SPREAD IS ASSERTED, NOT NARRATED. The line above claimed "on $N nodes" for this
-    # harness's entire history while every worker in fact talked to node 0, and no probe could
-    # tell. With more workers than nodes, every node must have taken traffic.
+    # With at least one worker per node, require every node to receive traffic.
     want_nodes=$(( WORKERS < N ? WORKERS : N ))
     if [ "$distinct_nodes" -eq "$want_nodes" ]; then
         ok "the workers really did spread: $distinct_nodes distinct node(s) took traffic"

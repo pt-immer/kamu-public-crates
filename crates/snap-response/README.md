@@ -3,146 +3,155 @@
 [![Crates.io][badge-crates]][link-crates]
 [![docs.rs][badge-docs]][link-docs]
 [![CI][badge-ci]][link-ci]
-
 [![License][badge-license]][link-license]
 [![MSRV][badge-msrv]][link-msrv]
 
-Framework-agnostic response envelope + error taxonomy for Bank Indonesia SNAP BI.
+Valid-by-construction responses for Bank Indonesia SNAP BI.
 
-Part of the [`kamu-public-crates`](https://github.com/pt-immer/kamu-public-crates) workspace.
+Part of the [`kamu-public-crates`](https://github.com/pt-immer/kamu-public-crates)
+workspace.
 
-## What this crate is
+## Response states
 
-| Item | Purpose |
-|---|---|
-| `SnapResponse<T>` | Typed envelope + optional typed payload (flat JSON wire shape) |
-| `SnapEnvelope` | `responseCode` + `responseMessage` |
-| `Error` | 61-variant SNAP BI taxonomy + feature-gated `Crypto` bridge |
-| `Category` | `Success` / `Message` / `Business` / `System` |
-| `ResponseCode` | Defensive parser + inverse classifier |
-| `ServiceCode` | Validated `0..=99` newtype |
+| State | Meaning | Framework status |
+| --- | --- | --- |
+| `Success` | Valid 2xx code and typed payload | Code's status |
+| `Failure` | Valid non-2xx code and optional `ErrorClass` | Code's status |
+| `Malformed` | Invalid upstream code preserved verbatim | Always 500 |
 
-## The `responseCode` formula
+All three states serialize to SNAP BI's flat JSON object. Private state fields
+prevent local construction of success-without-payload or failure-with-payload.
 
 ```text
-7 digits: HHH SS CC
-         │   │  │
-         │   │  └── case code (00..=99) — per-variant per-spec
-         │   └───── service code (00..=99) — per-endpoint
-         └───────── HTTP status (200, 401, 403, 404, 405, 409, 429, 500, 504)
+responseCode = HHH SS CC
+               │   │  └─ case code (00–99)
+               │   └──── service code (00–99)
+               └──────── HTTP status
 ```
 
-`SnapResponse::ok(payload, ServiceCode::new(11).unwrap(), 0)` →
-`responseCode = "2001100"`.
-
-`Error::Unauthorized("...".into()).response_code(ServiceCode::new(11).unwrap())` →
-`ResponseCode("4011100")`.
-
-## 30-second quickstart — server side
+## Server
 
 ```rust
 use kamu_snap_response::{Error, ServiceCode, SnapResponse};
+use serde::Serialize;
 
-let svc = ServiceCode::new(11).unwrap();
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Balance {
+    account_no: String,
+    current_balance: String,
+}
 
-// Success
-let ok: SnapResponse<MyData> = SnapResponse::ok(my_data, svc, 0);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let service = ServiceCode::try_from(11)?;
 
-// Error
-let err: SnapResponse<MyData> = SnapResponse::err(Error::InsufficientFunds, svc);
+    let success = SnapResponse::success(
+        Balance {
+            account_no: "1234".into(),
+            current_balance: "99000.00".into(),
+        },
+        service,
+    )?;
+    assert_eq!(success.response_code(), "2001100");
+
+    let failure: SnapResponse<Balance> =
+        SnapResponse::failure(Error::InsufficientFunds, service);
+    assert_eq!(failure.response_code(), "4031114");
+
+    Ok(())
+}
 ```
 
-## 30-second quickstart — client side
+`SnapResponse::success` accepts JSON objects and unit. It rejects scalar,
+sequence, `responseCode`, and `responseMessage` payloads before a response is
+constructed.
+
+## Client
 
 ```rust
 use kamu_snap_response::SnapResponse;
+use serde::Deserialize;
 
-let wire: &str = "...";
-let resp: SnapResponse<MyData> = serde_json::from_str(wire)?;
+#[derive(Deserialize)]
+struct Payload {
+    value: String,
+}
 
-// Defensive parsing: malformed responseCode preserves raw()
-println!("{}", resp.envelope.response_code.raw());
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let wire = r#"{
+        "responseCode": "2001100",
+        "responseMessage": "Successful",
+        "value": "ready"
+    }"#;
+    let response: SnapResponse<Payload> = serde_json::from_str(wire)?;
 
-// Classify back to a typed Error variant for retry policy
-if let Some(err) = resp.envelope.response_code.classify() {
-    use kamu_snap_response::Category::*;
-    match err.category() {
-        Business => println!("do not retry: {err}"),
-        System => println!("retry with backoff: {err}"),
+    match response {
+        SnapResponse::Success(success) => assert_eq!(success.payload().value, "ready"),
+        SnapResponse::Failure(failure) => {
+            eprintln!("{}: {}", failure.response_code(), failure.response_message());
+        }
+        SnapResponse::Malformed(malformed) => {
+            eprintln!("malformed code: {}", malformed.response_code());
+        }
         _ => {}
     }
+
+    Ok(())
 }
-# Ok::<(), serde_json::Error>(())
 ```
 
-Full example: `examples/client_parse.rs`.
+`ErrorClass` classifies all 61 standard error pairs without fabricating context.
+Unknown but syntactically valid codes remain `Failure` with no known class.
 
-## Defensive parsing
+## Response-code layers
 
-`ResponseCode::parse` is **total** — never errors. Malformed wire codes preserve `raw()` while `http()` / `service()` / `case()` return `None`:
+| Type | Contract |
+| --- | --- |
+| `ValidResponseCode` | All seven ASCII digits and HTTP status validated |
+| `RawResponseCode` | Verbatim malformed upstream value |
+| `ResponseCode` | Total parser containing one of the above |
+| `ServiceCode` / `CaseCode` | Two-digit validated components |
 
-```rust
-use kamu_snap_response::ResponseCode;
+## Crypto feature
 
-let code = ResponseCode::parse("500000"); // BRI source-doc 6-digit defect
-assert_eq!(code.raw(), "500000");
-assert_eq!(code.http(), None);
-```
+The optional `crypto` feature converts `kamu-snap-crypto` errors while retaining
+their operational class:
 
-This closes the prior bug where deserialisation hard-failed on a malformed code, losing the entire response.
+- authentication → 401;
+- invalid request → 400;
+- local key/configuration or unknown internal failure → 500.
 
-## Inverse classifier
-
-`ResponseCode::classify()` maps received wire codes back to typed `Error` variants:
-
-```rust
-use kamu_snap_response::{Error, ResponseCode};
-
-let code = ResponseCode::parse("4011100");
-assert!(matches!(code.classify(), Some(Error::Unauthorized(_))));
-```
-
-String-bearing variants (e.g. `Unauthorized(String)`) reconstruct with an empty string — the wire `responseMessage` is still available via `envelope.response_message` for display.
-
-## `#[non_exhaustive]`
-
-Both `Error` and `Category` are `#[non_exhaustive]`. Future SNAP BI variants can add cases without a breaking change.
-
-## Feature flags
-
-| Feature | Default | Purpose |
-|---|---|---|
-| `crypto` | off | Enables `Error::Crypto(#[from] kamu_snap_crypto::Error)` |
-
-Enable when server handlers want to propagate crypto failures into the SNAP error taxonomy.
+Wire messages never include upstream key-parser or decoder details. The source
+remains available through the Rust error chain for server-side diagnostics.
 
 ## Framework adapters
 
-`Responder` (actix-web) and `IntoResponse` (axum) impls live in:
+- [`kamu-snap-response-actix`](../snap-response-actix)
+- [`kamu-snap-response-axum`](../snap-response-axum)
 
-- `kamu-snap-response-actix`
-- `kamu-snap-response-axum`
+Both adapters serialize before applying the response status and return HTTP 500
+if serialization fails.
 
-Both are thin and defensive — no `.unwrap()` on the response path.
+## Migrating from 2.x
 
-## Migration from v1.x
+| 2.x | 3.x |
+| --- | --- |
+| `SnapResponse::ok(payload, service, case)` | `SnapResponse::success(payload, service)?` or `success_with_case` |
+| `SnapResponse::err(error, service)` | `SnapResponse::failure(error, service)` |
+| `response.envelope.response_code` | `response.response_code()` |
+| `response.payload: Option<T>` | `response.payload()` or match `Success` |
+| `ResponseCode::classify() -> Option<Error>` | `Option<ErrorClass>` |
+| numeric panic-based constructors | `CaseCode` and fallible numeric constructors |
 
-| v1.x | v2.0 |
-|---|---|
-| `SNAPResponse<T>` | `SnapResponse<T>` |
-| `SNAPResponseCommon` | `SnapEnvelope` |
-| `ResponseError` / `Error` aliases | `Error` (one canonical name) |
-| `Error::Unathorized(s)` | `Error::Unauthorized(s)` (typo fixed) |
-| `error.get_http_status_code()` | `error.http_status()` |
-| `error.get_code(svc)` | `error.response_code(ServiceCode::new(svc).unwrap())` |
-| `Error::default()` → `GeneralError` | removed — construct explicitly |
-| `traced_guard!` macro | removed — use `?` + `Error::Crypto(#[from])` |
-| Custom Deserialize silently swallowed payload errors | propagates errors loudly |
+## Examples
+
+[`client_parse`](examples/client_parse.rs) parses success, failure, and malformed
+SNAP BI responses. Run it with `cargo run --example client_parse`.
 
 ## License
 
 Dual-licensed under either [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at
-your option (`MIT OR Apache-2.0`). Previously MIT-only in `pt-immer/lib-snap`.
+your option (`MIT OR Apache-2.0`).
 
 [badge-crates]: https://img.shields.io/crates/v/kamu-snap-response?style=flat-square&logo=rust
 [badge-docs]: https://img.shields.io/docsrs/kamu-snap-response?style=flat-square&logo=docs.rs&label=docs.rs

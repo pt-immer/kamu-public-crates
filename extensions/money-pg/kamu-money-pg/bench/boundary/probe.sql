@@ -1,32 +1,14 @@
--- What a pgrx call costs, and nothing else. NEVER a gate.
+-- Measure pgrx call-boundary cost. Never a gate.
 --
 -- Driven by kamu-money-pg/bench/boundary/in-container.sh (`just bench-boundary`).
 --
--- ============================================================================================
--- WHY THIS IS A SEPARATE FIXTURE FROM sql-cost.sql
+-- C and `#[pg_extern]` controls share the `bigint -> bigint` identity signature
+-- and fmgr dispatch; their difference isolates the pgrx wrapper. `generate_series`
+-- keeps DocDB out of the path while preserving YSQL's memory-context behavior.
 --
--- `sql-cost.sql` prices operations a schema actually performs, over a real table. This prices
--- the BOUNDARY: two functions with identical signatures, `bigint -> bigint`, each returning its
--- argument. One is five lines of C, one is a `#[pg_extern]`. Both pay fmgr dispatch; neither
--- does any work. The difference is pgrx's per-call wrapper and nothing else.
---
--- NO TABLE, ON PURPOSE, AND THIS IS THE POINT ON YUGABYTEDB. `generate_series` runs in the YSQL
--- backend, so DocDB is out of the path -- while the thread-local `YbCurrentMemoryContext` that
--- pgrx's wrapper touches on every call is exactly the same one. Over a real table YugabyteDB's
--- scan floor is ~378 ms against stock PostgreSQL's ~23 ms, and it is the floor's VARIANCE, not
--- its magnitude, that swamps a few nanoseconds: a large floor cancels on subtraction, an
--- unstable one does not. The distributed storage layer was never needed to measure the boundary.
---
--- THE SAMPLING IS sql-cost.sql's: a floor between every pair of operations, each operation
--- differenced against the mean of the floors either side of it, and the order rotated per pass.
--- The first version of this probe sampled sequentially and made a null C function measure
--- SLOWER than a null pgrx one, which is not a result about C -- it is proof the rows were never
--- compared to each other. E20 records that as its own failed benchmark.
---
--- SERIAL, ASSERTED. Wall time over N rows is time per row only if the rows went through one
--- process. The first attempt planned two workers and reported wall-clock-per-row as though it
--- were CPU-per-call.
--- ============================================================================================
+-- Sampling brackets each operation with floors and rotates order between passes
+-- to reduce drift bias. Parallel workers are disabled because wall time per row
+-- is meaningful only when one process executes the rows.
 \set ON_ERROR_STOP 1
 \pset pager off
 \timing off
@@ -39,7 +21,7 @@ CREATE EXTENSION IF NOT EXISTS kmoney;
 -- PostgreSQL, by the `boundary-build` Dockerfile stage on YugabyteDB. The path differs between
 -- them, so the caller names it rather than this file guessing: `-v c_noop_so=<path>`.
 -- A SENTINEL rather than `\quit`, because `\quit` ends the script with status 0 and the runner
--- would read that as a successful measurement that simply printed nothing. The bad path makes
+-- would read that as a successful measurement that printed nothing. The bad path makes
 -- CREATE FUNCTION fail, and `ON_ERROR_STOP` turns that into a non-zero exit.
 \if :{?c_noop_so}
 \else
@@ -88,14 +70,7 @@ DECLARE
   floor_q text := format('SELECT count(*) FROM generate_series(1,%s) g WHERE g > 0', n);
   -- ONLY THE `bigint` PAIR, AND THE MISSING ROWS ARE THE POINT.
   --
-  -- The first version of this file also measured `rs_noop_kmoney(kmoney)` and
-  -- `kmoney_hash(kmoney)` with a CONSTANT argument -- `'USD 1.25'::kmoney` -- to avoid
-  -- invalid-benchmark #1 in E20's table, where the predicate built its own argument by string
-  -- concatenation and timed the parser. It avoided that and walked into #2: both functions are
-  -- IMMUTABLE and the argument was constant, so the planner CONSTANT-FOLDED the call. It ran
-  -- once at plan time, never per row, and both rows measured 26-28 ns/call BELOW the floor in
-  -- 9 passes of 9 -- faster than doing nothing, which is the signature of an eliminated
-  -- expression, not of a fast function.
+  -- Constant `kmoney` arguments would let PostgreSQL fold these immutable calls at plan time.
   --
   -- The two forms are a vice. An argument that varies with `g` has to be BUILT from `g`, and
   -- building an 18-byte currency-tagged value costs hundreds of nanoseconds -- swamping the few
@@ -188,11 +163,8 @@ END $$;
 
 \echo
 \echo '=== ELIMINATION CHECK: a function that measures at or below the floor did not run. ==='
--- E20's first rule, enforced rather than written down. An IMMUTABLE function applied to a
--- constant is folded at plan time; a projection nothing consumes is dropped. Either way the
--- query measures the absence of the work, and the tell is a delta at or below zero. The first
--- version of THIS file hit it -- two rows at 26-28 ns/call below the floor in 9 of 9 passes --
--- while the comment above them explained how it had avoided a different invalid benchmark.
+-- An immutable constant call can fold at plan time, and an unused projection can disappear.
+-- A delta at or below the floor therefore invalidates the row.
 DO $$
 DECLARE bad text;
 BEGIN

@@ -12,12 +12,18 @@
 
 pub mod hash;
 pub mod headers;
+pub mod request;
 pub mod sign;
 pub mod string_to_sign;
 pub mod timestamp;
 
 pub use hash::{sha256_lower_hex, sha512_lower_hex};
 pub use headers::{OAuthHeaders, ServiceHeaders};
+pub use request::{
+    AUTHORIZATION, AccessToken, AuthorizationError, CanonicalPath, ExternalId, InputError, ServiceRequest,
+    ServiceRequestParts, ServiceVerificationError, Signed, SnapTimestamp, Unsigned, X_SIGNATURE, X_TIMESTAMP,
+    verify_service_request,
+};
 pub use sign::{sign_oauth, sign_service, verify_oauth, verify_service};
 pub use string_to_sign::{OAuthStringToSign, ServiceStringToSign};
 pub use timestamp::{Precision, format_jakarta, now_jakarta_ms, now_jakarta_seconds};

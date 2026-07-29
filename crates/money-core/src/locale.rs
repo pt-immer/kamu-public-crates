@@ -1,59 +1,41 @@
-//! The display form: symbol, grouping, and a **minimum** fraction width. (DESIGN.md C2)
+//! Locale-aware display: symbol, grouping, and a minimum fraction width.
 //!
 //! # Why this is not `Display`
 //!
-//! [`Display`](core::fmt::Display) is **frozen**. It backs five consumers — itself, the serde
-//! wire (C7), `kmoney`'s input/output functions (C8), the `postgres`/`sqlx` stored form (C9),
-//! and the phase-4/phase-5 differential asserting all of them agree. Changing its output would
-//! change an on-disk format and a wire format at the same time, in one edit, silently.
+//! [`Display`](core::fmt::Display) is the canonical wire and database form. Locale-aware
+//! rendering is a separate entry point so decoration cannot change stored data.
 //!
-//! So locale-aware rendering is a **separate entry point** and never routes through `Display`.
-//! What the two DO share is `text::fixed_point_parts` — the digits themselves — which is the
-//! opposite of drift: the canonical form and every display form are allowed to disagree about
-//! separators and decoration, and are structurally unable to disagree about the number.
-//! (Deliberately not an intra-doc link: the function is `pub(crate)`, and linking public docs
-//! to a private item is a strict-rustdoc error.)
+//! Both forms share the fixed-point digit extraction. They may differ in separators and
+//! decoration, but not in the represented number.
 //!
 //! # The one rule that constrains everything here
 //!
-//! §0.1: **display pads, never rounds.** A policy owns the *minimum* fraction width; the
-//! value's own significant digits own the *maximum*. This is not a stylistic limit — a
-//! renderer that truncated to the display width would print a number that is not the stored
-//! number, which is the "second number claiming to be the money" the axiom exists to reject.
+//! Display pads but never rounds. A policy owns the minimum fraction width; the value's
+//! significant digits determine the maximum.
 //!
-//! IDR is the case the spec names and the reason the two widths cannot be one field: it
-//! **settles** at 2dp (ISO 4217) and **displays** at 0dp (market practice). A naive
-//! "display exponent" would render `16000.50` as `Rp 16.000`, losing half a thousand rupiah
-//! to a formatting decision.
+//! IDR settles at two decimal places but commonly displays with no required fraction. A value
+//! such as `16000.50` still renders its significant fractional digit.
 //!
 //! ```
 //! use kamu_money_core::iso::IDR;
 //! use kamu_money_core::locale::ID_IDR;
-//! use kamu_money_core::{Money, POW10_SCALE};
+//! use kamu_money_core::advanced::domain::POW10_SCALE;
+//! use kamu_money_core::Money;
 //!
-//! let m = Money::<IDR>::from_units(16_000 * POW10_SCALE + POW10_SCALE / 2).unwrap();
+//! let m = Money::<IDR>::try_from_units(16_000 * POW10_SCALE + POW10_SCALE / 2).unwrap();
 //! assert_eq!(m.to_string(), "IDR 16000.50");            // canonical: settles at 2
 //! assert_eq!(ID_IDR.render(m).unwrap(), "Rp 16.000,5"); // display: 0 minimum, nothing lost
 //! ```
 //!
-//! # What this module deliberately is not
+//! # Scope
 //!
-//! **Not a locale database.** The four constants below are worked examples, sized to cover
-//! prefix and suffix symbols, both separator conventions, and a currency whose display width
-//! is below its settlement width. Real locale data is CLDR's, it is large, and it changes on
-//! someone else's schedule; baking a snapshot of it into a money crate would create a table
-//! that rots silently. Build a [`LocalePolicy`] from whatever CLDR/ICU source the application
-//! already carries.
-//!
-//! **No accounting parentheses, no `NegativeStyle`.** C2 scopes this to symbol, grouping and
-//! minimum width, and §0.3 admits complexity only where it deletes a demonstrable failure. A
-//! leading `-` is unambiguous and correct; `(1,234.50)` is a preference. It was considered and
-//! cut, which is the same call that deleted `to_minor_units()` and `StaticCurrency::EXP`.
+//! This module is not a locale database. Its constants are examples; applications can build
+//! policies from their own CLDR or ICU data. Negative values always use a leading `-`.
 
-use crate::currency::StaticCurrency;
-use crate::domain::MoneyError;
+use crate::Money;
+use crate::StaticCurrency;
+use crate::error_impl::{AmountError, LocaleError};
 use crate::iso::Iso4217;
-use crate::money::Money;
 use crate::text::fixed_point_parts;
 
 /// Where the currency symbol sits relative to the digits.
@@ -69,35 +51,52 @@ pub enum SymbolPosition {
     Suffix,
 }
 
+/// A validated minimum fraction width for locale rendering.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+pub struct FractionDigits(u8);
+
+impl FractionDigits {
+    /// No required fractional digits.
+    pub const ZERO: Self = Self(0);
+
+    /// The largest supported width, equal to the crate's fixed scale.
+    pub const MAX: Self = Self(18);
+
+    /// Validate a minimum fraction width.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LocaleError::FractionDigitsOutOfRange`] above the fixed scale.
+    pub const fn try_new(digits: u8) -> Result<Self, LocaleError> {
+        if digits <= Self::MAX.0 {
+            Ok(Self(digits))
+        } else {
+            Err(LocaleError::FractionDigitsOutOfRange { digits })
+        }
+    }
+
+    /// Return the validated width.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+const _: () = assert!(crate::SCALE == 18);
+
 /// How one locale shows one currency.
 ///
-/// A policy is the pairing of a locale (separators, grouping, symbol placement) with a
-/// currency (the symbol, the display width) — which is why it carries an [`Iso4217`] and
-/// [`render`](LocalePolicy::render) is fallible. An Indonesian reader viewing a US dollar
-/// balance wants Indonesian separators around a dollar symbol; that is a different policy
-/// from [`ID_IDR`], not the same one reused.
+/// A policy pairs locale decoration with one [`Iso4217`] currency.
 ///
 /// # Why rendering can fail
 ///
-/// The currency is checked on the way out exactly as [`FromStr`](core::str::FromStr) checks it
-/// on the way in. Without it, formatting a `Money<USD>` through [`ID_IDR`] would emit `Rp` in
-/// front of dollars — a mislabelled amount reaching a human, which is the failure this crate
-/// is organised around, arriving through the one surface a human actually reads.
+/// [`render`](LocalePolicy::render) rejects a mismatched `Money<C>` instead of attaching the
+/// wrong symbol.
 ///
 /// # Why the lifetime, and why not `'static`
 ///
-/// The module docs above tell an application to build a policy from whatever CLDR/ICU source it
-/// already carries. Until 2026-07-27 that instruction was **not followable**: every field was
-/// `&'static`, so locale data read from a file or a database at startup could only be used by
-/// leaking it, by building an unrelated global cache, or by pasting it back into source. The
-/// `'static` was there to keep the constructors `const`, which is a compile-time convenience —
-/// and it had extended past the invariant it was protecting to break the documented runtime path.
-/// Locale decoration does not need static lifetime to remain exact.
-///
-/// `LocalePolicy<'a>` fixes that at no cost to the shipped constants, which are simply
-/// `LocalePolicy<'static>` and still `const`. There is deliberately no owned or `Cow` form: no
-/// consumer needs one yet, and adding one before there is a real caller would be inventing an
-/// API to sit beside a working one. (DESIGN.md C2)
+/// Borrowed fields allow policies built from runtime locale data. Shipped constants use
+/// `LocalePolicy<'static>`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct LocalePolicy<'a> {
     currency: Iso4217,
@@ -106,7 +105,7 @@ pub struct LocalePolicy<'a> {
     group_separator: &'a str,
     decimal_separator: &'a str,
     grouping: &'a [u8],
-    min_fraction_digits: u8,
+    min_fraction_digits: FractionDigits,
 }
 
 impl<'a> LocalePolicy<'a> {
@@ -129,8 +128,8 @@ impl<'a> LocalePolicy<'a> {
             // `None` is "no minor unit" (gold), which is zero places, not unknown — the same
             // reading the canonical form uses. `unwrap_or` is not const-stable; `match` is.
             min_fraction_digits: match currency.exponent() {
-                Some(e) => e,
-                None => 0,
+                Some(e) => FractionDigits(e),
+                None => FractionDigits::ZERO,
             },
         }
     }
@@ -142,32 +141,55 @@ impl<'a> LocalePolicy<'a> {
         self
     }
 
-    /// Set the group and decimal separators. German and Indonesian swap the two.
-    #[must_use]
-    pub const fn with_separators(mut self, group_separator: &'a str, decimal_separator: &'a str) -> Self {
+    /// Set the group and decimal separators.
+    ///
+    /// An empty group separator disables grouping.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LocaleError::EmptyDecimalSeparator`] for an empty decimal
+    /// separator and [`LocaleError::AmbiguousSeparators`] when both non-empty
+    /// separators are equal.
+    pub fn try_with_separators(
+        mut self,
+        group_separator: &'a str,
+        decimal_separator: &'a str,
+    ) -> Result<Self, LocaleError> {
+        if decimal_separator.is_empty() {
+            return Err(LocaleError::EmptyDecimalSeparator);
+        }
+        if !group_separator.is_empty() && group_separator == decimal_separator {
+            return Err(LocaleError::AmbiguousSeparators);
+        }
         self.group_separator = group_separator;
         self.decimal_separator = decimal_separator;
-        self
+        Ok(self)
     }
 
     /// Set the digit grouping, read right-to-left, with the **last entry repeating**.
     ///
-    /// `&[3]` is the western group-of-three. `&[3, 2]` is the Indian lakh/crore shape —
-    /// `1,23,45,678` — which is the whole reason this is a slice and not a single number.
-    /// `&[]` disables grouping.
-    #[must_use]
-    pub const fn with_grouping(mut self, grouping: &'a [u8]) -> Self {
+    /// `&[3]` groups by three. `&[3, 2]` renders the Indian lakh/crore shape
+    /// `1,23,45,678`. `&[]` disables grouping.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LocaleError::ZeroGroupingWidth`] for a zero entry.
+    pub const fn try_with_grouping(mut self, grouping: &'a [u8]) -> Result<Self, LocaleError> {
+        let mut index = 0;
+        while index < grouping.len() {
+            if grouping[index] == 0 {
+                return Err(LocaleError::ZeroGroupingWidth { index });
+            }
+            index = index.saturating_add(1);
+        }
         self.grouping = grouping;
-        self
+        Ok(self)
     }
 
     /// Set the **minimum** fraction width. It can never become a maximum.
     ///
-    /// Values above [`SCALE`](crate::SCALE) saturate rather than padding further: there is no
-    /// nineteenth digit to show, and emitting one would claim a precision the value does not
-    /// have.
     #[must_use]
-    pub const fn with_min_fraction_digits(mut self, digits: u8) -> Self {
+    pub const fn with_min_fraction_digits(mut self, digits: FractionDigits) -> Self {
         self.min_fraction_digits = digits;
         self
     }
@@ -210,15 +232,15 @@ impl<'a> LocalePolicy<'a> {
 
     /// The **minimum** fraction width. Never a maximum.
     #[must_use]
-    pub const fn min_fraction_digits(&self) -> u8 {
+    pub const fn min_fraction_digits(&self) -> FractionDigits {
         self.min_fraction_digits
     }
 
     /// Render a `Money<C>` under this policy.
     ///
     /// # Errors
-    /// [`MoneyError::WrongCurrency`] if `C` is not this policy's currency.
-    pub fn render<C: StaticCurrency>(&self, money: Money<C>) -> Result<String, MoneyError> {
+    /// [`LocaleError::WrongCurrency`] if `C` is not this policy's currency.
+    pub fn render<C: StaticCurrency>(&self, money: Money<C>) -> Result<String, LocaleError> {
         self.render_units(money.units(), C::CODE)
     }
 
@@ -229,22 +251,23 @@ impl<'a> LocalePolicy<'a> {
     /// the generic path's implementation rather than resembling it.
     ///
     /// # Errors
-    /// [`MoneyError::WrongCurrency`] if `currency` is not this policy's currency, and
-    /// [`MoneyError::DomainOverflow`] if `units` is outside the domain.
+    /// [`LocaleError::WrongCurrency`] if `currency` is not this policy's currency, and
+    /// [`LocaleError::Amount`] if `units` is outside the domain.
     ///
     /// The domain arm matters more here than anywhere else in the crate: this is the one
     /// function whose output a **human reads and acts on**. Returning `Ok` for an amount the
     /// type cannot hold would put a number in front of a person that no other layer would
     /// accept — the failure this crate exists to prevent, arriving through its last surface.
-    pub fn render_units(&self, units: i128, currency: Iso4217) -> Result<String, MoneyError> {
+    pub fn render_units(&self, units: i128, currency: Iso4217) -> Result<String, LocaleError> {
         if currency != self.currency {
-            return Err(MoneyError::WrongCurrency { expected: self.currency, found: currency });
+            return Err(LocaleError::WrongCurrency { expected: self.currency, found: currency });
         }
-        if !crate::domain::in_domain(units) {
-            return Err(MoneyError::DomainOverflow { attempted_units: units });
+        if !crate::domain_impl::in_domain(units) {
+            return Err(AmountError::out_of_domain(units).into());
         }
 
-        let (negative, whole, fraction) = fixed_point_parts(units, usize::from(self.min_fraction_digits));
+        let (negative, whole, fraction) =
+            fixed_point_parts(units, usize::from(self.min_fraction_digits.get()));
 
         let grouped = group(&whole, self.grouping, self.group_separator);
         let body = if fraction.is_empty() {
@@ -273,11 +296,7 @@ fn group(digits: &str, sizes: &[u8], separator: &str) -> String {
     // `digits` comes from the fixed-point formatter and is ASCII, so byte offsets are char
     // boundaries here and no slice below can split a character.
     //
-    // The two `expect`s below were `unwrap_or_default()`, which is the one spelling that
-    // turns a broken invariant into SILENTLY DROPPED DIGITS in a number a human reads --
-    // this crate's headline failure mode, reached through its own formatter. Neither can
-    // fire today; stating the proof is what makes a future edit that breaks it fail loudly
-    // instead of quietly rendering less money than there is.
+    // Fail loudly if the ASCII boundary invariant breaks; never drop displayed digits.
     let mut chunks: Vec<&str> = Vec::new();
     let mut end = digits.len();
     let mut step: usize = 0;
@@ -302,22 +321,32 @@ fn group(digits: &str, sizes: &[u8], separator: &str) -> String {
     chunks.join(separator)
 }
 
-// ---------------------------------------------------------------------------------------
-// Worked examples. NOT a locale database -- see the module docs.
-// ---------------------------------------------------------------------------------------
+// Representative policies, not a locale database.
 
 /// `$1,234.50` — US English, US dollar.
 pub const EN_USD: LocalePolicy<'static> = LocalePolicy::new(Iso4217::USD, "$");
 
-/// `Rp 16.000` — Indonesian, rupiah. **Displays at 0dp while ISO settles at 2**, which is
-/// C2's motivating case and the reason display width and settlement width are two numbers.
-pub const ID_IDR: LocalePolicy<'static> =
-    LocalePolicy::new(Iso4217::IDR, "Rp ").with_separators(".", ",").with_min_fraction_digits(0);
+/// `Rp 16.000` — Indonesian rupiah. Displays at 0dp while ISO settles at 2.
+pub const ID_IDR: LocalePolicy<'static> = LocalePolicy {
+    currency: Iso4217::IDR,
+    symbol: "Rp ",
+    symbol_position: SymbolPosition::Prefix,
+    group_separator: ".",
+    decimal_separator: ",",
+    grouping: &[3],
+    min_fraction_digits: FractionDigits::ZERO,
+};
 
 /// `1.234,50 €` — German, euro. Separators swapped, symbol trailing.
-pub const DE_EUR: LocalePolicy<'static> = LocalePolicy::new(Iso4217::EUR, " €")
-    .with_separators(".", ",")
-    .with_symbol_position(SymbolPosition::Suffix);
+pub const DE_EUR: LocalePolicy<'static> = LocalePolicy {
+    currency: Iso4217::EUR,
+    symbol: " €",
+    symbol_position: SymbolPosition::Suffix,
+    group_separator: ".",
+    decimal_separator: ",",
+    grouping: &[3],
+    min_fraction_digits: FractionDigits(2),
+};
 
 /// `￥1,234` — Japanese, yen. Needs no special case: JPY's ISO exponent is already 0.
 pub const JA_JPY: LocalePolicy<'static> = LocalePolicy::new(Iso4217::JPY, "￥");

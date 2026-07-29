@@ -3,12 +3,13 @@
 //!
 //! Run with `cargo run -p kamu-money-core --example fx`.
 
-use kamu_money_core::currency::StaticCurrency;
-use kamu_money_core::domain::{DOMAIN_MAX, MoneyError, POW10_SCALE};
+use kamu_money_core::Money;
+use kamu_money_core::Rate;
+use kamu_money_core::Rounding;
+use kamu_money_core::StaticCurrency;
+use kamu_money_core::advanced::domain::{DOMAIN_MAX, POW10_SCALE};
+use kamu_money_core::errors::RateError;
 use kamu_money_core::iso::{EUR, IDR, Iso4217, SGD, USD};
-use kamu_money_core::money::Money;
-use kamu_money_core::rate::Rate;
-use kamu_money_core::rounding::Rounding;
 use std::collections::HashMap;
 
 /// A quote table: keyed by currency CODES at runtime, but it hands out TYPED rates.
@@ -31,26 +32,27 @@ impl QuoteTable {
 
     /// Runtime lookup, compile-time typed result.
     fn get<Base: StaticCurrency, Quote: StaticCurrency>(&self) -> Option<Rate<Base, Quote>> {
-        self.inner.get(&(Base::CODE, Quote::CODE)).copied().and_then(Rate::from_units)
+        self.inner.get(&(Base::CODE, Quote::CODE)).map(|&units| {
+            Rate::try_from_units(units).expect("QuoteTable::insert stores only validated rates")
+        })
     }
 }
 
 /// A rate expressed in whole units of quote per one base.
 fn rate_of<Base: StaticCurrency, Quote: StaticCurrency>(major: i128) -> Rate<Base, Quote> {
-    Rate::from_units(major.checked_mul(POW10_SCALE).expect("in range")).expect("in domain")
+    Rate::try_from_units(major.checked_mul(POW10_SCALE).expect("in range")).expect("in domain")
 }
 
 fn main() {
     println!("== a typed conversion ==");
 
-    let salary = Money::<USD>::from_major(5_000).expect("in domain");
+    let salary = Money::<USD>::try_from_major(5_000).expect("in domain");
     let usd_idr: Rate<USD, IDR> = rate_of(16_000);
 
     let paid = salary.convert(usd_idr, Rounding::HalfEven).expect("well inside the domain");
     println!("  {}  at USD/IDR 16000  ->  {}", salary, paid);
 
-    // ------------------------------------------------------------------------------------
-    // WILL NOT COMPILE — the pair is checked at compile time, on BOTH ends:
+    // Does not compile: both ends of the pair are checked statically.
     //
     //     let eur_idr: Rate<EUR, IDR> = rate_of(17_000);
     //     let _ = salary.convert(eur_idr, Rounding::HalfEven);
@@ -60,8 +62,7 @@ fn main() {
     //     //                                    ^^^^^^^ expected `Rate<USD, EUR>`,
     //     //                                            found `Rate<USD, IDR>`
     //
-    // Pinned by tests/ui/wrong_rate_pair.
-    // ------------------------------------------------------------------------------------
+    // Pinned by tests/ui/wrong_rate_pair.rs.
 
     println!("\n== a runtime quote table that still hands out typed rates ==");
 
@@ -79,13 +80,13 @@ fn main() {
     let missing: Option<Rate<IDR, EUR>> = quotes.get();
     println!("  looked up IDR/EUR  ->  {missing:?}");
 
-    println!("\n== convert_via rounds ONCE, and it is a ledger rule, not a precision tweak ==");
+    println!("\n== convert_via rounds once ==");
 
     // One canonical unit, routed USD -> EUR -> IDR at 0.5 then 2.0. Sequentially the
     // intermediate is half a unit, which the ledger cannot express, so it quantises to zero
     // and the second leg multiplies nothing. Via, 0.5 * 2 == 1 and the unit survives.
-    let dust = Money::<USD>::from_units(1).expect("in domain");
-    let half: Rate<USD, EUR> = Rate::from_units(POW10_SCALE / 2).expect("in domain");
+    let dust = Money::<USD>::try_from_units(1).expect("in domain");
+    let half: Rate<USD, EUR> = Rate::try_from_units(POW10_SCALE / 2).expect("in domain");
     let double: Rate<EUR, IDR> = rate_of(2);
 
     let sequential = dust
@@ -98,22 +99,22 @@ fn main() {
     println!("  convert_via  {}   <- one rounding, at the end", via);
     println!("  (there is no moment where a party appears to hold EUR they never held)");
 
-    println!("\n== overflow is a CONDITION, not a bug — which is why there is no `impl Mul` ==");
+    println!("\n== conversion can leave the domain ==");
 
-    // A conversion that leaves the domain is refused by name. It reports the PAIR rather
+    // A conversion that leaves the domain is refused by name. It reports the pair rather
     // than the attempted value, because the attempted value does not fit an i128 — a
     // saturated number would be a lie about what was computed.
-    let vast = Money::<USD>::from_units(DOMAIN_MAX).expect("the domain top");
+    let vast = Money::<USD>::try_from_units(DOMAIN_MAX).expect("the domain top");
     match vast.convert(rate_of::<USD, IDR>(1_000), Rounding::HalfEven) {
         Ok(m) => println!("  unexpectedly ok: {}", m),
-        Err(e @ MoneyError::ConversionOverflow { .. }) => println!("  refused: {e}"),
+        Err(e @ RateError::ConversionOverflow { .. }) => println!("  refused: {e}"),
         Err(e) => println!("  refused: {e}"),
     }
 
-    // And the dangerous near-miss: a quotient of exactly 2^128 truncates to ZERO. A
-    // narrowing that used `as` would return Ok($0.00) here, with the money simply gone.
-    let tricky = Money::<USD>::from_units(18_446_744_073_709_551_616_000_000_000).expect("ok");
-    let same: Rate<USD, IDR> = Rate::from_units(18_446_744_073_709_551_616_000_000_000).expect("ok");
+    // A quotient of exactly 2^128 is the dangerous near-miss: narrowing with `as` would return
+    // `Ok($0.00)` and lose the amount.
+    let tricky = Money::<USD>::try_from_units(18_446_744_073_709_551_616_000_000_000).expect("ok");
+    let same: Rate<USD, IDR> = Rate::try_from_units(18_446_744_073_709_551_616_000_000_000).expect("ok");
     println!("  2^128 case:  {:?}", tricky.convert(same, Rounding::HalfEven));
     println!("  ^ a truncating narrowing would have returned Ok(0) here, silently");
 }

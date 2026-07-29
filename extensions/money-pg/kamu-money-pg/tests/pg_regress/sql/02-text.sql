@@ -1,4 +1,4 @@
--- 02-text: the canonical text form, its refusals, and the phase-4/phase-5 differential.
+-- 02-text: canonical text, refusals, and portable/native agreement.
 --
 -- Ports: the_text_form_matches_money_core, kmoney_refuses_what_numeric_silently_rounds,
 -- the_domain_top_round_trips, one_unit_past_the_domain_is_refused,
@@ -30,7 +30,7 @@ SELECT 'USD 10.50'::kmoney::text || ' | '
 SELECT 'IDR 999999999999999999.999999999999999999'::kmoney::text;
 
 \echo -- kmoney_refuses_what_numeric_silently_rounds
--- The other half of E13. An input function runs BEFORE any coercion, where a CHECK or a DOMAIN
+-- A type input function runs before coercion, while CHECK and DOMAIN constraints
 -- runs after and is handed the already-altered value.
 SELECT 'USD 0.0000000000000000004'::kmoney::text;
 
@@ -42,11 +42,11 @@ SELECT 'ZWL 1.00'::kmoney::text;
 
 \echo -- the_native_type_and_the_text_storage_agree
 -- THE PHASE 4 <-> PHASE 5 DIFFERENTIAL. Phase 4 stores the canonical text in a `text` column on
--- any PostgreSQL; phase 5 stores this 18-byte type. One literal writes BOTH columns, so if
+-- any PostgreSQL; native storage uses this 18-byte type. One literal writes both columns, so if
 -- kamu_money_core::text and this extension's in/out functions ever diverge, an application
 -- reading through the driver and a query reading the native column return different numbers for
 -- the same row.
-CREATE TEMP TABLE both_forms (phase4 text NOT NULL, phase5 kmoney NOT NULL);
+CREATE TEMP TABLE both_forms (portable text NOT NULL, native kmoney NOT NULL);
 INSERT INTO both_forms VALUES
     ('USD 10.50', 'USD 10.50'),
     ('JPY 10.5', 'JPY 10.5'),
@@ -54,7 +54,7 @@ INSERT INTO both_forms VALUES
     ('IDR 999999999999999999.999999999999999999', 'IDR 999999999999999999.999999999999999999'),
     ('USD -0.000000000000000001', 'USD -0.000000000000000001'),
     ('XAU 10.5', 'XAU 10.5');
-SELECT 'render_disagreements=' || count(*) FROM both_forms WHERE phase4 <> phase5::text;
-SELECT 'reparse_mismatches=' || count(*) FROM both_forms WHERE phase4::kmoney::text <> phase5::text;
+SELECT 'render_disagreements=' || count(*) FROM both_forms WHERE portable <> native::text;
+SELECT 'reparse_mismatches=' || count(*) FROM both_forms WHERE portable::kmoney::text <> native::text;
 
 \echo == CASE COMPLETE: 02-text ==

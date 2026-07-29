@@ -15,8 +15,7 @@ use ethnum::I256;
 pub enum Rounding {
     /// Ties to even. Unbiased across many roundings; the IEEE-754 default.
     HalfEven,
-    /// Ties away from zero. **This is what PostgreSQL's `round()` does** (DESIGN.md E9),
-    /// and what many tax authorities mandate.
+    /// Ties away from zero, matching PostgreSQL's `round()`.
     HalfAwayFromZero,
     /// Ties toward zero.
     HalfTowardZero,
@@ -89,19 +88,10 @@ impl Rounding {
 /// `den` must be small enough that `2 * |num % den|` cannot overflow `I256` — i.e. roughly
 /// `den < I256::MAX / 2`. Crate callers satisfy this by ~68 orders of magnitude (`div_int`
 /// passes a `NonZeroU32`; `allocate` passes a sum of `u32` weights). Exposed publicly this
-/// would be unsound: `div_round_i256(I256::MAX - 1, I256::MAX, HalfEven)` panics in debug and
-/// **wraps silently in release**. Measured, not hypothesised.
+/// would violate the multiplication bound used below.
 //
-// clippy::arithmetic_side_effects fires on every `I256` operator below (`/`, `-`, `*`, unary
-// `-`, `%`) — measured on this toolchain, it is not limited to primitive integers; it flags
-// operator syntax on ANY type, including third-party ones like `ethnum::I256`. The `assert!`
-// above already rules out div-by-zero, and this primitive's contract is exact bounded
-// division: overflow would mean `num`/`den` already violated the caller's domain (Money's
-// i128, DOMAIN_MAX ~1e36) by dozens of orders of magnitude before ever reaching I256's
-// ~1.16e77 range. `ethnum::I256` does provide a full `checked_*`/`wrapping_*` suite (verified
-// by reading its source), so a lint-clean rewrite is possible — but this function is called
-// out as pre-verified and meant to be transcribed as-is, so the operators are left exactly
-// as specified and the lint is silenced here instead of restyling the arithmetic.
+// Callers keep numerator and denominator far below I256 limits; the explicit
+// precondition above warrants the direct arithmetic.
 //
 #[allow(clippy::arithmetic_side_effects)]
 #[must_use]
@@ -155,7 +145,6 @@ mod tests {
 
     #[test]
     fn half_away_from_zero_matches_postgres() {
-        // PG measured: round(0.5)=1 round(1.5)=2 round(2.5)=3 round(3.5)=4. (DESIGN.md E9)
         assert_eq!(q(1, 2, Rounding::HalfAwayFromZero), 1);
         assert_eq!(q(3, 2, Rounding::HalfAwayFromZero), 2);
         assert_eq!(q(5, 2, Rounding::HalfAwayFromZero), 3);
@@ -172,8 +161,7 @@ mod tests {
         assert_eq!(q(1, 3, Rounding::AwayFromZero), 1);
     }
 
-    /// THE conservation invariant, at the primitive level: whatever rounding moved,
-    /// the residue holds. Verified exhaustively over ~2500 combinations. (DESIGN.md C5)
+    /// Whatever rounding moves remains in the residue.
     #[test]
     fn residue_identity_holds_for_every_mode() {
         for n in -25i128..=25 {

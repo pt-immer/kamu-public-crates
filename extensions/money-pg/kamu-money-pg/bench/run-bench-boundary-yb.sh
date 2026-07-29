@@ -4,12 +4,8 @@
 #
 #   kamu-money-pg/bench/run-bench-boundary-yb.sh [tag]
 #
-# WHY THIS EXISTS SEPARATELY FROM THE PostgreSQL PROBE. YugabyteDB is the deployment target, and
-# it is a PostgreSQL FORK with one named mechanism for the pgrx boundary to be dearer than it is
-# on stock PostgreSQL: YSQL is multi-threaded, so `CurrentMemoryContext` is the thread-local
-# `YbCurrentMemoryContext` that pgrx's wrapper touches on every call, and a TLS access costs more
-# than a process-global load. "It passes on PostgreSQL" is not evidence about YugabyteDB --
-# §0.4's own rule -- so the number that decides anything gets measured here.
+# YugabyteDB is measured separately from PostgreSQL. YSQL is multi-threaded, so pgrx touches the
+# thread-local `YbCurrentMemoryContext` on every call; stock PostgreSQL cannot measure that cost.
 #
 # WHY A DEDICATED IMAGE. Both functions have to be compiled against the SAME server headers and
 # load into the SAME backend, or the subtraction is between two different ABIs. So the extension
@@ -36,6 +32,8 @@ read -r -a NUMA_ARGS <<< "$(numa_docker_args)"
 # shellcheck source=kamu-money-pg/yb/workspace-lock.sh
 source "$(dirname "$0")/../yb/workspace-lock.sh"
 workspace_lock "$(basename "$0")" || exit 1
+# shellcheck source=scripts/docker-core-context.sh
+source ./scripts/docker-core-context.sh
 
 TAG_ARG="${1:-}"
 # PID AND ENTROPY AS WELL AS THE TIMESTAMP. Second resolution alone means two runs started in the
@@ -83,7 +81,8 @@ REVISION="$(git rev-parse HEAD 2>/dev/null || echo UNKNOWN)"
 IIDFILE="$(mktemp)"
 trap 'rm -f "$IIDFILE"; cleanup' EXIT INT TERM HUP
 echo "boundary-yb: building the probe image (this compiles the extension from source) ..." | tee -a "$OUT"
-docker build -f kamu-money-pg/yb/Dockerfile --target boundary-node \
+docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
+    -f kamu-money-pg/yb/Dockerfile --target boundary-node \
     --build-arg YB_IMAGE="$YB_REF" \
     --build-arg EXTRA_FEATURES=boundary-probe \
     --label "kamu-money-pg.revision=$(git rev-parse --short HEAD 2>/dev/null || echo nogit)" \
@@ -101,9 +100,7 @@ docker run -d --name "$NAME" --label "kamu-money-pg.bench=$RUN_ID" \
 # Measured on this host. Refuse rather than measure one socket and label it the other.
 numa_verify "$NAME" || exit 4
 
-# READINESS IS A QUERY THAT ANSWERED, not an address that resolved. `hostname -i` succeeds within
-# a second of the container starting, so a guard on it alone reports ready for a node whose YSQL
-# never came up -- the defect a 2026-07-26 review found in three other runners here.
+# Readiness requires a successful query; resolving the container address is insufficient.
 HOST=""
 READY=0
 for _ in $(seq 1 120); do

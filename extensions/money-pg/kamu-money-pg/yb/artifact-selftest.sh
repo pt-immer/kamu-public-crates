@@ -1,20 +1,12 @@
 #!/usr/bin/env bash
-# Negative and positive controls for artifact.sh -- the resolver that decides WHICH bytes a YB
-# suite installs, and therefore what any green run is a statement about.
+# Controls for the artifact resolver used by YugabyteDB suites.
 #
 #   kamu-money-pg/yb/artifact-selftest.sh
 #
-# WHY THIS EXISTS. Two of this resolver's rules were added because the previous behaviour produced
-# green runs against files nobody built: a recursive `find | head -1` that could assemble a triplet
-# from two different builds, and -- until 2026-07-26 -- a manifest check that WARNED and carried on
-# when the manifest was absent. The second is the more instructive failure: the refusal paths were
-# the ones never exercised, so nobody knew the gate's shape, and the difference between "release
-# evidence" and "unverified bytes" was one line on a stderr stream that the happy path teaches you
-# to ignore. A control per rule is what makes the shape knowable.
+# Controls cover mixed-build triplets and missing manifests so the resolver cannot certify
+# unverified bytes.
 #
-# NO DOCKER AND NO DATABASE. Every rule here is about names, versions and hashes in a directory, so
-# the fixtures are `printf`. That keeps it in `just check` rather than behind a container suite
-# somebody might not run -- which is the same argument `repo_hygiene.rs` makes for itself.
+# These name, version, and hash checks need no Docker or database.
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
@@ -41,9 +33,7 @@ fixture() {
         > "$YB_ART_MANIFEST_NAME")
 }
 
-# The resolver sets globals, so each case runs in a SUBSHELL: a case that leaked YB_ART_SO into the
-# next one would let a later assertion pass on an earlier case's result, which is the exact class
-# of false green this file exists to prevent.
+# The resolver sets globals; isolate each case in a subshell.
 resolve() {
     local dir="$1"
     (
@@ -67,10 +57,7 @@ expect_accept() {
     fi
 }
 
-# The MESSAGE is asserted, not just the exit status. Every refusal below is reachable by more than
-# one route, and a control that only checks "nonzero" passes just as happily when the gate refuses
-# for the wrong reason -- at which point it is testing that something went wrong, not that this
-# rule works.
+# Assert the refusal message as well as the status so each control reaches its intended rule.
 expect_refuse() {
     local desc="$1" dir="$2" want="$3" rc=0
     resolve "$dir" || rc=$?
@@ -87,31 +74,20 @@ expect_refuse() {
 echo "artifact-selftest: controls for kamu-money-pg/yb/artifact.sh"
 echo
 
-# --- the happy path, which every control below is a deviation from ------------------------------
+# --- accepted triplet --------------------------------------------------------------------------
 fixture "$WORK/good"
 expect_accept "a coherent, manifested triplet resolves and is marked verified" "$WORK/good" "yes"
 
-# --- provenance: THE regression this file was written for ---------------------------------------
-# Coherent names prove nothing. A stale triplet left in out/ by an earlier revision has coherent
-# names too, which is why the resolver may not treat "no manifest" as "probably fine".
+# --- provenance --------------------------------------------------------------------------------
+# Coherent names do not establish provenance; the manifest is mandatory.
 fixture "$WORK/nomanifest"
 rm "$WORK/nomanifest/$YB_ART_MANIFEST_NAME"
 expect_refuse "a triplet with NO manifest is refused, not warned about" \
     "$WORK/nomanifest" "have no provenance"
 
-# The escape hatch exists, has to be asked for by name, and MARKS the result -- so a caller writing
-# release evidence can refuse to, instead of having to remember.
-#
-# NOT `( export YB_ART_ALLOW_UNVERIFIED=1; expect_accept ... )`. That is how this was first written,
-# and a subshell has its own copy of `pass`/`fail`: the control printed `ok`, the tally stayed at
-# ten, and a FAILURE here would have printed FAIL and left the exit status zero. A selftest that
-# can report a failure and still exit 0 is the defect it exists to catch, one level up.
-# Nor `YB_ART_ALLOW_UNVERIFIED=1 expect_accept ...`: a prefix assignment on a SHELL FUNCTION
-# persists after the call in bash, so it would silently arm the escape hatch for every case below
-# it -- including the manifest-mismatch control, which must refuse for a reason this flag does not
-# touch. Set, call, unset, where the scope is visible.
-# shellcheck disable=SC2034  # read by expect_accept, a function; shellcheck cannot see that, and
-# the two forms it would suggest are both wrong here for the reasons written above.
+# Set, call, then unset: a subshell would lose the pass/fail tally, while a function-prefix
+# assignment persists in Bash and would arm later cases.
+# shellcheck disable=SC2034 # read indirectly by expect_accept
 YB_ART_ALLOW_UNVERIFIED=1
 expect_accept "YB_ART_ALLOW_UNVERIFIED=1 downgrades it, and sets YB_ART_VERIFIED=no" \
     "$WORK/nomanifest" "no"
@@ -121,7 +97,7 @@ fixture "$WORK/tampered"
 printf 'ELF-substituted\n' > "$WORK/tampered/kmoney.so"
 expect_refuse "one changed byte fails the manifest" "$WORK/tampered" "MANIFEST MISMATCH"
 
-# --- coherence: a triplet assembled from two builds installs cleanly and is wrong ---------------
+# --- triplet coherence -------------------------------------------------------------------------
 fixture "$WORK/skew"
 printf "default_version = '0.2.0'\n" > "$WORK/skew/kmoney.control"
 (cd "$WORK/skew" && sha256sum kmoney.so kmoney.control kmoney--0.1.0.sql > "$YB_ART_MANIFEST_NAME")

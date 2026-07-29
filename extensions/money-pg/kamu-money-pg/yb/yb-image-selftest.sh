@@ -1,21 +1,13 @@
 #!/usr/bin/env bash
-# Negative and positive controls for yb-image.sh -- the gate that decides whether a YugabyteDB
+# Positive and negative controls for yb-image.sh, the gate that decides whether a YugabyteDB
 # image is one anybody validated.
 #
 #   kamu-money-pg/yb/yb-image-selftest.sh
 #
-# WHY THIS EXISTS. yb-image.sh used to REFUSE a tag that had moved off its pinned digest while
-# merely WARNING about a tag with no pin at all -- so the one case where nothing had ever been
-# validated was the one case that proceeded, and `just yb-pin-check` printed "the tag still
-# resolves to the validated digest" over the top of it. A gate whose refusal paths are never
-# exercised is a gate nobody knows the shape of, so each path is driven here.
+# Each refusal path is exercised. The fixture is a local `FROM scratch` image, so the test needs
+# neither network access nor a YugabyteDB image and returns an image ID instead of a RepoDigest.
 #
-# NO NETWORK, AND NO YUGABYTEDB IMAGE. The fixture is a `FROM scratch` image built locally, which
-# is why the identity comes back as an image ID rather than a RepoDigest -- exactly the local-image
-# branch yb-image.sh reports on stderr. That keeps this runnable in a fast gate instead of behind a
-# 1.6GB pull.
-#
-# The tag and the temp directory belong to this script's trap, not to whoever remembers.
+# The cleanup trap owns both the tag and temporary directory.
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
@@ -91,12 +83,11 @@ expect_refuse "a tag that has MOVED OFF its pinned digest is refused" "moved off
 
 YB_ALLOW_DRIFT=1 expect_accept "YB_ALLOW_DRIFT=1 adopts a moved tag deliberately"
 
-# THE TWO OVERRIDES ARE NOT INTERCHANGEABLE. If either rescued the other's case, an operator who
-# reached for one would be bypassing a check they never considered.
+# Each override applies only to its named condition.
 YB_ALLOW_UNPINNED=1 expect_refuse \
     "YB_ALLOW_UNPINNED=1 does NOT rescue a moved pin" "moved off the validated digest"
 
-# --- never pinned at all: THE CASE THAT USED TO PASS WITH A WARNING -----------------------------
+# --- never pinned at all ------------------------------------------------------------------------
 printf '%s\t%s\n' "some-other-tag:1.0" "sha256:dead" > "$WORK/pin"
 export YB_PINFILE="$WORK/pin"
 expect_refuse "a tag with NO pin entry is refused -- this is the fail-open bug" "not recorded in the pin file"

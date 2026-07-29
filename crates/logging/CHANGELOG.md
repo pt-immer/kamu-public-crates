@@ -4,6 +4,64 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows
 [SemVer](https://semver.org/) from `1.0.0` onwards.
 
+## [2.0.0] — 2026-07-28
+
+Make process-global ownership explicit and reject malformed data at the
+boundary.
+
+### Added
+
+- `TraceParent`, a parsed four-field W3C Trace Context value with typed access
+  to version, trace ID, parent ID, flags, and the sampled bit.
+- `TraceParentError`, `ParseFormatError`, and `ParseSinkError`.
+- `Error::ForeignGlobalSubscriber` and `Error::ForeignGlobalLogger`, separating
+  ownership conflicts from this crate's own duplicate initialization.
+- `Error::InstallationIncomplete` for a panic between subscriber and logger
+  commits.
+- A 128-byte visible-ASCII policy for untrusted request and correlation IDs.
+- End-to-end Actix tests covering header precedence, repeated and non-ASCII
+  values, malformed `traceparent`, and successful and failed request
+  completion.
+- `#![forbid(unsafe_code)]`.
+
+### Changed
+
+- **Breaking:** `Format::from_env_value` and `Sink::from_env_value` now return
+  `Result` and reject unknown values. `KAMU_LOG_FORMAT`, `KAMU_LOG_SINK`, and
+  the selected filter environment variable now fail clearly when malformed
+  instead of silently falling back.
+- **Breaking:** `Sink::Auto` now selects stderr on native targets. Journald is
+  an explicit opt-in. TTY detection follows the selected stdout or stderr
+  stream.
+- **Breaking:** `Error::TracingGlobal` and `Error::TracingLog` were replaced by
+  the two ownership variants above.
+- Initialization now serializes concurrent callers and records subscriber,
+  logger-bridge, and OTLP-provider ownership in one committed state.
+- A foreign `log` owner is reported after the tracing subscriber and optional
+  OTLP provider commit; those remain active, and retries preserve the conflict.
+- `init_or_skip` and `idempotent(true)` succeed only for a complete subscriber
+  installed by this crate. They never suppress a foreign global owner.
+- `OtlpConfig` and `InitOptions` use redacted `Debug` implementations. HTTP
+  header values, endpoint text, and secret-like resource attributes are not
+  printed.
+- `OtlpConfig::new` treats its endpoint as a collector base URL and appends the
+  standard `/v1/traces` path unless already present.
+- `InitOptions::with_service_name` supplies the OTLP resource service name when
+  `OtlpConfig` does not override it.
+
+### Fixed
+
+- Validate the complete W3C `traceparent` base format: lowercase hexadecimal,
+  nonzero trace and parent IDs, two-digit flags, exact version-`00` length, and
+  future-version suffix delimiters.
+- Keep a newly built OTLP provider local until the subscriber commits. A
+  foreign subscriber now shuts that provider down instead of poisoning later
+  `flush_otlp` and `shutdown_otlp` calls.
+- Require the OTLP runtime test to receive a `POST /v1/traces` request with
+  `application/x-protobuf` and a nonempty body after a successful loopback
+  bind.
+- Correct service-name and wasm32 repeated-init documentation.
+
 ## [1.6.0] — 2026-07-27
 
 Toolchain maintenance. No public API changes.

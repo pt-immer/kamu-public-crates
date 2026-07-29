@@ -1,5 +1,23 @@
 # Changelog — `kamu-snap-response-axum`
 
+## 4.0.0 — 2026-07-28
+
+### Breaking
+
+- Updated to `kamu-snap-response` 3 and its valid-by-construction response API.
+
+### Fixed
+
+- Serialize the JSON body before applying the intended HTTP status. A
+  serialization failure now returns HTTP 500 instead of allowing Axum's tuple
+  status override to restore a success status.
+- Require a fully valid `HHHSSCC` code before selecting the framework status.
+
+### Added
+
+- Boundary tests for success, failure, malformed service digits, reserved
+  payload keys, serialization failure, JSON body, and content type.
+
 ## 3.1.0 — 2026-07-27
 
 Toolchain maintenance only. No code or public API changes.

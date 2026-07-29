@@ -1,20 +1,13 @@
-//! `kmoney('IDR')`: the raw typmod FFI, the coercion cast, and the `CREATE TYPE`.
-//!
-//! Split out of `lib.rs` on 2026-07-27. The code is UNCHANGED -- this file is
-//! a relocation, verified by `just schema-hash` (the SQL surface) and `just test-pg` (behaviour).
+//! Raw `kmoney('IDR')` typmod FFI and fixed-width SQL type registration.
 //!
 //! RAW `extern "C"` because pgrx 0.19.1 cannot express these signatures: PostgreSQL hands
 //! `typmod_in` a `cstring[]` and pgrx has no safe mapping for it. `#[unsafe(no_mangle)]` is
 //! load-bearing -- the hand-written SQL binds these by SYMBOL NAME, so the symbol must survive
 //! this move, and it does because a module path never reaches a linker name.
 //!
-//! Typmod does NOT make cross-currency arithmetic fail: PostgreSQL does not pass typmod to
-//! operators, so the value-carried code stays the only thing separating two currencies in an
-//! expression. This is a column-level INSERT/coercion check and nothing more.
-
-use super::{describe, kmoney};
-use kamu_money_core::Iso4217;
 use pgrx::prelude::*;
+
+use crate::safe::typmod;
 
 /// `typmod_in(cstring[]) -> int4` — parse `kmoney('IDR')` into the ISO numeric code.
 ///
@@ -29,6 +22,7 @@ use pgrx::prelude::*;
 pub unsafe extern "C-unwind" fn kmoney_typmod_in(fcinfo: pg_sys::FunctionCallInfo) -> pg_sys::Datum {
     // A REAL check, not `debug_assert!` -- see `recv_payload` for the full argument. The release
     // build must not be the permissive one when the next statement indexes a flexible array.
+    // SAFETY: this function's PostgreSQL contract guarantees `fcinfo` points to valid call data.
     if unsafe { (*fcinfo).nargs } < 1 {
         error!("kmoney_typmod_in: called with no argument");
     }
@@ -69,6 +63,7 @@ pub unsafe extern "C-unwind" fn kmoney_typmod_in(fcinfo: pg_sys::FunctionCallInf
     // (pg_type: typlen = -2, typbyval = f, typalign = 'c'), so passing them by hand is exact,
     // not a guess. This is the same function PostgreSQL's own typmod_in implementations reduce
     // to; elements come back as Datums, each of which for a cstring IS the char pointer.
+    // SAFETY: `array` is a detoasted `cstring[]`; all output pointers are valid local slots.
     unsafe {
         pg_sys::deconstruct_array(
             array,
@@ -89,15 +84,7 @@ pub unsafe extern "C-unwind" fn kmoney_typmod_in(fcinfo: pg_sys::FunctionCallInf
     // SAFETY: `deconstruct_array` wrote `count` valid cstring Datums into `items`, and
     // `count == 1` was just checked.
     let raw = unsafe { core::ffi::CStr::from_ptr(items.read().cast_mut_ptr::<core::ffi::c_char>()) };
-    let Ok(alpha3) = raw.to_str() else {
-        error!("kmoney: type modifier is not valid UTF-8");
-    };
-
-    let Some(currency) = Iso4217::from_alpha3(alpha3) else {
-        error!("kmoney: {alpha3:?} is not an ISO 4217 code kamu_money_core knows");
-    };
-
-    pg_sys::Datum::from(i32::from(currency.numeric()))
+    pg_sys::Datum::from(typmod::parse(raw))
 }
 
 /// `typmod_out(int4) -> cstring` — render the code back as `('IDR')` for `\d` and `pg_dump`.
@@ -111,6 +98,7 @@ pub unsafe extern "C-unwind" fn kmoney_typmod_in(fcinfo: pg_sys::FunctionCallInf
 #[pg_guard]
 pub unsafe extern "C-unwind" fn kmoney_typmod_out(fcinfo: pg_sys::FunctionCallInfo) -> pg_sys::Datum {
     // A REAL check, not `debug_assert!` -- see `recv_payload` for the full argument.
+    // SAFETY: this function's PostgreSQL contract guarantees `fcinfo` points to valid call data.
     if unsafe { (*fcinfo).nargs } < 1 {
         error!("kmoney_typmod_out: called with no argument");
     }
@@ -123,13 +111,7 @@ pub unsafe extern "C-unwind" fn kmoney_typmod_out(fcinfo: pg_sys::FunctionCallIn
     #[allow(clippy::as_conversions, clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
     let typmod = unsafe { (*fcinfo).args.as_ptr().read().value.value() } as i32;
 
-    // A dumped schema must round-trip through typmod_in, so an unknown code cannot be rendered
-    // as something that would parse back to a different currency.
-    let rendered = if let Some(currency) = u16::try_from(typmod).ok().and_then(Iso4217::from_numeric) {
-        format!("('{}')", currency.alpha3())
-    } else {
-        error!("kmoney: stored type modifier {typmod} is not an ISO 4217 numeric code")
-    };
+    let rendered = typmod::render(typmod);
 
     // SAFETY: CurrentMemoryContext is valid; PostgreSQL frees this with the context.
     let size = rendered
@@ -146,31 +128,7 @@ pub unsafe extern "C-unwind" fn kmoney_typmod_out(fcinfo: pg_sys::FunctionCallIn
     pg_sys::Datum::from(out)
 }
 
-/// The coercion cast: check a value against the column's declared currency.
-///
-/// This is what makes `INSERT INTO ledger VALUES ('USD 1.00')` fail on an `kmoney('IDR')`
-/// column. It is the SQL twin of a value being proved into `Money<IDR>`.
-#[pg_extern(immutable, parallel_safe, requires = ["kmoney_concrete"])]
-fn kmoney_coerce(value: kmoney, typmod: i32, _is_explicit: bool) -> kmoney {
-    // -1 is PostgreSQL's "no modifier": an unpinned kmoney column accepts any currency.
-    if typmod == -1 {
-        return value;
-    }
-    let Some(want) = u16::try_from(typmod).ok().and_then(Iso4217::from_numeric) else {
-        error!("kmoney: column type modifier {typmod} is not an ISO 4217 numeric code");
-    };
-    if value.code() != want.numeric() {
-        error!(
-            "kmoney: column is declared kmoney('{}') but the value is {}",
-            want.alpha3(),
-            describe(value.code())
-        );
-    }
-    value
-}
-
-// The real type. `INTERNALLENGTH = 18` rather than `variable` is the whole point: no varlena
-// header, so 18 bytes on disk instead of 19. `ALIGNMENT = char` because the payload is
+// `INTERNALLENGTH = 18` avoids a varlena header. `ALIGNMENT = char` because the payload is
 // byte-arrays (align_of == 1, asserted in the macro), and `STORAGE = plain` because an 18-byte
 // value must never be considered for TOAST.
 //
@@ -205,82 +163,3 @@ CREATE TYPE kmoney (
     name = "kmoney_concrete",
     requires = [kmoney_send, "money_shell_types", kmoney_in, kmoney_out],
 );
-
-// The length-coercion cast PostgreSQL invokes when a value lands in a typmod-bearing column.
-// `AS IMPLICIT` is required: without it PostgreSQL never calls the function and the column's
-// declared currency is decorative.
-extension_sql!(
-    r"
-CREATE CAST (kmoney AS kmoney) WITH FUNCTION kmoney_coerce(kmoney, integer, boolean) AS IMPLICIT;
-",
-    name = "kmoney_typmod_cast",
-    requires = ["kmoney_concrete", kmoney_coerce],
-);
-
-#[cfg(any(test, feature = "pg_test"))]
-#[pg_schema]
-mod tests {
-    use pgrx::prelude::*;
-
-    // -----------------------------------------------------------------------------------
-    // typmod: kmoney('IDR') pins a column to one currency.
-    // -----------------------------------------------------------------------------------
-
-    /// A pinned column accepts its own currency and reports the modifier back through
-    /// `format_type`, which is what `\d` and `pg_dump` read.
-    #[pg_test]
-    fn a_typmod_column_round_trips_its_currency() {
-        Spi::run("CREATE TABLE pinned (amount kmoney('IDR'))").expect("table created");
-        Spi::run("INSERT INTO pinned VALUES ('IDR 16000.00')").expect("row inserted");
-
-        let stored =
-            Spi::get_one::<String>("SELECT amount::text FROM pinned").expect("query ran").expect("not null");
-        assert_eq!(stored, "IDR 16000.00");
-
-        let declared = Spi::get_one::<String>(
-            "SELECT format_type(atttypid, atttypmod) FROM pg_attribute
-              WHERE attrelid = 'pinned'::regclass AND attname = 'amount'",
-        )
-        .expect("query ran")
-        .expect("not null");
-        assert_eq!(declared, "kmoney('IDR')", "typmod_out must round-trip for pg_dump");
-    }
-
-    /// **The point of typmod.** The wrong currency is refused at INSERT, before it is stored --
-    /// the SQL twin of proving a value into `Money<IDR>`.
-    #[pg_test(error = "kmoney: column is declared kmoney('IDR') but the value is USD")]
-    fn a_typmod_column_refuses_the_wrong_currency() {
-        Spi::run("CREATE TABLE pinned_reject (amount kmoney('IDR'))").expect("table created");
-        Spi::get_one::<String>("INSERT INTO pinned_reject VALUES ('USD 1.00')").ok();
-    }
-
-    #[pg_test]
-    fn an_unpinned_column_still_accepts_every_currency() {
-        Spi::run("CREATE TABLE unpinned (amount kmoney)").expect("table created");
-        Spi::run("INSERT INTO unpinned VALUES ('USD 1.00'), ('IDR 16000.00')").expect("rows inserted");
-        let n = Spi::get_one::<i64>("SELECT count(*) FROM unpinned").expect("query ran").expect("not null");
-        assert_eq!(n, 2);
-    }
-
-    #[pg_test(error = "kmoney: \"ZWL\" is not an ISO 4217 code kamu_money_core knows")]
-    fn a_typmod_of_an_unknown_currency_is_refused() {
-        Spi::run("CREATE TABLE bad_typmod (amount kmoney('ZWL'))").ok();
-    }
-
-    #[pg_test(error = "kmoney: expected exactly one type modifier, as in kmoney('IDR'); got 2")]
-    fn two_type_modifiers_are_refused() {
-        Spi::run("CREATE TABLE two_mods (amount kmoney('IDR', 'USD'))").ok();
-    }
-
-    /// **Typmod does NOT reach operators**, which C8 measured and this pins: two differently
-    /// pinned columns still meet as bare `kmoney + kmoney`, so the refusal comes from the
-    /// value-carried code rather than from the column types. Both mechanisms are required.
-    #[pg_test(error = "kmoney: cannot compute IDR + USD: different currencies")]
-    fn typmod_does_not_reach_operators_so_the_value_check_still_fires() {
-        Spi::run("CREATE TABLE lhs (amount kmoney('IDR'))").expect("table created");
-        Spi::run("CREATE TABLE rhs (amount kmoney('USD'))").expect("table created");
-        Spi::run("INSERT INTO lhs VALUES ('IDR 1.00')").expect("row inserted");
-        Spi::run("INSERT INTO rhs VALUES ('USD 1.00')").expect("row inserted");
-        Spi::get_one::<String>("SELECT (l.amount + r.amount)::text FROM lhs l, rhs r").ok();
-    }
-}

@@ -3,39 +3,38 @@
 [![Crates.io][badge-crates]][link-crates]
 [![docs.rs][badge-docs]][link-docs]
 [![CI][badge-ci]][link-ci]
-
 [![License][badge-license]][link-license]
 [![MSRV][badge-msrv]][link-msrv]
 
-`actix_web::Responder` adapter for
+Actix Web `Responder` adapter for
 [`kamu-snap-response`](https://crates.io/crates/kamu-snap-response).
 
-Part of the [`kamu-public-crates`](https://github.com/pt-immer/kamu-public-crates) workspace.
-
-## What this crate is
-
-Enables returning a `SnapResponse<T>` directly from an actix-web handler. Because
-the orphan rule forbids `impl Responder for SnapResponse<T>` here, the crate
-provides the `ActixResponder<T>` newtype and a `.into_actix()` extension method.
-The impl is defensive: a malformed `responseCode` that cannot be parsed back into
-an HTTP status falls back to `500 INTERNAL_SERVER_ERROR` instead of panicking.
-
-## Quickstart
+The orphan-rule newtype `ActixResponder<T>` is available through
+`SnapResponderExt::into_actix`. It applies an HTTP status only after JSON
+serialization succeeds; malformed codes and serialization failures return 500.
 
 ```rust,no_run
 use kamu_snap_response::{ServiceCode, SnapResponse};
 use kamu_snap_response_actix::SnapResponderExt;
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct Payload {
+    status: &'static str,
+}
 
 async fn handler() -> impl actix_web::Responder {
-    let svc = ServiceCode::new(11).unwrap();
-    SnapResponse::ok("payload", svc, 0).into_actix()
+    let service = ServiceCode::try_from(11).expect("11 is a valid service code");
+    SnapResponse::success(Payload { status: "ready" }, service)
+        .expect("Payload is a flat object")
+        .into_actix()
 }
 ```
 
 ## License
 
 Dual-licensed under either [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at
-your option (`MIT OR Apache-2.0`). Previously MIT-only in `pt-immer/lib-snap`.
+your option (`MIT OR Apache-2.0`).
 
 [badge-crates]: https://img.shields.io/crates/v/kamu-snap-response-actix?style=flat-square&logo=rust
 [badge-docs]: https://img.shields.io/docsrs/kamu-snap-response-actix?style=flat-square&logo=docs.rs&label=docs.rs

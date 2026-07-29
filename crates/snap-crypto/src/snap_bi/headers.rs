@@ -2,31 +2,42 @@
 //!
 //! Returns framework-agnostic `Vec<(&'static str, String)>` pairs — wire into
 //! `reqwest::HeaderMap`, `actix_web::HttpRequest`, `axum::http::HeaderMap`, or
-//! emit directly into a `String` body. Header *names* are stable per spec;
-//! the builders ensure the consumer cannot accidentally omit one (e.g.
-//! `CHANNEL-ID` for service calls).
+//! emit directly into a request builder.
+
+use core::fmt;
+
+use http::HeaderValue;
+
+use super::{InputError, SnapTimestamp};
 
 /// Canonical headers for a SNAP BI service request.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ServiceHeaders {
-    /// `X-PARTNER-ID` — partner identifier issued during onboarding.
-    pub partner_id: String,
-    /// `CHANNEL-ID` — channel/product code issued by the partner.
-    pub channel_id: String,
-    /// `X-EXTERNAL-ID` — 9-digit numeric idempotency key (caller-managed).
-    pub external_id: String,
-    /// `X-TIMESTAMP` — ISO-8601 Jakarta timestamp (must match stringToSign).
-    pub timestamp: String,
-    /// `X-SIGNATURE` — encoded HMAC-SHA512 of the canonical stringToSign.
-    pub signature: String,
-    /// `Authorization: Bearer …` — value WITHOUT the `Bearer ` prefix.
-    pub bearer_token: String,
+    partner_id: String,
+    channel_id: String,
+    external_id: String,
+    timestamp: String,
+    signature: String,
+    bearer_token: String,
 }
 
 impl ServiceHeaders {
-    /// Start a [`ServiceHeadersBuilder`].
-    pub fn builder() -> ServiceHeadersBuilder {
-        ServiceHeadersBuilder::default()
+    pub(crate) fn new(
+        partner_id: &str,
+        channel_id: &str,
+        external_id: &str,
+        timestamp: &str,
+        signature: String,
+        bearer_token: &str,
+    ) -> Self {
+        Self {
+            partner_id: partner_id.to_owned(),
+            channel_id: channel_id.to_owned(),
+            external_id: external_id.to_owned(),
+            timestamp: timestamp.to_owned(),
+            signature,
+            bearer_token: bearer_token.to_owned(),
+        }
     }
 
     /// Render as `(name, value)` pairs for insertion into any HTTP header map.
@@ -49,103 +60,41 @@ impl ServiceHeaders {
     }
 }
 
-/// Builder for [`ServiceHeaders`]. Every field is required; `build` returns
-/// `Err` (via panic message) if anything is missing — by design, callers
-/// should construct via the public field init form if all values are known
-/// up front.
-#[derive(Debug, Clone, Default)]
-pub struct ServiceHeadersBuilder {
-    partner_id: Option<String>,
-    channel_id: Option<String>,
-    external_id: Option<String>,
-    timestamp: Option<String>,
-    signature: Option<String>,
-    bearer_token: Option<String>,
-}
-
-impl ServiceHeadersBuilder {
-    /// Set `X-PARTNER-ID`.
-    pub fn partner_id(mut self, v: impl Into<String>) -> Self {
-        self.partner_id = Some(v.into());
-        self
-    }
-
-    /// Set `CHANNEL-ID`.
-    pub fn channel_id(mut self, v: impl Into<String>) -> Self {
-        self.channel_id = Some(v.into());
-        self
-    }
-
-    /// Set `X-EXTERNAL-ID`.
-    pub fn external_id(mut self, v: impl Into<String>) -> Self {
-        self.external_id = Some(v.into());
-        self
-    }
-
-    /// Set `X-TIMESTAMP`.
-    pub fn timestamp(mut self, v: impl Into<String>) -> Self {
-        self.timestamp = Some(v.into());
-        self
-    }
-
-    /// Set `X-SIGNATURE`.
-    pub fn signature(mut self, v: impl Into<String>) -> Self {
-        self.signature = Some(v.into());
-        self
-    }
-
-    /// Set the bearer token (raw, without the `Bearer ` prefix).
-    pub fn bearer_token(mut self, v: impl Into<String>) -> Self {
-        self.bearer_token = Some(v.into());
-        self
-    }
-
-    /// Build the final [`ServiceHeaders`]. Returns `Err(crate::Error::SnapBi)`
-    /// listing missing fields if any required field was not set.
-    pub fn build(self) -> crate::Result<ServiceHeaders> {
-        let mut missing = Vec::new();
-        macro_rules! take {
-            ($field:ident) => {{
-                match self.$field {
-                    Some(v) => v,
-                    None => {
-                        missing.push(stringify!($field));
-                        String::new()
-                    }
-                }
-            }};
-        }
-        let h = ServiceHeaders {
-            partner_id: take!(partner_id),
-            channel_id: take!(channel_id),
-            external_id: take!(external_id),
-            timestamp: take!(timestamp),
-            signature: take!(signature),
-            bearer_token: take!(bearer_token),
-        };
-        if !missing.is_empty() {
-            return Err(crate::Error::SnapBi(format!(
-                "ServiceHeadersBuilder missing fields: {}",
-                missing.join(", ")
-            )));
-        }
-        Ok(h)
+impl fmt::Debug for ServiceHeaders {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ServiceHeaders")
+            .field("partner_id", &"[REDACTED]")
+            .field("channel_id", &"[REDACTED]")
+            .field("external_id", &"[REDACTED]")
+            .field("timestamp", &"[PRESENT]")
+            .field("signature", &"[REDACTED]")
+            .field("bearer_token", &"[REDACTED]")
+            .finish()
     }
 }
 
 /// Canonical headers for the SNAP BI OAuth `/access-token/b2b` request.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OAuthHeaders {
-    /// `X-CLIENT-KEY` — partner client identifier.
-    pub client_key: String,
-    /// `X-TIMESTAMP` — ISO-8601 Jakarta timestamp (millisecond precision).
-    pub timestamp: String,
-    /// `X-SIGNATURE` — encoded RSA signature of the canonical OAuth
-    /// stringToSign.
-    pub signature: String,
+    client_key: String,
+    timestamp: String,
+    signature: String,
 }
 
 impl OAuthHeaders {
+    /// Validate and construct the OAuth header set.
+    pub fn new(client_key: &str, timestamp: &str, signature: &str) -> Result<Self, InputError> {
+        validate_header("X-CLIENT-KEY", client_key)?;
+        SnapTimestamp::parse(timestamp)?;
+        validate_header("X-SIGNATURE", signature)?;
+        Ok(Self {
+            client_key: client_key.to_owned(),
+            timestamp: timestamp.to_owned(),
+            signature: signature.to_owned(),
+        })
+    }
+
     /// Render as `(name, value)` pairs.
     pub fn into_pairs(self) -> Vec<(&'static str, String)> {
         vec![
@@ -154,4 +103,22 @@ impl OAuthHeaders {
             ("X-SIGNATURE", self.signature),
         ]
     }
+}
+
+impl fmt::Debug for OAuthHeaders {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OAuthHeaders")
+            .field("client_key", &"[REDACTED]")
+            .field("timestamp", &"[PRESENT]")
+            .field("signature", &"[REDACTED]")
+            .finish()
+    }
+}
+
+fn validate_header(name: &'static str, value: &str) -> Result<(), InputError> {
+    if value.is_empty() {
+        return Err(InputError::EmptyHeaderValue { name });
+    }
+    HeaderValue::from_str(value).map(|_| ()).map_err(|_| InputError::InvalidHeaderValue { name })
 }

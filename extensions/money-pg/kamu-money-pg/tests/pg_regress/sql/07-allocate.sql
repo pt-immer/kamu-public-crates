@@ -27,7 +27,7 @@ SELECT string_agg(part::text, ' | ' ORDER BY ord)
   FROM unnest(kmoney_allocate('USD 10.00', ARRAY[1, 1, 1])) WITH ORDINALITY AS t(part, ord);
 
 \echo -- allocation_never_pays_a_zero_weight_recipient
--- R2-F1. One canonical unit across weights [0, 1, 1] leaves a 1-unit remainder that must reach
+-- One canonical unit across weights [0, 1, 1] leaves a 1-unit remainder that must reach
 -- the first POSITIVE slot, never the zero at index 0: money conserved AND paid to a party with
 -- a claim.
 SELECT string_agg(part::text, ' | ' ORDER BY ord)

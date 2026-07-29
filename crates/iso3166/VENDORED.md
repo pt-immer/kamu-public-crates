@@ -32,7 +32,7 @@ of packaged files is declared via the `include = [...]` field in
 | `vendor/iso3166-csv/countries.csv`      | ISO 3166-1 (alpha2, alpha3, numeric)    |
 | `vendor/iso3166-csv/subdivisions.csv`   | ISO 3166-2 (subdivision codes & names)  |
 
-## Files present upstream but **not** consumed in v0.1
+## Files present upstream but not consumed
 
 - `administrative-languages.csv`
 - `countries-sovereignty.csv`
@@ -63,9 +63,10 @@ accessor).
 These two cardinalities are pinned in `tests/codegen_invariants.rs`; a
 submodule bump that changes them will fail CI until reviewed.
 
-Distinct `category` values: ~100. The `Category` enum is generated with
-`#[non_exhaustive]` + named variants for every value present at the pinned
-commit + an `Other(&'static str)` fallback for forward compatibility.
+Distinct `category` values: ~100. The `Category` enum contains one generated
+named variant for every value in the pinned dataset. It is `#[non_exhaustive]`,
+so downstream matches remain compatible when a later dataset release adds a
+variant.
 
 ## Checksums
 
@@ -74,7 +75,7 @@ SHA-256 of files consumed at the pinned commit:
 | File              | SHA-256                                                            |
 | ----------------- | ------------------------------------------------------------------ |
 | `countries.csv`   | `037ff5b81cd1fb9652ea92e51b2db7988cd730dc466c3c3139aa31b75b051e7b` |
-| `subdivisions.csv`| `31b707040dbfef0652701f8c5d7b275981a978bf9328ad684d9e646aeb946f4f` |
+| `subdivisions.csv` | `31b707040dbfef0652701f8c5d7b275981a978bf9328ad684d9e646aeb946f4f` |
 
 ## Attribution requirement
 

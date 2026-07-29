@@ -7,9 +7,9 @@
 [![License][badge-license]][link-license]
 [![MSRV][badge-msrv]][link-msrv]
 
-Opinionated `tracing` setup for PT IMMER services. One-line init for the
-zero-config path; a builder for everything else (JSON output, custom env
-vars, OTLP export, correlation ids).
+Structured `tracing` setup for native services and Cloudflare Workers. Includes
+console and journald output, Actix request spans, W3C correlation parsing, and
+optional OTLP export.
 
 Part of the [`kamu-public-crates`](https://github.com/pt-immer/kamu-public-crates) workspace.
 
@@ -17,7 +17,7 @@ Part of the [`kamu-public-crates`](https://github.com/pt-immer/kamu-public-crate
 
 ```toml
 [dependencies]
-kamu-logging = "1"
+kamu-logging = "2"
 ```
 
 MSRV: **Rust 1.94** (edition 2024).
@@ -41,8 +41,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-`init()` picks a sensible default for the target: pretty TTY output when
-stdout is a terminal, journald when not, and `RUST_LOG` for filtering.
+On native targets, `init()` writes to stderr: pretty output when stderr is a
+terminal and compact output otherwise. `RUST_LOG` controls filtering. Journald
+is available through explicit configuration.
 
 ## Configuration
 
@@ -70,7 +71,7 @@ Builder methods (all consume `self`, all return `Self`):
 | `with_env_var(v)`        | Env var read for the filter (default `RUST_LOG`)                   |
 | `with_format(f)`         | `Auto` / `Compact` / `Pretty` / `Json`                             |
 | `with_sink(s)`           | `Auto` / `Stdout` / `Stderr` / `Journald`                          |
-| `idempotent(true)`       | Treat duplicate init as `Ok(())` (test harnesses, embedded runs)   |
+| `idempotent(true)`       | Accept a repeated installation owned by this crate                 |
 | `with_otlp(cfg)`         | (with-otlp) Add an OTLP exporter layer                             |
 
 ### Env-var triggers (no code change)
@@ -80,6 +81,8 @@ Builder methods (all consume `self`, all return `Self`):
 | `RUST_LOG`         | tracing-subscriber directive            | Filter directive (overridable per init) |
 | `KAMU_LOG_FORMAT`  | `auto`, `compact`, `pretty`, `json`     | Sets `Format` when the option is `Auto` |
 | `KAMU_LOG_SINK`    | `auto`, `stdout`, `stderr`, `journald`  | Sets `Sink` when the option is `Auto`   |
+
+Unknown values are errors. They never silently select `Auto`.
 
 ## JSON output for log aggregators
 
@@ -93,9 +96,8 @@ init_with(
 )?;
 ```
 
-Or set `KAMU_LOG_FORMAT=json KAMU_LOG_SINK=stdout` at the process level
-for zero-code adoption. Each event is one line of JSON suitable for
-Vector, Promtail, Fluent Bit, or the Datadog Agent.
+Or set `KAMU_LOG_FORMAT=json KAMU_LOG_SINK=stdout` without rebuilding. Each
+event is one JSON line suitable for a log collector.
 
 ## Actix Web
 
@@ -118,6 +120,10 @@ async fn main() -> std::io::Result<()> {
 `X-Request-ID`, `X-Correlation-ID`, `traceparent`. For a custom builder,
 use `get_actix_web_logger_with::<MyBuilder>()`.
 
+Request and correlation IDs must contain 1–128 visible ASCII bytes. A
+`traceparent` value is used only after its complete four-field prefix passes
+W3C validation.
+
 ## Correlation outside HTTP
 
 For queue consumers, scheduled tasks, or any non-HTTP entry point:
@@ -139,6 +145,19 @@ let id = extract_from_headers(&headers, DEFAULT_HEADER_CHAIN, |h, name| {
 });
 ```
 
+To inspect every validated W3C field:
+
+```rust
+use kamu_logging::correlation::TraceParent;
+
+let parent = TraceParent::parse(
+    "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+)?;
+assert_eq!(parent.trace_id(), "4bf92f3577b34da6a3ce929d0e0e4736");
+assert!(parent.is_sampled());
+# Ok::<(), kamu_logging::correlation::TraceParentError>(())
+```
+
 ## OTLP export
 
 Enable the `with-otlp` feature and attach an `OtlpConfig`:
@@ -151,12 +170,16 @@ init_with(
         .with_service_name("checkout-api")
         .with_otlp(
             OtlpConfig::new("https://otel-collector.example.com:4318")
-                .with_service_name("checkout-api")
                 .with_header("authorization", "Bearer …")
                 .with_resource_attribute("deployment.environment", "production"),
         ),
 )?;
 ```
+
+`OtlpConfig::new` accepts the collector base URL and adds `/v1/traces`.
+`with_service_name` on `InitOptions` supplies the resource name unless the OTLP
+configuration overrides it. Debug output redacts the endpoint, all header
+values, and secret-like resource attributes.
 
 Export uses an in-process `BatchSpanProcessor` by default: spans are buffered
 and flushed from a dedicated background OS thread, so export never blocks the
@@ -182,14 +205,15 @@ back into the inline processor with
 
 ```toml
 [dependencies]
-kamu-logging = { version = "1", default-features = false, features = ["wasm32"] }
+kamu-logging = { version = "2", default-features = false, features = ["wasm32"] }
 ```
 
 `init()` on wasm32 installs `console_error_panic_hook` and a
 `tracing-subscriber` console writer suitable for Cloudflare Workers Logs.
 `Format::Auto` resolves to JSON, while `Sink::Auto`, `Sink::Stdout`, and
-`Sink::Stderr` all write to the JavaScript console. The function is
-idempotent on this target by design; subsequent calls are no-ops.
+`Sink::Stderr` all write to the JavaScript console. A repeated strict `init()`
+returns `Error::AlreadyInitialized`; use `init_or_skip()` when repetition is
+intentional.
 
 ## Cloudflare Workers
 
@@ -197,7 +221,7 @@ Use `workers-rs` as usual, disable default features, and enable `wasm32`:
 
 ```toml
 [dependencies]
-kamu-logging = { version = "1", default-features = false, features = ["wasm32"] }
+kamu-logging = { version = "2", default-features = false, features = ["wasm32"] }
 worker = "0.8"
 ```
 
@@ -212,6 +236,21 @@ correlation-id examples, see [the Cloudflare Workers guide](docs/CLOUDFLARE_WORK
 - `init_or_skip()` returns `Ok(())` on a second call. Use from test
   harnesses and embedded CLI runs.
 - `InitOptions::idempotent(true)` does the same thing via the builder.
+- A subscriber or `log` facade installed elsewhere returns
+  `ForeignGlobalSubscriber` or `ForeignGlobalLogger`, even in idempotent mode.
+
+`ForeignGlobalLogger` is detected after `kamu-logging` commits its tracing
+subscriber and any OTLP provider. Those remain active; the pre-existing logger
+continues to own the `log` facade, and retries return the same conflict.
+
+## Migrating from 1.x
+
+| 1.x behavior                         | 2.x replacement                                                   |
+|--------------------------------------|-------------------------------------------------------------------|
+| Unknown format or sink became `Auto` | Handle the `Result` from `from_env_value`, or use `FromStr`        |
+| Non-TTY `Auto` selected journald     | Select `Sink::Journald` explicitly                                |
+| `TracingGlobal` / `TracingLog`       | `ForeignGlobalSubscriber` / `ForeignGlobalLogger`                  |
+| Partial `traceparent` acceptance     | Use `TraceParent::parse`; invalid parent IDs and flags are rejected |
 
 ## Re-exported `tracing` items
 
@@ -223,18 +262,32 @@ use kamu_logging::{debug, info, warn, error, instrument, span, Level, Span};
 
 ## Troubleshooting
 
-| Symptom                                        | Fix                                                                    |
-|------------------------------------------------|------------------------------------------------------------------------|
-| No logs in container                           | Set `KAMU_LOG_SINK=stdout` — default routes non-TTY to journald        |
-| `Error::IO` at init in a container             | journald socket unavailable; use `KAMU_LOG_SINK=stdout`                |
-| Tests hang at `init()`                         | Use `init_or_skip()` per-test or `InitOptions::idempotent(true)`        |
-| OTLP exporter slow                             | `SimpleSpanProcessor` is synchronous; high-volume needs a batch processor |
-| `service.name` missing from fmt output         | Only attached to startup event + OTLP Resource; aggregators add it from infra metadata |
+| Symptom                                | Fix                                                                         |
+|----------------------------------------|-----------------------------------------------------------------------------|
+| Logs should go to stdout               | Set `KAMU_LOG_SINK=stdout` or select `Sink::Stdout`                          |
+| `Error::IO` with explicit journald     | Journal socket is unavailable; choose stdout or stderr                      |
+| `ForeignGlobalSubscriber` during tests | Install one harness subscriber, or let `kamu-logging` own the global slot   |
+| `ForeignGlobalLogger`                  | Remove or coordinate the earlier `log` owner; retrying cannot replace it    |
+| OTLP exporter is slow in simple mode   | Keep the default batch processor for high-volume services                   |
+| `service.name` missing from fmt output | It is on the startup event and OTLP resource, not every formatted log event |
+
+## Examples
+
+Run with `cargo run --example <name> --features systemd`:
+
+| Example | What it shows |
+| --- | --- |
+| [`minimal`](examples/minimal.rs) | Zero-config `init()`. |
+| [`json_stdout`](examples/json_stdout.rs) | JSON on stdout for log aggregators (Vector, Promtail, Datadog). |
+| [`actix`](examples/actix.rs) | Correlation-enriched root spans; also needs `with-actix-web`. |
+
+The standalone Worker app is [`examples/cloudflare-worker/`](examples/cloudflare-worker/),
+covered in [Cloudflare Workers](#cloudflare-workers) above.
 
 ## SemVer policy
 
-`1.x.y` — breaking changes only on major bumps. Additive changes ship as
-minor releases. Bug fixes ship as patches. The `Error` enum is
+`2.x.y` — breaking changes only on major bumps. Additive changes ship as minor
+releases. Bug fixes ship as patches. The `Error` enum is
 `#[non_exhaustive]`; new variants are not breaking.
 
 ## License

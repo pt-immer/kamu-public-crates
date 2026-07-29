@@ -13,15 +13,15 @@ use kamu_money_core::{Money, Rounding, iso::USD};
 /// The opening example: allocation conserves the total exactly.
 #[test]
 fn allocation_conserves_the_total() {
-    let whole = Money::<USD>::from_major(10).unwrap();
-    let parts = whole.allocate(&[1, 1, 1]);
+    let whole = Money::<USD>::try_from_major(10).unwrap();
+    let parts = whole.allocate(&[1, 1, 1]).unwrap();
     assert_eq!(parts.iter().map(|p| p.units()).sum::<i128>(), whole.units());
 }
 
 /// The division example: both exits from a `Division`, spelled as the README spells them.
 #[test]
 fn a_division_has_exactly_two_exits() {
-    let whole = Money::<USD>::from_major(10).unwrap();
+    let whole = Money::<USD>::try_from_major(10).unwrap();
     let three = NonZeroU32::new(3).unwrap();
 
     let (each, residue) = whole.div_int(three, Rounding::TowardZero).take_residue();

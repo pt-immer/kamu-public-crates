@@ -1,7 +1,7 @@
 error[E0277]: a value of type `Money<kamu_money_core::iso::USD>` cannot be made by summing an iterator over elements of type `Money<kamu_money_core::iso::USD>`
-  --> tests/ui/no_iterator_sum.rs:17:51
+  --> tests/ui/no_iterator_sum.rs:16:51
    |
-17 |     let _total: Money<USD> = balances.into_iter().sum();
+16 |     let _total: Money<USD> = balances.into_iter().sum();
    |                                                   ^^^ value of type `Money<kamu_money_core::iso::USD>` cannot be made by summing a `std::iter::Iterator<Item=Money<kamu_money_core::iso::USD>>`
    |
    = help: the trait `Sum` is not implemented for `Money<kamu_money_core::iso::USD>`
@@ -16,16 +16,16 @@ error[E0277]: a value of type `Money<kamu_money_core::iso::USD>` cannot be made 
              `Saturating<u16>` implements `Sum`
            and $N others
 note: the method call chain might not have had the expected associated types
-  --> tests/ui/no_iterator_sum.rs:17:39
+  --> tests/ui/no_iterator_sum.rs:16:39
    |
-12 |       let balances = [
+11 |       let balances = [
    |  ____________________-
-13 | |         Money::<USD>::from_units(1).unwrap(),
-14 | |         Money::<USD>::from_units(2).unwrap(),
-15 | |     ];
+12 | |         Money::<USD>::try_from_units(1).unwrap(),
+13 | |         Money::<USD>::try_from_units(2).unwrap(),
+14 | |     ];
    | |_____- this expression has type `[Money<USD>; 2]`
-16 |       // No `impl Sum for Money<C>`, so this does not resolve. Use `Money::try_sum(balances)`.
-17 |       let _total: Money<USD> = balances.into_iter().sum();
+15 |       // No `impl Sum for Money<C>`, so this does not resolve. Use `Money::try_sum(balances)`.
+16 |       let _total: Money<USD> = balances.into_iter().sum();
    |                                         ^^^^^^^^^^^ `Iterator::Item` is `Money<USD>` here
 note: required by a bound in `std::iter::Iterator::sum`
   --> $RUST/core/src/iter/traits/iterator.rs

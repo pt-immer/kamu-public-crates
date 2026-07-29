@@ -1,4 +1,4 @@
-//! Money through a real PostgreSQL, over the canonical text form. (DESIGN.md C9)
+//! Money through a real PostgreSQL using the canonical text form.
 //!
 //! # Why `testcontainers` and not a script
 //!
@@ -14,9 +14,9 @@
 
 #![cfg(feature = "postgres")]
 
+use kamu_money_core::advanced::domain::{DOMAIN_MAX, POW10_SCALE};
 use kamu_money_core::iso::{IDR, JPY, KWD, USD};
-use kamu_money_core::rate::Rate;
-use kamu_money_core::{DOMAIN_MAX, Money, POW10_SCALE};
+use kamu_money_core::{Money, Rate};
 use postgres::{Client, NoTls};
 use testcontainers::runners::SyncRunner;
 use testcontainers_modules::postgres::Postgres;
@@ -47,12 +47,12 @@ fn money_round_trips_through_a_text_column() {
     pg.client.execute("CREATE TABLE ledger (amount text NOT NULL)", &[]).expect("table created");
 
     let values = [
-        Money::<USD>::from_units(0).unwrap(),
-        Money::<USD>::from_units(10_500_000_000_000_000_000).unwrap(),
-        Money::<USD>::from_units(1).unwrap(),
-        Money::<USD>::from_units(-1).unwrap(),
-        Money::<USD>::from_units(DOMAIN_MAX).unwrap(),
-        Money::<USD>::from_units(-DOMAIN_MAX).unwrap(),
+        Money::<USD>::try_from_units(0).unwrap(),
+        Money::<USD>::try_from_units(10_500_000_000_000_000_000).unwrap(),
+        Money::<USD>::try_from_units(1).unwrap(),
+        Money::<USD>::try_from_units(-1).unwrap(),
+        Money::<USD>::try_from_units(DOMAIN_MAX).unwrap(),
+        Money::<USD>::try_from_units(-DOMAIN_MAX).unwrap(),
     ];
 
     for value in values {
@@ -80,7 +80,7 @@ fn the_stored_text_is_the_canonical_form() {
     // always satisfied -- it just has to be said in a generic context.
     fn stored<C: kamu_money_core::StaticCurrency + Sync>(pg: &mut Pg, units: i128) -> String {
         pg.client.execute("DELETE FROM shapes", &[]).unwrap();
-        let m = Money::<C>::from_units(units).unwrap();
+        let m = Money::<C>::try_from_units(units).unwrap();
         pg.client.execute("INSERT INTO shapes VALUES ($1)", &[&m]).unwrap();
         pg.client.query_one("SELECT amount FROM shapes", &[]).unwrap().get(0)
     }
@@ -99,7 +99,7 @@ fn a_row_cannot_be_read_as_the_wrong_currency() {
     let mut pg = start();
     pg.client.execute("CREATE TABLE mixed (amount text NOT NULL)", &[]).expect("table created");
 
-    let idr = Money::<IDR>::from_major(16_000).unwrap();
+    let idr = Money::<IDR>::try_from_major(16_000).unwrap();
     pg.client.execute("INSERT INTO mixed VALUES ($1)", &[&idr]).expect("inserted");
 
     let rows = pg.client.query("SELECT amount FROM mixed", &[]).unwrap();
@@ -111,14 +111,13 @@ fn a_row_cannot_be_read_as_the_wrong_currency() {
 }
 
 /// **`numeric` is not accepted, deliberately.** Accepting it would let a schema drift onto the
-/// one storage type this design rejects (E13: silent rounding on ingress, uncatchable by CHECK
-/// or DOMAIN), and the failure would show up as a wrong amount rather than a type error.
+/// one storage type this design rejects: it can round before `CHECK` or `DOMAIN` sees the value.
 #[test]
 fn a_numeric_column_is_refused_rather_than_silently_used() {
     let mut pg = start();
     pg.client.execute("CREATE TABLE wrong_type (amount numeric(36,18))", &[]).expect("table created");
 
-    let m = Money::<USD>::from_major(10).unwrap();
+    let m = Money::<USD>::try_from_major(10).unwrap();
     let refused = pg.client.execute("INSERT INTO wrong_type VALUES ($1)", &[&m]);
     assert!(refused.is_err(), "a numeric column must not accept Money");
 }
@@ -130,7 +129,7 @@ fn rates_round_trip_and_check_both_ends_of_the_pair() {
     let mut pg = start();
     pg.client.execute("CREATE TABLE quotes (rate text NOT NULL)", &[]).expect("table created");
 
-    let rate = Rate::<USD, IDR>::from_units(16_000 * POW10_SCALE).unwrap();
+    let rate = Rate::<USD, IDR>::try_from_units(16_000 * POW10_SCALE).unwrap();
     pg.client.execute("INSERT INTO quotes VALUES ($1)", &[&rate]).expect("inserted");
 
     let rows = pg.client.query("SELECT rate FROM quotes", &[]).unwrap();

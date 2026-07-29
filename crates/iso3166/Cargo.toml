@@ -1,6 +1,6 @@
 [package]
 name = "kamu-iso3166"
-version = "0.4.0"
+version = "0.5.0"
 description = "Zero-allocation, no_std-compatible ISO 3166-1 and ISO 3166-2 primitives"
 documentation = "https://docs.rs/kamu-iso3166"
 categories = ["internationalization", "no-std", "parser-implementations"]
@@ -30,7 +30,6 @@ include = [
 ]
 
 [features]
-alloc = ["serde?/alloc"]
 default = ["std"]
 serde = ["dep:serde"]
 std = ["phf/std", "serde?/std"]
@@ -43,8 +42,10 @@ thiserror = { workspace = true }
 [build-dependencies]
 csv = { workspace = true }
 phf_codegen = { workspace = true }
+prettyplease = { workspace = true }
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
+syn = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

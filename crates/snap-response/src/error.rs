@@ -1,528 +1,395 @@
 //! SNAP BI error taxonomy.
-//!
-//! Every variant carries a fixed `(http_status, case_code, category)` triple
-//! exposed via [`Error::http_status`], [`Error::case_code`], and
-//! [`Error::category`]. The full wire `responseCode` is composed via
-//! [`Error::response_code`].
-//!
-//! Compared to v1.x:
-//!
-//! - `Unathorized` is renamed to [`Error::Unauthorized`] (hard rename).
-//! - `#[non_exhaustive]` is present — new variants are non-breaking.
-//! - The `#[default]` derive on `GeneralError` is dropped — callers must
-//!   construct an `Error` explicitly. No silent 500 fallback.
-//! - Method names lose their `get_` prefix.
-//! - Returns [`http::StatusCode`], not `actix_web::http::StatusCode`. Actix
-//!   re-exports the same upstream type, so existing consumers see no change.
 
-use crate::category::Category;
-use crate::response_code::{ResponseCode, ServiceCode};
+use crate::{CaseCode, Category, ServiceCode, ValidResponseCode};
 
-/// All known SNAP BI error variants plus a feature-gated `Crypto` bridge.
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum Error {
-    /// General request failed error, including message parsing failed.
-    #[error("Bad Request")]
-    BadRequest,
-    /// Invalid format
-    #[error("Invalid Field Format {0}")]
-    InvalidFieldFormat(String),
-    /// Missing or invalid format on mandatory field
-    #[error("Invalid Mandatory Field {0}")]
-    InvalidMandatoryField(String),
-    /// General unauthorized error (No Interface Def, API is Invalid, Oauth
-    /// Failed, Verify Client Secret Fail, Client Forbidden Access API, Unknown
-    /// Client, Key not Found).
-    #[error("Unauthorized. {0}")]
-    Unauthorized(String),
-    /// Token found in request is invalid (Access Token Not Exist, Access Token
-    /// Expiry)
-    #[error("Invalid Token (B2B)")]
-    InvalidTokenB2B,
-    /// Token found in request is invalid (Access Token Not Exist, Access Token
-    /// Expiry)
-    #[error("Invalid Customer Token")]
-    InvalidCustomerToken,
-    /// Token not found in the system. This occurs on any API that requires
-    /// token as input parameter
-    #[error("Token Not Found (B2B)")]
-    TokenNotFoundB2B,
-    /// Token not found in the system. This occurs on any API that requires
-    /// token as input parameter
-    #[error("Customer Token Not Found")]
-    CustomerTokenNotFound,
-    /// Transaction expired
-    #[error("Transaction Expired")]
-    TransactionExpired,
-    /// This merchant is not allowed to call Direct Debit APIs
-    #[error("Feature Not Allowed {0}")]
-    FeatureNotAllowed(String),
-    /// Exceeds Transaction Amount Limit
-    #[error("Exceeds Transaction Amount Limit")]
-    ExceedsTransactionAmountLimit,
-    /// Suspected Fraud
-    #[error("Suspected Fraud")]
-    SuspectedFraud,
-    /// Too many requests, exceeds transaction frequency limit
-    #[error("Activity Count Limit Exceeded")]
-    ActivityCountLimitExceeded,
-    /// Account or User status is abnormal
-    #[error("Do Not Honor")]
-    DoNotHonor,
-    /// Cut off in progress
-    #[error("Feature Not Allowed At This Time. {0}")]
-    FeatureNotAllowedAtThisTime(String),
-    /// The payment card is blocked
-    #[error("Card Blocked")]
-    CardBlocked,
-    /// The payment card is expired
-    #[error("Card Expired")]
-    CardExpired,
-    /// The account is dormant
-    #[error("Dormant Account")]
-    DormantAccount,
-    /// Need to set token limit
-    #[error("Need To Set Token Limit")]
-    NeedToSetTokenLimit,
-    /// OTP has been blocked
-    #[error("OTP Blocked")]
-    OTPBlocked,
-    /// OTP has been expired
-    #[error("OTP Lifetime Expired")]
-    OTPLifetimeExpired,
-    /// Initiates request OTP to the issuer
-    #[error("OTP Sent To Cardholder")]
-    OTPSentToCardholder,
-    /// Insufficient funds
-    #[error("Insufficient Funds")]
-    InsufficientFunds,
-    /// Transaction not permitted
-    #[error("Transaction Not Permitted. {0}")]
-    TransactionNotPermitted(String),
-    /// Suspend transaction
-    #[error("Suspend Transaction")]
-    SuspendTransaction,
-    /// Purchase amount exceeds the token limit set prior
-    #[error("Token Limit Exceeded")]
-    TokenLimitExceeded,
-    /// Inactive account
-    #[error("Inactive Card/Account/Customer")]
-    InactiveCardOrAccountOrCustomer,
-    /// Merchant is suspended from calling any APIs
-    #[error("Merchant Blacklisted")]
-    MerchantBlacklisted,
-    /// Merchant aggregated purchase amount on that day exceeds the agreed limit
-    #[error("Merchant Limit Exceed")]
-    MerchantLimitExceed,
-    /// Set limit not allowed on particular token
-    #[error("Set Limit Not Allowed")]
-    SetLimitNotAllowed,
-    /// The token limit desired by the merchant is not within the agreed range
-    /// between the merchant and the Issuer
-    #[error("Token Limit Invalid")]
-    TokenLimitInvalid,
-    /// Account aggregated purchase amount on that day exceeds the agreed limit
-    #[error("Account Limit Exceed")]
-    AccountLimitExceed,
-    /// Invalid transaction status
-    #[error("Invalid Transaction Status")]
-    InvalidTransactionStatus,
-    /// Transaction not found
-    #[error("Transaction Not Found")]
-    TransactionNotFound,
-    /// Invalid routing
-    #[error("Invalid Routing")]
-    InvalidRouting,
-    /// Bank not supported by switch
-    #[error("Bank Not Supported By Switch")]
-    BankNotSupportedBySwitch,
-    /// Transaction is cancelled by customer
-    #[error("Transaction Cancelled")]
-    TransactionCancelled,
-    /// Merchant is not registered for Card Registration services
-    #[error("Merchant Is Not Registered For Card Registration Services")]
-    MerchantNotRegisteredForCardRegistrationServices,
-    /// Need to request OTP
-    #[error("Need To Request OTP")]
-    NeedToRequestOTP,
-    /// The journeyId cannot be found in the system
-    #[error("Journey Not Found")]
-    JourneyNotFound,
-    /// Merchant does not exist or status abnormal
-    #[error("Invalid Merchant")]
-    InvalidMerchant,
-    /// No issuer
-    #[error("No Issuer")]
-    NoIssuer,
-    /// Invalid API transition within a journey
-    #[error("Invalid API Transition")]
-    InvalidAPITransition,
-    /// Card information may be invalid, or the card account may be blacklisted,
-    /// or Virtual Account number maybe invalid.
-    #[error("Invalid Card/Account/Customer {0}/Virtual Account")]
-    InvalidCardOrAccountOrCustomerOrVirtualAccount(String),
-    /// The bill or Virtual account is blocked/ suspended/not found.
-    #[error("Invalid Bill/Virtual Account {0}")]
-    InvalidBillOrVirtualAccountWithReason(String),
-    /// The amount doesn't match with what supposed to
-    #[error("Invalid Amount")]
-    InvalidAmount,
-    /// The bill has been paid
-    #[error("Paid Bill")]
-    PaidBill,
-    /// OTP is incorrect
-    #[error("Invalid OTP")]
-    InvalidOTP,
-    /// Partner number can't be found
-    #[error("Partner Not Found")]
-    PartnerNotFound,
-    /// Terminal does not exist in the system
-    #[error("Invalid Terminal")]
-    InvalidTerminal,
-    /// Inconsistent request parameter found for the same partner reference
-    /// number/transaction id.
-    #[error("Inconsistent Request")]
-    InconsistentRequest,
-    /// The bill is expired.
-    #[error("Invalid Bill/Virtual Account")]
-    InvalidBillOrVirtualAccount,
-    /// Requested function is not supported
-    #[error("Requested Function Is Not Supported")]
-    RequestedFunctionIsNotSupported,
-    /// Requested operation to cancel/refund transaction is not allowed at this
-    /// time.
-    #[error("Requested Operation Is Not Allowed")]
-    RequestedOperationIsNotAllowed,
-    /// Cannot use same X-EXTERNAL-ID in same day
-    #[error("Conflict")]
-    Conflict,
-    /// Transaction has previously been processed indicates the same
-    /// partnerReferenceNo already success
-    #[error("Duplicate partnerReferenceNo")]
-    DuplicatePartnerReferenceNo,
-    /// Maximum transaction limit exceeded
-    #[error("Too Many Requests")]
-    TooManyRequests,
-    /// General Error
-    #[error("General Error")]
-    GeneralError,
-    /// Unknown internal server failure, please retry the process again
-    #[error("Internal Server Error")]
-    InternalServerError,
-    /// Backend system failure, etc.
-    #[error("External Server Error")]
-    ExternalServerError,
-    /// Timeout from the issuer
-    #[error("Timeout")]
-    Timeout,
-
-    /// Bridge variant carrying a [`kamu_snap_crypto::Error`]. Only present
-    /// when the `crypto` feature is enabled.
-    #[cfg(feature = "crypto")]
-    #[error("crypto error: {0}")]
-    Crypto(#[from] kamu_snap_crypto::Error),
+macro_rules! variant_pattern {
+    ($variant:ident) => {
+        Self::$variant
+    };
+    ($variant:ident, $payload:ty) => {
+        Self::$variant(..)
+    };
 }
 
-impl Error {
-    /// Coarse [`Category`] for retry-policy / logging consumers.
-    pub fn category(&self) -> Category {
-        match self {
-            Self::BadRequest => Category::System,
-            Self::InvalidFieldFormat(_) => Category::Message,
-            Self::InvalidMandatoryField(_) => Category::Message,
-            Self::Unauthorized(_) => Category::System,
-            Self::InvalidTokenB2B => Category::System,
-            Self::InvalidCustomerToken => Category::System,
-            Self::TokenNotFoundB2B => Category::System,
-            Self::CustomerTokenNotFound => Category::System,
-            Self::TransactionExpired => Category::Business,
-            Self::FeatureNotAllowed(_) => Category::System,
-            Self::ExceedsTransactionAmountLimit => Category::Business,
-            Self::SuspectedFraud => Category::Business,
-            Self::ActivityCountLimitExceeded => Category::Business,
-            Self::DoNotHonor => Category::Business,
-            Self::FeatureNotAllowedAtThisTime(_) => Category::System,
-            Self::CardBlocked => Category::Business,
-            Self::CardExpired => Category::Business,
-            Self::DormantAccount => Category::Business,
-            Self::NeedToSetTokenLimit => Category::Business,
-            Self::OTPBlocked => Category::System,
-            Self::OTPLifetimeExpired => Category::System,
-            Self::OTPSentToCardholder => Category::System,
-            Self::InsufficientFunds => Category::Business,
-            Self::TransactionNotPermitted(_) => Category::Business,
-            Self::SuspendTransaction => Category::Business,
-            Self::TokenLimitExceeded => Category::Business,
-            Self::InactiveCardOrAccountOrCustomer => Category::Business,
-            Self::MerchantBlacklisted => Category::Business,
-            Self::MerchantLimitExceed => Category::Business,
-            Self::SetLimitNotAllowed => Category::Business,
-            Self::TokenLimitInvalid => Category::Business,
-            Self::AccountLimitExceed => Category::Business,
-            Self::InvalidTransactionStatus => Category::Business,
-            Self::TransactionNotFound => Category::Business,
-            Self::InvalidRouting => Category::System,
-            Self::BankNotSupportedBySwitch => Category::System,
-            Self::TransactionCancelled => Category::Business,
-            Self::MerchantNotRegisteredForCardRegistrationServices => Category::Business,
-            Self::NeedToRequestOTP => Category::System,
-            Self::JourneyNotFound => Category::System,
-            Self::InvalidMerchant => Category::Business,
-            Self::NoIssuer => Category::Business,
-            Self::InvalidAPITransition => Category::System,
-            Self::InvalidCardOrAccountOrCustomerOrVirtualAccount(_) => Category::Business,
-            Self::InvalidBillOrVirtualAccountWithReason(_) => Category::Business,
-            Self::InvalidAmount => Category::Business,
-            Self::PaidBill => Category::Business,
-            Self::InvalidOTP => Category::System,
-            Self::PartnerNotFound => Category::Business,
-            Self::InvalidTerminal => Category::Business,
-            Self::InconsistentRequest => Category::Business,
-            Self::InvalidBillOrVirtualAccount => Category::Business,
-            Self::RequestedFunctionIsNotSupported => Category::System,
-            Self::RequestedOperationIsNotAllowed => Category::Business,
-            Self::Conflict => Category::System,
-            Self::DuplicatePartnerReferenceNo => Category::System,
-            Self::TooManyRequests => Category::System,
-            Self::GeneralError => Category::System,
-            Self::InternalServerError => Category::System,
-            Self::ExternalServerError => Category::System,
-            Self::Timeout => Category::System,
+macro_rules! define_taxonomy {
+    (
+        $(
+            $variant:ident $(($payload:ty))? => (
+                $display:literal,
+                $message:literal,
+                $http:ident,
+                $case:literal,
+                $category:ident
+            );
+        )+
+    ) => {
+        /// Server-side SNAP BI errors.
+        ///
+        /// Use [`Error::class`] when only stable wire classification is needed.
+        #[derive(Debug, thiserror::Error)]
+        #[non_exhaustive]
+        pub enum Error {
+            $(
+                #[doc = $message]
+                #[error($display)]
+                $variant $(($payload))?,
+            )+
+            /// Classified bridge from `kamu-snap-crypto`.
             #[cfg(feature = "crypto")]
-            Self::Crypto(_) => Category::System,
+            #[error(transparent)]
+            Crypto(#[from] CryptoFailure),
+        }
+
+        /// Context-free classification for received and locally generated errors.
+        #[derive(
+            Debug,
+            Clone,
+            Copy,
+            PartialEq,
+            Eq,
+            Hash,
+            serde::Serialize,
+            serde::Deserialize,
+        )]
+        #[non_exhaustive]
+        pub enum ErrorClass {
+            $(
+                #[doc = $message]
+                $variant,
+            )+
+        }
+
+        impl ErrorClass {
+            /// Every taxonomy entry, in wire-table order.
+            pub const ALL: &'static [Self] = &[
+                $(Self::$variant,)+
+            ];
+
+            /// Coarse operational category.
+            #[must_use]
+            pub const fn category(self) -> Category {
+                match self {
+                    $(Self::$variant => Category::$category,)+
+                }
+            }
+
+            /// HTTP status assigned by SNAP BI.
+            #[must_use]
+            pub const fn http_status(self) -> http::StatusCode {
+                match self {
+                    $(Self::$variant => http::StatusCode::$http,)+
+                }
+            }
+
+            /// Two-digit case component.
+            #[must_use]
+            pub const fn case_code(self) -> CaseCode {
+                match self {
+                    $(Self::$variant => CaseCode::from_valid($case),)+
+                }
+            }
+
+            /// Canonical context-free response message.
+            #[must_use]
+            pub const fn message(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $message,)+
+                }
+            }
+
+            /// Rust variant name, suitable for structured logs.
+            #[must_use]
+            pub const fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => stringify!($variant),)+
+                }
+            }
+
+            /// Compose a valid wire code under `service`.
+            #[must_use]
+            pub fn response_code(self, service: ServiceCode) -> ValidResponseCode {
+                ValidResponseCode::from_parts(self.http_status(), service, self.case_code())
+            }
+
+            /// Look up a taxonomy entry without manufacturing missing context.
+            #[must_use]
+            pub fn from_http_and_case(
+                http: http::StatusCode,
+                case: CaseCode,
+            ) -> Option<Self> {
+                Some(match (http, case.get()) {
+                    $((http::StatusCode::$http, $case) => Self::$variant,)+
+                    _ => return None,
+                })
+            }
+        }
+
+        impl core::fmt::Display for ErrorClass {
+            fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                formatter.write_str(self.message())
+            }
+        }
+
+        impl Error {
+            /// Stable context-free classification.
+            #[must_use]
+            pub fn class(&self) -> ErrorClass {
+                match self {
+                    $(variant_pattern!($variant $(, $payload)?) => ErrorClass::$variant,)+
+                    #[cfg(feature = "crypto")]
+                    Self::Crypto(error) => error.class().error_class(),
+                }
+            }
+
+            /// Coarse operational category.
+            #[must_use]
+            pub fn category(&self) -> Category {
+                self.class().category()
+            }
+
+            /// HTTP status assigned by SNAP BI.
+            #[must_use]
+            pub fn http_status(&self) -> http::StatusCode {
+                self.class().http_status()
+            }
+
+            /// Two-digit case component.
+            #[must_use]
+            pub fn case_code(&self) -> CaseCode {
+                self.class().case_code()
+            }
+
+            /// Compose a valid wire code under `service`.
+            #[must_use]
+            pub fn response_code(&self, service: ServiceCode) -> ValidResponseCode {
+                self.class().response_code(service)
+            }
+
+            /// Public wire message. Crypto sources are never disclosed.
+            #[must_use]
+            pub fn response_message(&self) -> String {
+                #[cfg(feature = "crypto")]
+                if let Self::Crypto(error) = self {
+                    return error.class().error_class().message().to_owned();
+                }
+                self.to_string()
+            }
+
+            /// Crypto-specific operational class, when this error wraps crypto.
+            #[cfg(feature = "crypto")]
+            #[must_use]
+            pub const fn crypto_class(&self) -> Option<CryptoFailureClass> {
+                match self {
+                    Self::Crypto(error) => Some(error.class()),
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+
+define_taxonomy! {
+    BadRequest => ("Bad Request", "Bad Request", BAD_REQUEST, 0, System);
+    InvalidFieldFormat(String) => ("Invalid Field Format {0}", "Invalid Field Format", BAD_REQUEST, 1, Message);
+    InvalidMandatoryField(String) => ("Invalid Mandatory Field {0}", "Invalid Mandatory Field", BAD_REQUEST, 2, Message);
+    Unauthorized(String) => ("Unauthorized. {0}", "Unauthorized", UNAUTHORIZED, 0, System);
+    InvalidTokenB2B => ("Invalid Token (B2B)", "Invalid Token (B2B)", UNAUTHORIZED, 1, System);
+    InvalidCustomerToken => ("Invalid Customer Token", "Invalid Customer Token", UNAUTHORIZED, 2, System);
+    TokenNotFoundB2B => ("Token Not Found (B2B)", "Token Not Found (B2B)", UNAUTHORIZED, 3, System);
+    CustomerTokenNotFound => ("Customer Token Not Found", "Customer Token Not Found", UNAUTHORIZED, 4, System);
+    TransactionExpired => ("Transaction Expired", "Transaction Expired", FORBIDDEN, 0, Business);
+    FeatureNotAllowed(String) => ("Feature Not Allowed {0}", "Feature Not Allowed", FORBIDDEN, 1, System);
+    ExceedsTransactionAmountLimit => ("Exceeds Transaction Amount Limit", "Exceeds Transaction Amount Limit", FORBIDDEN, 2, Business);
+    SuspectedFraud => ("Suspected Fraud", "Suspected Fraud", FORBIDDEN, 3, Business);
+    ActivityCountLimitExceeded => ("Activity Count Limit Exceeded", "Activity Count Limit Exceeded", FORBIDDEN, 4, Business);
+    DoNotHonor => ("Do Not Honor", "Do Not Honor", FORBIDDEN, 5, Business);
+    FeatureNotAllowedAtThisTime(String) => ("Feature Not Allowed At This Time. {0}", "Feature Not Allowed At This Time", FORBIDDEN, 6, System);
+    CardBlocked => ("Card Blocked", "Card Blocked", FORBIDDEN, 7, Business);
+    CardExpired => ("Card Expired", "Card Expired", FORBIDDEN, 8, Business);
+    DormantAccount => ("Dormant Account", "Dormant Account", FORBIDDEN, 9, Business);
+    NeedToSetTokenLimit => ("Need To Set Token Limit", "Need To Set Token Limit", FORBIDDEN, 10, Business);
+    OTPBlocked => ("OTP Blocked", "OTP Blocked", FORBIDDEN, 11, System);
+    OTPLifetimeExpired => ("OTP Lifetime Expired", "OTP Lifetime Expired", FORBIDDEN, 12, System);
+    OTPSentToCardholder => ("OTP Sent To Cardholder", "OTP Sent To Cardholder", FORBIDDEN, 13, System);
+    InsufficientFunds => ("Insufficient Funds", "Insufficient Funds", FORBIDDEN, 14, Business);
+    TransactionNotPermitted(String) => ("Transaction Not Permitted. {0}", "Transaction Not Permitted", FORBIDDEN, 15, Business);
+    SuspendTransaction => ("Suspend Transaction", "Suspend Transaction", FORBIDDEN, 16, Business);
+    TokenLimitExceeded => ("Token Limit Exceeded", "Token Limit Exceeded", FORBIDDEN, 17, Business);
+    InactiveCardOrAccountOrCustomer => ("Inactive Card/Account/Customer", "Inactive Card/Account/Customer", FORBIDDEN, 18, Business);
+    MerchantBlacklisted => ("Merchant Blacklisted", "Merchant Blacklisted", FORBIDDEN, 19, Business);
+    MerchantLimitExceed => ("Merchant Limit Exceed", "Merchant Limit Exceed", FORBIDDEN, 20, Business);
+    SetLimitNotAllowed => ("Set Limit Not Allowed", "Set Limit Not Allowed", FORBIDDEN, 21, Business);
+    TokenLimitInvalid => ("Token Limit Invalid", "Token Limit Invalid", FORBIDDEN, 22, Business);
+    AccountLimitExceed => ("Account Limit Exceed", "Account Limit Exceed", FORBIDDEN, 23, Business);
+    InvalidTransactionStatus => ("Invalid Transaction Status", "Invalid Transaction Status", NOT_FOUND, 0, Business);
+    TransactionNotFound => ("Transaction Not Found", "Transaction Not Found", NOT_FOUND, 1, Business);
+    InvalidRouting => ("Invalid Routing", "Invalid Routing", NOT_FOUND, 2, System);
+    BankNotSupportedBySwitch => ("Bank Not Supported By Switch", "Bank Not Supported By Switch", NOT_FOUND, 3, System);
+    TransactionCancelled => ("Transaction Cancelled", "Transaction Cancelled", NOT_FOUND, 4, Business);
+    MerchantNotRegisteredForCardRegistrationServices => ("Merchant Is Not Registered For Card Registration Services", "Merchant Is Not Registered For Card Registration Services", NOT_FOUND, 5, Business);
+    NeedToRequestOTP => ("Need To Request OTP", "Need To Request OTP", NOT_FOUND, 6, System);
+    JourneyNotFound => ("Journey Not Found", "Journey Not Found", NOT_FOUND, 7, System);
+    InvalidMerchant => ("Invalid Merchant", "Invalid Merchant", NOT_FOUND, 8, Business);
+    NoIssuer => ("No Issuer", "No Issuer", NOT_FOUND, 9, Business);
+    InvalidAPITransition => ("Invalid API Transition", "Invalid API Transition", NOT_FOUND, 10, System);
+    InvalidCardOrAccountOrCustomerOrVirtualAccount(String) => ("Invalid Card/Account/Customer {0}/Virtual Account", "Invalid Card/Account/Customer/Virtual Account", NOT_FOUND, 11, Business);
+    InvalidBillOrVirtualAccountWithReason(String) => ("Invalid Bill/Virtual Account {0}", "Invalid Bill/Virtual Account", NOT_FOUND, 12, Business);
+    InvalidAmount => ("Invalid Amount", "Invalid Amount", NOT_FOUND, 13, Business);
+    PaidBill => ("Paid Bill", "Paid Bill", NOT_FOUND, 14, Business);
+    InvalidOTP => ("Invalid OTP", "Invalid OTP", NOT_FOUND, 15, System);
+    PartnerNotFound => ("Partner Not Found", "Partner Not Found", NOT_FOUND, 16, Business);
+    InvalidTerminal => ("Invalid Terminal", "Invalid Terminal", NOT_FOUND, 17, Business);
+    InconsistentRequest => ("Inconsistent Request", "Inconsistent Request", NOT_FOUND, 18, Business);
+    InvalidBillOrVirtualAccount => ("Invalid Bill/Virtual Account", "Invalid Bill/Virtual Account", NOT_FOUND, 19, Business);
+    RequestedFunctionIsNotSupported => ("Requested Function Is Not Supported", "Requested Function Is Not Supported", METHOD_NOT_ALLOWED, 0, System);
+    RequestedOperationIsNotAllowed => ("Requested Operation Is Not Allowed", "Requested Operation Is Not Allowed", METHOD_NOT_ALLOWED, 1, Business);
+    Conflict => ("Conflict", "Conflict", CONFLICT, 0, System);
+    DuplicatePartnerReferenceNo => ("Duplicate partnerReferenceNo", "Duplicate partnerReferenceNo", CONFLICT, 1, System);
+    TooManyRequests => ("Too Many Requests", "Too Many Requests", TOO_MANY_REQUESTS, 0, System);
+    GeneralError => ("General Error", "General Error", INTERNAL_SERVER_ERROR, 0, System);
+    InternalServerError => ("Internal Server Error", "Internal Server Error", INTERNAL_SERVER_ERROR, 1, System);
+    ExternalServerError => ("External Server Error", "External Server Error", INTERNAL_SERVER_ERROR, 2, System);
+    Timeout => ("Timeout", "Timeout", GATEWAY_TIMEOUT, 0, System);
+}
+
+/// Operational class retained when converting a crypto error.
+#[cfg(feature = "crypto")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum CryptoFailureClass {
+    /// Remote credentials or signatures failed authentication.
+    Authentication,
+    /// Inbound request components were malformed.
+    InvalidRequest,
+    /// Local keys or configuration were invalid.
+    Configuration,
+    /// A future or unclassified internal failure.
+    Internal,
+}
+
+#[cfg(feature = "crypto")]
+impl CryptoFailureClass {
+    /// Classify without exposing the source error on the wire.
+    #[must_use]
+    pub fn from_error(error: &kamu_snap_crypto::Error) -> Self {
+        use kamu_snap_crypto::Error as CryptoError;
+
+        match error {
+            CryptoError::InvalidPublicKey(_) | CryptoError::InvalidSecretKey(_) => Self::Configuration,
+            CryptoError::SignatureDecode { .. }
+            | CryptoError::InvalidRawSignature(_)
+            | CryptoError::SymmetricVerifyFailed
+            | CryptoError::AsymmetricVerifyFailed => Self::Authentication,
+            CryptoError::MissingHeader { name } | CryptoError::InvalidHeader { name }
+                if is_auth_header(name) =>
+            {
+                Self::Authentication
+            }
+            CryptoError::SnapBiInput(_)
+            | CryptoError::MissingHeader { .. }
+            | CryptoError::InvalidHeader { .. } => Self::InvalidRequest,
+            CryptoError::ServiceVerification(error) => Self::from_service_verification(error),
+            _ => Self::Internal,
         }
     }
 
-    /// HTTP status code mapped per the SNAP BI taxonomy.
-    pub fn http_status(&self) -> http::StatusCode {
+    /// SNAP BI taxonomy entry exposed to clients.
+    #[must_use]
+    pub const fn error_class(self) -> ErrorClass {
         match self {
-            Self::BadRequest | Self::InvalidFieldFormat(_) | Self::InvalidMandatoryField(_) => {
-                http::StatusCode::BAD_REQUEST
-            }
-
-            Self::Unauthorized(_)
-            | Self::InvalidTokenB2B
-            | Self::InvalidCustomerToken
-            | Self::TokenNotFoundB2B
-            | Self::CustomerTokenNotFound => http::StatusCode::UNAUTHORIZED,
-
-            Self::TransactionExpired
-            | Self::FeatureNotAllowed(_)
-            | Self::ExceedsTransactionAmountLimit
-            | Self::SuspectedFraud
-            | Self::ActivityCountLimitExceeded
-            | Self::DoNotHonor
-            | Self::FeatureNotAllowedAtThisTime(_)
-            | Self::CardBlocked
-            | Self::CardExpired
-            | Self::DormantAccount
-            | Self::NeedToSetTokenLimit
-            | Self::OTPBlocked
-            | Self::OTPLifetimeExpired
-            | Self::OTPSentToCardholder
-            | Self::InsufficientFunds
-            | Self::TransactionNotPermitted(_)
-            | Self::SuspendTransaction
-            | Self::TokenLimitExceeded
-            | Self::InactiveCardOrAccountOrCustomer
-            | Self::MerchantBlacklisted
-            | Self::MerchantLimitExceed
-            | Self::SetLimitNotAllowed
-            | Self::TokenLimitInvalid
-            | Self::AccountLimitExceed => http::StatusCode::FORBIDDEN,
-
-            Self::InvalidOTP
-            | Self::InvalidTransactionStatus
-            | Self::TransactionCancelled
-            | Self::MerchantNotRegisteredForCardRegistrationServices
-            | Self::PaidBill
-            | Self::PartnerNotFound
-            | Self::JourneyNotFound
-            | Self::InvalidMerchant
-            | Self::NoIssuer
-            | Self::TransactionNotFound
-            | Self::InconsistentRequest
-            | Self::InvalidAmount
-            | Self::InvalidAPITransition
-            | Self::InvalidRouting
-            | Self::BankNotSupportedBySwitch
-            | Self::InvalidTerminal
-            | Self::InvalidCardOrAccountOrCustomerOrVirtualAccount(_)
-            | Self::InvalidBillOrVirtualAccountWithReason(_)
-            | Self::InvalidBillOrVirtualAccount
-            | Self::NeedToRequestOTP => http::StatusCode::NOT_FOUND,
-
-            Self::RequestedFunctionIsNotSupported | Self::RequestedOperationIsNotAllowed => {
-                http::StatusCode::METHOD_NOT_ALLOWED
-            }
-
-            Self::Conflict | Self::DuplicatePartnerReferenceNo => http::StatusCode::CONFLICT,
-
-            Self::TooManyRequests => http::StatusCode::TOO_MANY_REQUESTS,
-
-            Self::GeneralError | Self::InternalServerError | Self::ExternalServerError => {
-                http::StatusCode::INTERNAL_SERVER_ERROR
-            }
-
-            Self::Timeout => http::StatusCode::GATEWAY_TIMEOUT,
-
-            #[cfg(feature = "crypto")]
-            Self::Crypto(_) => http::StatusCode::UNAUTHORIZED,
+            Self::Authentication => ErrorClass::Unauthorized,
+            Self::InvalidRequest => ErrorClass::BadRequest,
+            Self::Configuration | Self::Internal => ErrorClass::InternalServerError,
         }
     }
 
-    /// 2-digit case code embedded in the `responseCode`.
-    pub fn case_code(&self) -> u8 {
-        match self {
-            Self::BadRequest => 0,
-            Self::InvalidFieldFormat(_) => 1,
-            Self::InvalidMandatoryField(_) => 2,
-            Self::Unauthorized(_) => 0,
-            Self::InvalidTokenB2B => 1,
-            Self::InvalidCustomerToken => 2,
-            Self::TokenNotFoundB2B => 3,
-            Self::CustomerTokenNotFound => 4,
-            Self::TransactionExpired => 0,
-            Self::FeatureNotAllowed(_) => 1,
-            Self::ExceedsTransactionAmountLimit => 2,
-            Self::SuspectedFraud => 3,
-            Self::ActivityCountLimitExceeded => 4,
-            Self::DoNotHonor => 5,
-            Self::FeatureNotAllowedAtThisTime(_) => 6,
-            Self::CardBlocked => 7,
-            Self::CardExpired => 8,
-            Self::DormantAccount => 9,
-            Self::NeedToSetTokenLimit => 10,
-            Self::OTPBlocked => 11,
-            Self::OTPLifetimeExpired => 12,
-            Self::OTPSentToCardholder => 13,
-            Self::InsufficientFunds => 14,
-            Self::TransactionNotPermitted(_) => 15,
-            Self::SuspendTransaction => 16,
-            Self::TokenLimitExceeded => 17,
-            Self::InactiveCardOrAccountOrCustomer => 18,
-            Self::MerchantBlacklisted => 19,
-            Self::MerchantLimitExceed => 20,
-            Self::SetLimitNotAllowed => 21,
-            Self::TokenLimitInvalid => 22,
-            Self::AccountLimitExceed => 23,
-            Self::InvalidTransactionStatus => 0,
-            Self::TransactionNotFound => 1,
-            Self::InvalidRouting => 2,
-            Self::BankNotSupportedBySwitch => 3,
-            Self::TransactionCancelled => 4,
-            Self::MerchantNotRegisteredForCardRegistrationServices => 5,
-            Self::NeedToRequestOTP => 6,
-            Self::JourneyNotFound => 7,
-            Self::InvalidMerchant => 8,
-            Self::NoIssuer => 9,
-            Self::InvalidAPITransition => 10,
-            Self::InvalidCardOrAccountOrCustomerOrVirtualAccount(_) => 11,
-            Self::InvalidBillOrVirtualAccountWithReason(_) => 12,
-            Self::InvalidAmount => 13,
-            Self::PaidBill => 14,
-            Self::InvalidOTP => 15,
-            Self::PartnerNotFound => 16,
-            Self::InvalidTerminal => 17,
-            Self::InconsistentRequest => 18,
-            Self::InvalidBillOrVirtualAccount => 19,
-            Self::RequestedFunctionIsNotSupported => 0,
-            Self::RequestedOperationIsNotAllowed => 1,
-            Self::Conflict => 0,
-            Self::DuplicatePartnerReferenceNo => 1,
-            Self::TooManyRequests => 0,
-            Self::GeneralError => 0,
-            Self::InternalServerError => 1,
-            Self::ExternalServerError => 2,
-            Self::Timeout => 0,
-            #[cfg(feature = "crypto")]
-            Self::Crypto(_) => 0,
+    fn from_service_verification(error: &kamu_snap_crypto::ServiceVerificationError) -> Self {
+        use kamu_snap_crypto::ServiceVerificationError as VerificationError;
+
+        match error {
+            VerificationError::Authorization(_)
+            | VerificationError::InvalidSignatureEncoding
+            | VerificationError::InvalidSignatureLength { .. }
+            | VerificationError::SignatureMismatch => Self::Authentication,
+            VerificationError::MissingHeader { name } | VerificationError::InvalidHeader { name }
+                if is_auth_header(name) =>
+            {
+                Self::Authentication
+            }
+            VerificationError::MissingHeader { .. }
+            | VerificationError::InvalidHeader { .. }
+            | VerificationError::InvalidMethod
+            | VerificationError::Input(_) => Self::InvalidRequest,
+            _ => Self::Internal,
         }
     }
+}
 
-    /// Compose the full wire `responseCode` for this variant under `service`.
-    pub fn response_code(&self, service: ServiceCode) -> ResponseCode {
-        ResponseCode::from_parts(self.http_status().as_u16(), service, self.case_code())
+#[cfg(feature = "crypto")]
+fn is_auth_header(name: &str) -> bool {
+    name.eq_ignore_ascii_case("Authorization") || name.eq_ignore_ascii_case("X-SIGNATURE")
+}
+
+/// A redacted crypto source plus its stable operational class.
+#[cfg(feature = "crypto")]
+pub struct CryptoFailure {
+    class: CryptoFailureClass,
+    source: kamu_snap_crypto::Error,
+}
+
+#[cfg(feature = "crypto")]
+impl CryptoFailure {
+    /// Stable operational class.
+    #[must_use]
+    pub const fn class(&self) -> CryptoFailureClass {
+        self.class
     }
 
-    /// Inverse classifier — given a received `(http, case)`, return the
-    /// matching variant with empty payload for string-bearing variants.
-    /// `None` for unknown pairs.
-    pub fn from_http_and_case(http: u16, case: u8) -> Option<Self> {
-        use Error::*;
-        Some(match (http, case) {
-            (400, 0) => BadRequest,
-            (400, 1) => InvalidFieldFormat(String::new()),
-            (400, 2) => InvalidMandatoryField(String::new()),
+    /// Original source for server-side diagnostics.
+    #[must_use]
+    pub const fn source_error(&self) -> &kamu_snap_crypto::Error {
+        &self.source
+    }
+}
 
-            (401, 0) => Unauthorized(String::new()),
-            (401, 1) => InvalidTokenB2B,
-            (401, 2) => InvalidCustomerToken,
-            (401, 3) => TokenNotFoundB2B,
-            (401, 4) => CustomerTokenNotFound,
+#[cfg(feature = "crypto")]
+impl From<kamu_snap_crypto::Error> for CryptoFailure {
+    fn from(source: kamu_snap_crypto::Error) -> Self {
+        let class = CryptoFailureClass::from_error(&source);
+        Self { class, source }
+    }
+}
 
-            (403, 0) => TransactionExpired,
-            (403, 1) => FeatureNotAllowed(String::new()),
-            (403, 2) => ExceedsTransactionAmountLimit,
-            (403, 3) => SuspectedFraud,
-            (403, 4) => ActivityCountLimitExceeded,
-            (403, 5) => DoNotHonor,
-            (403, 6) => FeatureNotAllowedAtThisTime(String::new()),
-            (403, 7) => CardBlocked,
-            (403, 8) => CardExpired,
-            (403, 9) => DormantAccount,
-            (403, 10) => NeedToSetTokenLimit,
-            (403, 11) => OTPBlocked,
-            (403, 12) => OTPLifetimeExpired,
-            (403, 13) => OTPSentToCardholder,
-            (403, 14) => InsufficientFunds,
-            (403, 15) => TransactionNotPermitted(String::new()),
-            (403, 16) => SuspendTransaction,
-            (403, 17) => TokenLimitExceeded,
-            (403, 18) => InactiveCardOrAccountOrCustomer,
-            (403, 19) => MerchantBlacklisted,
-            (403, 20) => MerchantLimitExceed,
-            (403, 21) => SetLimitNotAllowed,
-            (403, 22) => TokenLimitInvalid,
-            (403, 23) => AccountLimitExceed,
+#[cfg(feature = "crypto")]
+impl From<kamu_snap_crypto::Error> for Error {
+    fn from(source: kamu_snap_crypto::Error) -> Self {
+        Self::Crypto(source.into())
+    }
+}
 
-            (404, 0) => InvalidTransactionStatus,
-            (404, 1) => TransactionNotFound,
-            (404, 2) => InvalidRouting,
-            (404, 3) => BankNotSupportedBySwitch,
-            (404, 4) => TransactionCancelled,
-            (404, 5) => MerchantNotRegisteredForCardRegistrationServices,
-            (404, 6) => NeedToRequestOTP,
-            (404, 7) => JourneyNotFound,
-            (404, 8) => InvalidMerchant,
-            (404, 9) => NoIssuer,
-            (404, 10) => InvalidAPITransition,
-            (404, 11) => InvalidCardOrAccountOrCustomerOrVirtualAccount(String::new()),
-            (404, 12) => InvalidBillOrVirtualAccountWithReason(String::new()),
-            (404, 13) => InvalidAmount,
-            (404, 14) => PaidBill,
-            (404, 15) => InvalidOTP,
-            (404, 16) => PartnerNotFound,
-            (404, 17) => InvalidTerminal,
-            (404, 18) => InconsistentRequest,
-            (404, 19) => InvalidBillOrVirtualAccount,
+#[cfg(feature = "crypto")]
+impl core::fmt::Debug for CryptoFailure {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.debug_struct("CryptoFailure").field("class", &self.class).finish_non_exhaustive()
+    }
+}
 
-            (405, 0) => RequestedFunctionIsNotSupported,
-            (405, 1) => RequestedOperationIsNotAllowed,
+#[cfg(feature = "crypto")]
+impl core::fmt::Display for CryptoFailure {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let message = match self.class {
+            CryptoFailureClass::Authentication => "crypto authentication failed",
+            CryptoFailureClass::InvalidRequest => "crypto request input is invalid",
+            CryptoFailureClass::Configuration => "crypto configuration is invalid",
+            CryptoFailureClass::Internal => "crypto operation failed",
+        };
+        formatter.write_str(message)
+    }
+}
 
-            (409, 0) => Conflict,
-            (409, 1) => DuplicatePartnerReferenceNo,
-
-            (429, 0) => TooManyRequests,
-
-            (500, 0) => GeneralError,
-            (500, 1) => InternalServerError,
-            (500, 2) => ExternalServerError,
-
-            (504, 0) => Timeout,
-
-            _ => return None,
-        })
+#[cfg(feature = "crypto")]
+impl std::error::Error for CryptoFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
     }
 }

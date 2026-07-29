@@ -21,13 +21,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
-# ONE WRITER AT A TIME, TAKEN BEFORE ANYTHING SHARED IS TOUCHED. This script reads and writes under
-# ${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}, which with that variable unset is the single tree
-# every other suite also uses; a 2026-07-26 review found several entry points reaching those paths
-# before -- or entirely without -- taking the lock, so a stray run could overwrite the artefact
-# triplet a release was in the middle of hashing. Setting KMONEY_RUN_ROOT gives a run its own tree,
-# which removes the contention rather than serialising it; the lock stays for the shared default.
-# Re-entrant: a suite started by `release-check` inherits the descriptor and proceeds.
+# Lock before touching the shared default run root. A distinct `KMONEY_RUN_ROOT` isolates a run;
+# descendants of the release gate inherit the descriptor and re-enter.
 # shellcheck source=kamu-money-pg/yb/workspace-lock.sh
 source ./kamu-money-pg/yb/workspace-lock.sh
 workspace_lock "$(basename "$0")" || exit 1
@@ -51,7 +46,7 @@ yb_install_extension_on_all "$ART"
 echo
 echo "=== 1. the extension reaches EVERY read-replica node, by hash ==="
 # yb_install_extension_on_all covered the primary. The read replicas are a separate placement and
-# were brought up separately, so they are checked separately -- the whole point is that a step
+# were brought up separately, so check each group explicitly; a step
 # which only walks YB_NODES silently skips them.
 # The reference is what the PRIMARY is actually running, whatever put it there -- a baked image or
 # a copy. Comparing a replica against the primary is the claim that matters: one library, one

@@ -1,40 +1,40 @@
 //! The canonical text form: one trim rule, shared by `Display` and (later) the serde wire.
 //!
 //! Render at 18dp, strip trailing zeros, **stop at the currency's ISO settlement exponent**.
-//! Never round — padding is the only thing it adds, so §0.1's "display pads, never rounds"
-//! holds. Parse is liberal: any exact decimal is accepted, so the round trip is a
-//! **retraction** (`parse(render(v)) == v`) and not a bijection. (DESIGN.md C7)
+//! Never round. Parse is liberal, so `parse(render(v)) == v` is a retraction rather than a
+//! bijection.
 
-use kamu_money_core::domain::{DOMAIN_MAX, MoneyError, POW10_SCALE};
+use kamu_money_core::Money;
+use kamu_money_core::advanced::domain::{DOMAIN_MAX, POW10_SCALE};
+use kamu_money_core::errors::{AmountError, ParseMoneyError};
 use kamu_money_core::iso::{IDR, JPY, KWD, USD, XAU};
-use kamu_money_core::money::Money;
 use proptest::prelude::*;
 use std::str::FromStr;
 
 fn usd(units: i128) -> Money<USD> {
-    Money::<USD>::from_units(units).unwrap()
+    Money::<USD>::try_from_units(units).unwrap()
 }
 
 /// The whole trim rule, as a table. One stored value, four settlement exponents.
 #[test]
 fn the_minimum_width_is_the_iso_settlement_exponent() {
     let half = 10_500_000_000_000_000_000; // 10.5
-    assert_eq!(Money::<USD>::from_units(half).unwrap().to_string(), "USD 10.50"); // exp 2
-    assert_eq!(Money::<JPY>::from_units(half).unwrap().to_string(), "JPY 10.5"); // exp 0
-    assert_eq!(Money::<KWD>::from_units(half).unwrap().to_string(), "KWD 10.500"); // exp 3
-    assert_eq!(Money::<XAU>::from_units(half).unwrap().to_string(), "XAU 10.5"); // None -> 0
+    assert_eq!(Money::<USD>::try_from_units(half).unwrap().to_string(), "USD 10.50"); // exp 2
+    assert_eq!(Money::<JPY>::try_from_units(half).unwrap().to_string(), "JPY 10.5"); // exp 0
+    assert_eq!(Money::<KWD>::try_from_units(half).unwrap().to_string(), "KWD 10.500"); // exp 3
+    assert_eq!(Money::<XAU>::try_from_units(half).unwrap().to_string(), "XAU 10.5"); // None -> 0
 
     let whole = 10_000_000_000_000_000_000; // 10
-    assert_eq!(Money::<USD>::from_units(whole).unwrap().to_string(), "USD 10.00");
-    assert_eq!(Money::<JPY>::from_units(whole).unwrap().to_string(), "JPY 10");
-    assert_eq!(Money::<KWD>::from_units(whole).unwrap().to_string(), "KWD 10.000");
-    assert_eq!(Money::<XAU>::from_units(whole).unwrap().to_string(), "XAU 10");
+    assert_eq!(Money::<USD>::try_from_units(whole).unwrap().to_string(), "USD 10.00");
+    assert_eq!(Money::<JPY>::try_from_units(whole).unwrap().to_string(), "JPY 10");
+    assert_eq!(Money::<KWD>::try_from_units(whole).unwrap().to_string(), "KWD 10.000");
+    assert_eq!(Money::<XAU>::try_from_units(whole).unwrap().to_string(), "XAU 10");
 }
 
 /// Every significant digit survives, all the way down to one canonical unit.
 ///
-/// This is the half of §0.1 that trimming could have broken: padding up to the settlement
-/// exponent is fine, but nothing may ever be dropped off the right-hand end.
+/// Padding up to the settlement exponent is allowed; dropping a significant fractional digit is
+/// not.
 #[test]
 fn trimming_never_rounds() {
     assert_eq!(usd(10_123_456_789_000_000_000).to_string(), "USD 10.123456789");
@@ -54,8 +54,7 @@ fn zero_and_sign_render_correctly() {
 
 /// Parse is LIBERAL: it accepts any exact decimal, not only the canonical spelling.
 ///
-/// That is a deliberate weakening of C7's original "bijection" claim, and it is why the
-/// property below is `parse(render(v)) == v` rather than a two-way identity.
+/// The property is `parse(render(v)) == v`, not a two-way textual identity.
 #[test]
 fn parse_accepts_non_canonical_spellings_of_the_same_value() {
     let canonical = usd(10_500_000_000_000_000_000);
@@ -72,7 +71,7 @@ fn parse_accepts_non_canonical_spellings_of_the_same_value() {
 fn parsing_the_wrong_currency_is_an_error() {
     assert_eq!(
         Money::<USD>::from_str("IDR 10.50"),
-        Err(MoneyError::WrongCurrency {
+        Err(ParseMoneyError::WrongCurrency {
             expected: kamu_money_core::Iso4217::USD,
             found: kamu_money_core::Iso4217::IDR,
         })
@@ -96,11 +95,9 @@ fn malformed_input_is_refused_rather_than_guessed() {
     }
 }
 
-/// Excess precision is REFUSED, never silently rounded.
+/// Excess precision is refused, never silently rounded.
 ///
-/// This is the failure that killed `rust_decimal` for this crate (E2): its `from_str`
-/// silently rounded out-of-domain input and returned `Ok`. A money parser that rounds is a
-/// money parser that loses money quietly.
+/// A money parser must not turn a distinct over-precise input into an accepted value.
 #[test]
 fn excess_precision_is_refused_not_rounded() {
     assert!(Money::<USD>::from_str("USD 0.0000000000000000005").is_err());
@@ -108,11 +105,9 @@ fn excess_precision_is_refused_not_rounded() {
 }
 
 proptest! {
-    /// THE round-trip property, stated honestly as a retraction.
-    ///
-    /// `parse(render(v)) == v` for every value in the domain. The converse does NOT hold —
+    /// `parse(render(v)) == v` for every value in the domain. The converse does not hold:
     /// `render(parse(s)) == s` fails for "USD 10.5", which parses fine but renders as
-    /// "USD 10.50" — which is precisely why C7's "bijection" was downgraded.
+    /// "USD 10.50".
     #[test]
     fn prop_parse_of_render_is_the_identity(units in -DOMAIN_MAX..=DOMAIN_MAX) {
         let m = usd(units);
@@ -123,11 +118,11 @@ proptest! {
     /// removes the decimal point entirely and the parser must cope with a bare integer.
     #[test]
     fn prop_parse_of_render_is_the_identity_at_exponent_zero(units in -DOMAIN_MAX..=DOMAIN_MAX) {
-        let m = Money::<JPY>::from_units(units).unwrap();
+        let m = Money::<JPY>::try_from_units(units).unwrap();
         prop_assert_eq!(Money::<JPY>::from_str(&m.to_string()).unwrap(), m);
     }
 
-    /// Rendering is CANONICAL: re-rendering a parsed canonical string changes nothing.
+    /// Re-rendering a parsed canonical string changes nothing.
     #[test]
     fn prop_render_is_idempotent_through_a_parse(units in -DOMAIN_MAX..=DOMAIN_MAX) {
         let once = usd(units).to_string();
@@ -141,15 +136,14 @@ proptest! {
 //
 // Format `:4!c//3!a/3!a/15d`, e.g. `:92B::EXCH//GBP/USD/1,619` meaning 1,00 GBP = 1,619 USD.
 // First code is the BASE, second is the QUOTE. One deviation, documented: the decimal
-// separator is a POINT, not SWIFT's comma, because C7's whole reason for using a string is
-// exact decimal transport into JavaScript and `parseFloat("1,619")` is `1`.
+// separator is a point, not SWIFT's comma, for exact decimal transport into JavaScript.
 // ---------------------------------------------------------------------------------------
 
-use kamu_money_core::rate::Rate;
+use kamu_money_core::Rate;
 
 #[test]
 fn a_rate_renders_as_base_slash_quote_slash_rate() {
-    let r = Rate::<USD, IDR>::from_units(16_000 * POW10_SCALE).unwrap();
+    let r = Rate::<USD, IDR>::try_from_units(16_000 * POW10_SCALE).unwrap();
     assert_eq!(r.to_string(), "USD/IDR/16000");
 }
 
@@ -157,20 +151,20 @@ fn a_rate_renders_as_base_slash_quote_slash_rate() {
 /// way to the last significant digit. `USD/IDR/16000`, never `USD/IDR/16000.00`.
 #[test]
 fn a_rate_has_no_settlement_exponent_so_it_trims_fully() {
-    let whole = Rate::<USD, IDR>::from_units(16_000 * POW10_SCALE).unwrap();
+    let whole = Rate::<USD, IDR>::try_from_units(16_000 * POW10_SCALE).unwrap();
     assert_eq!(whole.to_string(), "USD/IDR/16000");
 
-    let fractional = Rate::<USD, IDR>::from_units(15_432_100_000_000_000_000_000).unwrap();
+    let fractional = Rate::<USD, IDR>::try_from_units(15_432_100_000_000_000_000_000).unwrap();
     assert_eq!(fractional.to_string(), "USD/IDR/15432.1");
 
     // Even for a pair whose currencies both have exponents.
-    let kwd = Rate::<KWD, JPY>::from_units(POW10_SCALE / 2).unwrap();
+    let kwd = Rate::<KWD, JPY>::try_from_units(POW10_SCALE / 2).unwrap();
     assert_eq!(kwd.to_string(), "KWD/JPY/0.5");
 }
 
 #[test]
 fn a_rate_round_trips_and_checks_both_ends_of_the_pair() {
-    let r = Rate::<USD, IDR>::from_units(16_000 * POW10_SCALE).unwrap();
+    let r = Rate::<USD, IDR>::try_from_units(16_000 * POW10_SCALE).unwrap();
     assert_eq!(Rate::<USD, IDR>::from_str(&r.to_string()).unwrap(), r);
 
     assert!(Rate::<JPY, IDR>::from_str("USD/IDR/16000").is_err(), "the BASE end must be checked");
@@ -196,11 +190,10 @@ fn a_rate_refuses_malformed_text() {
 
 proptest! {
     #[test]
-    /// Positive-only since H1 (2026-07-27): a rate is a price. The round trip is the property
-    /// under test, and it is unchanged -- only the set of values a `Rate` can hold moved.
+    /// Rates are strictly positive.
     #[test]
     fn prop_rate_parse_of_render_is_the_identity(units in 1..=DOMAIN_MAX) {
-        let r = Rate::<USD, IDR>::from_units(units).unwrap();
+        let r = Rate::<USD, IDR>::try_from_units(units).unwrap();
         prop_assert_eq!(Rate::<USD, IDR>::from_str(&r.to_string()).unwrap(), r);
     }
 }
@@ -209,8 +202,7 @@ proptest! {
 // The runtime-currency codec: `text::render` / `text::parse` / `text::parse_amount`.
 //
 // A PostgreSQL type cannot be generic, so `kamu-money-pg` cannot reach `Money<C>`'s `Display` or
-// `FromStr` and would otherwise reimplement the trim rule (C9 forbids exactly that — an
-// adapter is thin over ONE codec). These entry points exist so the database and the Rust
+// `FromStr` and would otherwise reimplement the trim rule. These entry points ensure the database and the Rust
 // program share an implementation rather than a specification. What follows tests the
 // property that makes the sharing worth anything: the two paths cannot disagree.
 // ---------------------------------------------------------------------------------------
@@ -226,15 +218,15 @@ fn the_runtime_codec_renders_exactly_what_display_renders() {
     assert_eq!(text::render(units, Iso4217::USD).unwrap(), usd(units).to_string());
     assert_eq!(
         text::render(units, Iso4217::JPY).unwrap(),
-        Money::<JPY>::from_units(units).unwrap().to_string()
+        Money::<JPY>::try_from_units(units).unwrap().to_string()
     );
     assert_eq!(
         text::render(units, Iso4217::KWD).unwrap(),
-        Money::<KWD>::from_units(units).unwrap().to_string()
+        Money::<KWD>::try_from_units(units).unwrap().to_string()
     );
     assert_eq!(
         text::render(units, Iso4217::XAU).unwrap(),
-        Money::<XAU>::from_units(units).unwrap().to_string()
+        Money::<XAU>::try_from_units(units).unwrap().to_string()
     );
 }
 
@@ -269,7 +261,7 @@ fn the_runtime_codec_refuses_a_currency_it_does_not_know() {
     }
 }
 
-/// `parse_amount` enforces the domain, which the generic path got from `Money::from_units`.
+/// `parse_amount` enforces the domain, which the generic path got from `Money::try_from_units`.
 /// Without it a caller taking raw units would accept values `Money` refuses.
 #[test]
 fn parse_amount_enforces_the_domain_on_raw_units() {
@@ -277,12 +269,31 @@ fn parse_amount_enforces_the_domain_on_raw_units() {
     assert_eq!(text::parse_amount("999999999999999999.999999999999999999").unwrap(), DOMAIN_MAX);
     assert_eq!(
         text::parse_amount("1000000000000000000"),
-        Err(MoneyError::DomainOverflow { attempted_units: DOMAIN_MAX + 1 })
+        Err(ParseMoneyError::Amount(AmountError::out_of_domain(DOMAIN_MAX + 1)))
+    );
+    assert_eq!(
+        text::parse_amount("-1000000000000000000"),
+        Err(ParseMoneyError::Amount(AmountError::out_of_domain(-DOMAIN_MAX - 1)))
     );
     assert!(matches!(
         text::parse_amount("0.0000000000000000004"),
-        Err(MoneyError::ExcessPrecision { digits: 19 })
+        Err(ParseMoneyError::ExcessPrecision { digits: 19 })
     ));
+}
+
+#[test]
+fn parser_preserves_sign_when_magnitude_exceeds_i128() {
+    let positive_overflow = "170141183460469231731.687303715884105728";
+    assert_eq!(text::parse_amount(positive_overflow), Err(ParseMoneyError::PositiveMagnitudeOverflow));
+
+    let exact_minimum = "-170141183460469231731.687303715884105728";
+    assert_eq!(
+        text::parse_amount(exact_minimum),
+        Err(ParseMoneyError::Amount(AmountError::out_of_domain(i128::MIN)))
+    );
+
+    let negative_overflow = "-170141183460469231731.687303715884105729";
+    assert_eq!(text::parse_amount(negative_overflow), Err(ParseMoneyError::NegativeMagnitudeOverflow));
 }
 
 proptest! {
@@ -306,10 +317,8 @@ proptest! {
         prop_assert_eq!(text::render(units, Iso4217::USD).unwrap(), usd(units).to_string());
     }
 
-    /// **Whatever the renderer accepts, the parser must accept back.** Sampled across the
-    /// FULL `i128` range, not just the domain — that is the point. `render` used to take any
-    /// `i128` and emit canonical-looking text for values `parse` refuses, so the pair looked
-    /// total and was not. Now the two agree on their input set by construction.
+    /// Whatever the renderer accepts, the parser must accept back, across the full `i128`
+    /// input range.
     #[test]
     fn prop_render_never_emits_text_its_own_parser_refuses(
         units in i128::MIN..=i128::MAX,
@@ -323,7 +332,7 @@ proptest! {
                 "rendered {} but the parser would not take it back", rendered
             ),
             // Refusing is the correct answer outside the domain; it must not be silent.
-            Err(_) => prop_assert!(!kamu_money_core::domain::in_domain(units)),
+            Err(_) => prop_assert!(!kamu_money_core::advanced::domain::in_domain(units)),
         }
     }
 }
@@ -335,8 +344,8 @@ proptest! {
 fn the_raw_unit_entry_points_refuse_values_no_money_could_hold() {
     use core::num::NonZeroU32;
     use kamu_money_core::Rounding;
-    use kamu_money_core::allocate::allocate_units;
-    use kamu_money_core::arith::div_int_units;
+    use kamu_money_core::advanced::arithmetic::allocate_units;
+    use kamu_money_core::advanced::arithmetic::div_int_units;
 
     let three = NonZeroU32::new(3).unwrap();
     for out_of_domain in [i128::MAX, i128::MIN, DOMAIN_MAX + 1, -DOMAIN_MAX - 1] {

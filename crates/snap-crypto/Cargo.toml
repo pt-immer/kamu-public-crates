@@ -1,7 +1,7 @@
 [package]
 name = "kamu-snap-crypto"
-version = "2.3.0"
-description = "Framework-agnostic cryptography for Bank Indonesia SNAP BI integrations (HMAC, RSA, recipe helpers, webhook verifier)"
+version = "3.0.0"
+description = "Validated Bank Indonesia SNAP BI authentication with HMAC-SHA512 and RSA-SHA256"
 documentation = "https://docs.rs/kamu-snap-crypto"
 categories = ["cryptography", "authentication", "api-bindings"]
 keywords = ["snap-bi", "hmac", "rsa", "signature", "indonesia"]
@@ -22,7 +22,6 @@ webhook = ["dep:http"]
 base64.workspace = true
 hex.workspace = true
 hmac.workspace = true
-rand_core.workspace = true
 rsa.workspace = true
 sha2.workspace = true
 thiserror = { workspace = true, features = ["std"] }
@@ -33,7 +32,12 @@ http = { workspace = true, optional = true }
 chrono.workspace = true
 http.workspace = true
 proptest.workspace = true
+rand_core.workspace = true
 serde_json.workspace = true
+
+[[example]]
+name = "sign_snap_bi_request"
+required-features = ["snap-bi"]
 
 [lints]
 workspace = true

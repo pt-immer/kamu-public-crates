@@ -1,30 +1,46 @@
-//! `axum::response::IntoResponse` adapter for
-//! [`kamu_snap_response::SnapResponse`].
-//!
-//! Wraps `SnapResponse<T>` in a newtype that implements `IntoResponse` for
-//! axum 0.8. Defensive fallback to `INTERNAL_SERVER_ERROR` if the
-//! `responseCode` cannot be parsed back into an HTTP status.
-
+#![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 
-use axum::{Json, response::IntoResponse};
-use kamu_snap_response::SnapResponse;
+use axum::{
+    http::{StatusCode, header},
+    response::IntoResponse,
+};
+use kamu_snap_response::{Error, ServiceCode, SnapResponse};
 use serde::Serialize;
 
-/// Newtype wrapping `SnapResponse<T>` for axum's `IntoResponse` impl
-/// (orphan-rule shim).
+/// Orphan-rule newtype implementing [`IntoResponse`].
 pub struct AxumResponder<T>(pub SnapResponse<T>);
 
 impl<T: Serialize> IntoResponse for AxumResponder<T> {
     fn into_response(self) -> axum::response::Response {
-        let status = self.0.envelope.response_code.http().unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR);
-        (status, Json(self.0)).into_response()
+        let status = self.0.http_status();
+        let service = self
+            .0
+            .valid_response_code()
+            .map(kamu_snap_response::ValidResponseCode::service_code)
+            .unwrap_or(ServiceCode::ZERO);
+        let Ok(body) = serde_json::to_vec(&self.0) else {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                [(header::CONTENT_TYPE, "application/json")],
+                internal_error_body(service),
+            )
+                .into_response();
+        };
+
+        (status, [(header::CONTENT_TYPE, "application/json")], body).into_response()
     }
 }
 
-/// Extension trait: `.into_axum()` on `SnapResponse<T>`.
+fn internal_error_body(service: ServiceCode) -> Vec<u8> {
+    serde_json::to_vec(&SnapResponse::<()>::failure(Error::InternalServerError, service)).unwrap_or_else(
+        |_| br#"{"responseCode":"5000001","responseMessage":"Internal Server Error"}"#.to_vec(),
+    )
+}
+
+/// Converts a SNAP BI response into its Axum responder.
 pub trait SnapResponderExt<T> {
-    /// Wrap into [`AxumResponder`].
+    /// Wrap this response.
     fn into_axum(self) -> AxumResponder<T>;
 }
 

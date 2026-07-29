@@ -15,22 +15,8 @@ BIN="$(sed -n "s/^pg${PG} = \"\\(.*\\)\\/pg_config\"/\\1/p" ~/.pgrx/config.toml)
 DATA="$HOME/.pgrx/data-${PG}"
 PORT="288${PG}"
 
-# `--release`, AND THE FIRST DRAFT OF THIS LINE DID NOT HAVE IT.
-#
-# It said "the SAME install the test matrix performs, so the measured extension is the tested
-# one", which is a correctness argument applied to a performance question. The test matrix builds
-# DEBUG deliberately -- overflow checks and debug_assertions are what you want catching bugs --
-# and `cargo pgrx install` defaults to debug, so this benchmark measured an unoptimised build and
-# reported it as the type's cost. Measured 2026-07-26, same host, same probe:
-#
-#              debug     release
-#   null pgrx  177 ns    at the scan floor (unresolvable)
-#   kmoney_hash 1101 ns   24 ns
-#
-# 45x. E20's "a pgrx call costs ~376 ns against a native C function's ~31 ns" was that artefact:
-# the pgrx side debug, the C side PostgreSQL's own release build. Production was never affected --
-# the YB release path uses `cargo pgrx package`, which defaults to release -- but every published
-# figure was.
+# Performance results require an optimized extension; `cargo pgrx install` otherwise defaults
+# to a debug build.
 cargo pgrx install --release --no-default-features --features "pg${PG}" \
     --pg-config "$BIN/pg_config" >&2
 

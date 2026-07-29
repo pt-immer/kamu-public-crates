@@ -5,10 +5,7 @@
 #   yb_ensure_extension "$CONTAINER" [artifact-dir]   # -> YB_INSTALL_MODE=baked|copied
 #   yb_extract_artifact_from_image "$IMAGE" out/dir   # pull the triplet OUT of a node image
 #
-# WHY THIS FILE EXISTS, AND WHY IT IS THE SAME CODE FOR ONE NODE AND FOR A CLUSTER.
-#
-# There are two ways the extension can be on a node, and until 2026-07-26 the release gate only
-# ever exercised one of them:
+# Two installation modes share one verifier:
 #
 #   * COPIED -- `docker cp` the triplet into a container booted from the stock YugabyteDB image.
 #     This is what a harness needs (it is also the only way the missing-library negative control
@@ -16,14 +13,8 @@
 #   * BAKED  -- the node image already carries it (`just yb-node-image`). Nothing is installed onto
 #     a running node; a node either boots from the image or does not exist. This IS production.
 #
-# An external review found the gap: `Justfile`, `RUNBOOK.md §5` and the adoption contract all name
-# the node image as the deployable artifact, while every runtime suite in `release-check` booted
-# the STOCK base image and copied loose files in. So the tests certified a live-install harness and
-# the contract promoted a different image, whose startup, paths, permissions and catalog creation
-# nothing had exercised. The in-image manifest self-check proves files were COPIED consistently at
-# build time; it cannot prove the image boots a cluster and runs the extension.
-#
-# `YB_REQUIRE_BAKED=1` is what closes that. Under it, `docker cp` is not a fallback -- a node that
+# `YB_REQUIRE_BAKED=1` makes the deployment artifact itself the test subject. Under it, `docker cp`
+# is not a fallback; a node that
 # does not already carry the extension is a failure, so a release run cannot quietly succeed by
 # installing onto the stock image after the node image failed to provide it. That is the difference
 # between "the extension works" and "the artifact we ship works".
@@ -56,7 +47,7 @@ YB_INSTALL_SHA=""
 #
 # The expected hash for a baked image comes from the manifest INSIDE the image, never from the
 # host's out/ directory. Those are separate builds, and pgrx's generated SQL is not byte-stable
-# across them (see DESIGN.md E21) -- comparing them would make this a reproducible-builds assertion
+# across them; comparing them would make this a reproducible-builds assertion
 # it has no business making, and would fail for a reason that has nothing to do with the node.
 yb_ensure_extension() {
     local node="$1" art="${2:-${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}}"

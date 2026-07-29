@@ -1,5 +1,4 @@
-//! Money through `sqlx`, and the cross-driver agreement that makes "one codec" testable.
-//! (DESIGN.md C9)
+//! Money through `sqlx`, including cross-driver codec agreement.
 //!
 //! The round-trip half is the same contract `pg_roundtrip.rs` asserts for `postgres-types`. The
 //! part that could not be tested until both existed is the **differential**: a value written by
@@ -11,9 +10,9 @@
 
 #![cfg(all(feature = "sqlx", feature = "postgres"))]
 
+use kamu_money_core::advanced::domain::{DOMAIN_MAX, POW10_SCALE};
 use kamu_money_core::iso::{IDR, JPY, USD};
-use kamu_money_core::rate::Rate;
-use kamu_money_core::{DOMAIN_MAX, Money, POW10_SCALE};
+use kamu_money_core::{Money, Rate};
 use sqlx::{Row, postgres::PgPoolOptions};
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres as PgImage;
@@ -41,12 +40,12 @@ async fn money_round_trips_through_sqlx() {
     sqlx::query("CREATE TABLE ledger (amount text NOT NULL)").execute(&pool).await.expect("table created");
 
     let values = [
-        Money::<USD>::from_units(0).unwrap(),
-        Money::<USD>::from_units(10_500_000_000_000_000_000).unwrap(),
-        Money::<USD>::from_units(1).unwrap(),
-        Money::<USD>::from_units(-1).unwrap(),
-        Money::<USD>::from_units(DOMAIN_MAX).unwrap(),
-        Money::<USD>::from_units(-DOMAIN_MAX).unwrap(),
+        Money::<USD>::try_from_units(0).unwrap(),
+        Money::<USD>::try_from_units(10_500_000_000_000_000_000).unwrap(),
+        Money::<USD>::try_from_units(1).unwrap(),
+        Money::<USD>::try_from_units(-1).unwrap(),
+        Money::<USD>::try_from_units(DOMAIN_MAX).unwrap(),
+        Money::<USD>::try_from_units(-DOMAIN_MAX).unwrap(),
     ];
 
     for value in values {
@@ -68,7 +67,7 @@ async fn a_row_cannot_be_read_as_the_wrong_currency() {
     let pool = PgPoolOptions::new().connect(&url).await.expect("connects");
     sqlx::query("CREATE TABLE mixed (amount text NOT NULL)").execute(&pool).await.expect("table created");
 
-    let idr = Money::<IDR>::from_major(16_000).unwrap();
+    let idr = Money::<IDR>::try_from_major(16_000).unwrap();
     sqlx::query("INSERT INTO mixed VALUES ($1)").bind(idr).execute(&pool).await.expect("inserted");
 
     let row = sqlx::query("SELECT amount FROM mixed").fetch_one(&pool).await.unwrap();
@@ -76,7 +75,7 @@ async fn a_row_cannot_be_read_as_the_wrong_currency() {
     assert_eq!(row.get::<Money<IDR>, _>(0), idr);
 }
 
-/// The **fifth ingress** for `Rate`'s positivity rule (H1; DESIGN.md C6).
+/// The sqlx ingress for `Rate`'s positivity rule.
 ///
 /// The other four — raw constructor, text parser, and serde's two forms — are proven offline in
 /// `rate_ingress.rs`, along with `postgres-types`, whose `FromSql` is a pure function of bytes
@@ -118,7 +117,7 @@ async fn sqlx_refuses_a_non_positive_rate_from_a_column() {
         .expect("the query itself is valid SQL");
     assert_eq!(
         row.get::<Rate<USD, IDR>, _>(0),
-        Rate::<USD, IDR>::from_units(16_000 * POW10_SCALE).unwrap(),
+        Rate::<USD, IDR>::try_from_units(16_000 * POW10_SCALE).unwrap(),
         "a real quote still decodes, so the refusals above are about the value"
     );
 }
@@ -135,9 +134,9 @@ async fn the_two_drivers_agree_byte_for_byte() {
         .await
         .expect("table created");
 
-    let value = Money::<USD>::from_units(10_500_000_000_000_000_000).unwrap();
-    let jpy = Money::<JPY>::from_units(10_500_000_000_000_000_000).unwrap();
-    let rate = Rate::<USD, IDR>::from_units(16_000 * POW10_SCALE).unwrap();
+    let value = Money::<USD>::try_from_units(10_500_000_000_000_000_000).unwrap();
+    let jpy = Money::<JPY>::try_from_units(10_500_000_000_000_000_000).unwrap();
+    let rate = Rate::<USD, IDR>::try_from_units(16_000 * POW10_SCALE).unwrap();
 
     // sqlx writes.
     sqlx::query("INSERT INTO shared VALUES ('usd', $1)").bind(value).execute(&pool).await.unwrap();
@@ -149,7 +148,7 @@ async fn the_two_drivers_agree_byte_for_byte() {
     // the sync client blocks and blocking on a runtime thread panics with "Cannot start a
     // runtime from within a runtime". Same trap as SyncRunner above, mirrored.
     let sync_url = url.clone();
-    let written_back = Money::<USD>::from_units(-1).unwrap();
+    let written_back = Money::<USD>::try_from_units(-1).unwrap();
     tokio::task::spawn_blocking(move || {
         let mut client = postgres::Client::connect(&sync_url, postgres::NoTls).expect("connects");
 

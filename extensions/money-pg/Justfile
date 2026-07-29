@@ -1,117 +1,21 @@
-# The PostgreSQL extension lane: kamu-money-pg and its YugabyteDB harness.
-#
-# THIS IS A SEPARATE WORKSPACE FROM THE REPOSITORY ROOT, and its recipes are separate from the
-# root Justfile's for the same reasons the workspace is: this lane patches pgrx to a git fork,
-# needs `panic = "unwind"` profiles that cargo honours only at a workspace root, and requires a
-# higher MSRV than the nine published crates. Reach it from above with `just pg <recipe>`.
-#
-# Every routine action has a name here. Not a convenience wrapper: a bare `cargo test` runs a
-# DIFFERENT set of tests than this lane's contract requires, because the pgrx suite does not build
-# on the host at all. The correct invocation is long, version-specific and easy to get subtly
-# wrong -- so it is written down once, here, instead of being re-derived each time by a human or
-# an agent.
-#
-#   just pg doctor          # can this machine run any of it?
-#   just pg gate-offline    # format, lint, docs, and the checks that need nothing external
-#   just pg gate-pg         # the above plus every container-backed suite (NOT the native YB build)
-#   just pg gate-pg-release # gate-pg plus every native YugabyteDB proof -- the release criterion,
-#                           # because YugabyteDB is a first-class target. SIX of them, and the
-#                           # count is derived from the SUITES array inside the recipe rather than
-#                           # kept by hand here: byte-exactness (yb-ab), the whole #[pg_test]
-#                           # contract (test-yb-regress), every node of a cluster
-#                           # (test-yb-cluster), conservation under concurrency
-#                           # (test-yb-concurrent), a read replica (test-yb-readreplica), and a
-#                           # dump/restore round trip (test-yb-restore)
-#
-# THE GATE NAMES CARRY A `gate-` PREFIX BECAUSE THE OLD ONES COLLIDED, and two of them collided
-# while meaning OPPOSITE things. In the repository this came from, `check` was the offline gate and
-# `check-all` was a heavy one -- four extension builds and a ~1.6 GB image pull. In the root
-# Justfile here, `check` is scoped to ONE crate and `check-all` is the FAST inner loop. Anyone
-# moving between the two mistypes it exactly once, and the expensive direction is the one that
-# looks cheap. So: `check` -> `gate-offline`, `check-all` -> `gate-pg`, `release-check` ->
-# `gate-pg-release`, and no name now means two things anywhere in this repository.
-#
-# SHELL LINTING AND THE SECRET SCAN ARE NOT HERE. The root owns `lint-shell` and `scrub` for the
-# whole repository, including every script under this directory -- `lint-shell` checks them with
-# its working directory set HERE, because they resolve siblings relative to this lane. Duplicating
-# either would give the repository two implementations of one policy, and the forgotten copy is
-# always the one that stops matching.
-#
-# Operational and measurement recipes, deliberately outside every gate -- they restart nodes, or
-# produce numbers rather than verdicts:
-#
-#   just pg yb-resilience # node restart, node failure with writes continuing, rejoin
-#   just pg yb-pin-check  # is the YB tag still the digest the pgrx fork was validated against?
-#   just pg bench-yb      # kmoney vs text vs numeric on a cluster; a baseline, not a threshold
-#   just pg yb-soak       # sustained double-entry traffic, conservation asserted every round
-#
-# Fleet rules that apply to anything added below: always 127.0.0.1, never `localhost` and
-# never 0.0.0.0; every container's lifetime belongs to the thing that started it.
-
+# Excluded PostgreSQL extension workspace. Enter through `just pg <recipe>` from
+# the repository root. Root policy owns shell lint and scrub for this whole tree.
 set shell := ["bash", "-uc"]
 
-# The PostgreSQL majors kamu-money-pg is contracted to support. PG15 is the floor.
 PG_MAJORS := "15 16 17 18"
 
-# WHERE kamu-money-core COMES FROM, injected on the command line and never written into a manifest.
-#
-# `kamu-money-pg/Cargo.toml` declares a plain `kamu-money-core = "0.1"`. Until that version is on
-# crates.io nothing here resolves without this patch -- a bare `cargo build` in this lane fails with
-# `error: no matching package named 'kamu-money-core' found`, which is the intended, loud behaviour.
-#
-# ON THE COMMAND LINE RATHER THAN IN THE MANIFEST, because a manifest this lane rewrites is a
-# manifest this lane can rewrite WRONGLY. The predecessor to the pgrx fork vendored pgrx and
-# rewrote it textually at build time, and `re.sub`/`str.replace` return the subject UNCHANGED when
-# nothing matches -- so a rewrite that silently did nothing produced a successful build of an
-# unshimmed extension. Nothing here edits a manifest, ever. Pass an empty override to resolve the
-# published crate instead, which is what a release proof wants:
-#
-#     just pg lint CORE_PATCH=
-#
-# THIS DOES NOT REACH INSIDE A CONTAINER, and that is the important limitation. Every Docker build
-# here uses the LANE ROOT as its context (`docker build -f kamu-money-pg/Dockerfile ... .`) and the
-# Dockerfile does `COPY . .`, so `/work` holds this directory and nothing above it. A relative path
-# to `../../crates/money-core` does not exist in the image. Container-backed suites therefore need
-# kamu-money-core PUBLISHED -- see the note on `test-pg`.
-# THE INNER SINGLE QUOTES ARE LOAD-BEARING. `just` interpolates this verbatim and
-# the SHELL then word-splits the result, which strips bare double quotes -- cargo
-# would receive `path=../../crates/money-core`, an unquoted TOML value, and fail
-# with "invalid mantissa, expected digits" while trying to read `../..` as a
-# number. Wrapping the whole `--config` argument in single quotes is what gets the
-# double quotes through to cargo intact.
-#
-# This was caught by CI, not locally, because the mechanism had been verified by
-# running the raw `cargo --config '...'` by hand -- where the quoting came from the
-# interactive shell -- rather than by running the recipe that wraps it.
-#
-# AND IT GOES AFTER THE SUBCOMMAND, NOT BEFORE IT. `cargo --config X nextest run`
-# fails: nextest re-invokes `cargo metadata` as a CHILD PROCESS, and the outer
-# process's `--config` is not inherited, so the child cannot resolve
-# kamu-money-core. `cargo nextest run --config X` works, because nextest forwards
-# its own `--config` down. cargo accepts the flag in either position for its
-# built-in subcommands, so putting it after the subcommand is the one placement
-# that is correct everywhere -- measured for metadata, test, doc and nextest.
+# Keep the nested quotes: Cargo must parse the path as TOML. For nextest, pass
+# this after the subcommand so child metadata invocations inherit it.
 CORE_PATCH := "--config 'patch.crates-io.kamu-money-core.path=\"../../crates/money-core\"'"
 
-# List the recipes. `just` with no argument should teach, not act.
+[doc("List extension-lane recipes.")]
 default:
     @just --list --unsorted
 
-# ---------------------------------------------------------------------------------------
 # Environment
-# ---------------------------------------------------------------------------------------
-
-# Install what this repository's gates need. Idempotent; safe to re-run.
-#
-# It installs only what it can do WITHOUT sudo and without inventing a policy: rustup components
-# and, if missing or mismatched, cargo-pgrx at the version kamu-money-pg pins. Anything needing a
-# system package manager or a PostgreSQL build is NAMED with its exact command rather than
-# attempted -- a setup recipe that half-runs `sudo` is worse than one that tells you what to type.
 [doc("Install the toolchain pieces the gates need. Idempotent.")]
 setup:
     #!/usr/bin/env bash
-    # NOT `set -e`: like `doctor`, this should report everything it cannot do in one run rather
-    # than stopping at the first gap. It exits non-zero only if something it OWNS failed.
     set -uo pipefail
     rc=0
 
@@ -120,12 +24,6 @@ setup:
         echo "setup: install these components however that toolchain does it: rustfmt, clippy, rust-src"
         rc=1
     else
-        # NO rust-src HERE, deliberately. It was in this list because the repository this came from
-        # held a compile-fail golden that quotes core's own source, and rustc renders that block
-        # only when the sources are on disk. That suite is `kamu-money-core`'s and now lives in the
-        # main workspace, where the root `just setup` installs the component for it. This lane has
-        # no trybuild test at all, so claiming the dependency here would be a requirement nothing
-        # in this directory can justify.
         for c in rustfmt clippy; do
             if rustup component add "$c" >/dev/null 2>&1; then
                 echo "setup: rustup component $c ok"
@@ -134,10 +32,18 @@ setup:
                 rc=1
             fi
         done
+
+        if cargo +nightly miri --version >/dev/null 2>&1; then
+            echo "setup: nightly Miri already present"
+        elif rustup component add miri --toolchain nightly >/dev/null 2>&1; then
+            echo "setup: nightly Miri ok"
+        else
+            echo "setup: FAILED to add Miri to the nightly toolchain" >&2
+            echo "setup: install nightly first with: rustup toolchain install nightly --profile minimal" >&2
+            rc=1
+        fi
     fi
 
-    # cargo-pgrx must match the pinned pgrx EXACTLY -- it refuses to build an extension whose pgrx
-    # version differs from its own -- so this reads the pin rather than taking latest.
     want_pgrx=$(grep -m1 '^pgrx = ' kamu-money-pg/Cargo.toml | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
     if [ -z "$want_pgrx" ]; then
         echo "setup: could not read the pinned pgrx version from kamu-money-pg/Cargo.toml" >&2
@@ -155,13 +61,9 @@ setup:
         fi
     fi
 
-    # NEEDS ROOT, so it is named and not attempted. `just shellcheck` hard-fails without it rather
-    # than passing vacuously, which is the right behaviour but only helps if you know the fix.
     if command -v shellcheck >/dev/null 2>&1; then
         echo "setup: shellcheck present"
     else
-        # Read off /etc/os-release rather than guessing from the kernel: this fleet is CachyOS,
-        # which is Arch-derived and has no `apt`.
         id=$(. /etc/os-release 2>/dev/null && echo "${ID:-} ${ID_LIKE:-}")
         case "$id" in
             *arch*)             cmd="sudo pacman -S shellcheck" ;;
@@ -169,7 +71,7 @@ setup:
             *fedora*|*rhel*)    cmd="sudo dnf install ShellCheck" ;;
             *)                  cmd="install 'shellcheck' with this system's package manager" ;;
         esac
-        echo "setup: shellcheck MISSING -- needs root, so run it yourself: $cmd"
+        echo "setup: ShellCheck is missing; install it with: $cmd"
         rc=1
     fi
 
@@ -180,11 +82,9 @@ setup:
     echo "setup: now run 'just doctor'."
     exit "$rc"
 
-# Check every prerequisite and report what this machine can and cannot run.
+[doc("Report every extension-lane prerequisite and cleanup warning.")]
 doctor:
     #!/usr/bin/env bash
-    # Deliberately NOT `set -e`: a doctor that dies on its first finding tells you one
-    # problem per run. It runs every check, then exits non-zero only for a HARD failure.
     set -uo pipefail
     hard=0
     soft=0
@@ -201,7 +101,6 @@ doctor:
     if command -v rustc >/dev/null; then
         have=$(rustc --version | cut -d' ' -f2)
         want=$(grep -m1 'rust-version' Cargo.toml | tr -d '" ' | cut -d= -f2)
-        # Sort-based compare: the MSRV is a floor, and a newer toolchain satisfies it.
         if [ "$(printf '%s\n%s\n' "$want" "$have" | sort -V | head -1)" = "$want" ]; then
             ok "rustc $have (workspace rust-version = $want)"
         else
@@ -212,25 +111,16 @@ doctor:
     fi
     cargo fmt --version   >/dev/null 2>&1 && ok "rustfmt"  || fail "rustfmt missing (rustup component add rustfmt)"
     cargo clippy --version >/dev/null 2>&1 && ok "clippy"   || fail "clippy missing (rustup component add clippy)"
-    # rust-src IS NOT CHECKED HERE ANY MORE. It guarded a compile-fail golden that quotes core's
-    # own source, and that suite belongs to `kamu-money-core` in the main workspace -- the root
-    # `just doctor` checks it there, against the gate that actually needs it. Nothing under this
-    # directory uses trybuild, so a check here would report on a component this lane never loads
-    # and would pass or fail for reasons no recipe below can act on.
+    cargo +nightly miri --version >/dev/null 2>&1 \
+        && ok "nightly Miri" \
+        || fail "nightly Miri missing (rustup component add miri --toolchain nightly)"
 
     echo "containers"
     if command -v docker >/dev/null; then
         if docker info >/dev/null 2>&1; then
             ok "docker daemon reachable"
-            # This host shares ONE daemon across several orgs' runners. Never global-prune.
             n=$(docker ps -q | wc -l)
             ok "$n container(s) running on the shared daemon -- never global-prune here"
-            # `-a` MINUS the running ones. `docker ps -aq` counts live containers too, so
-            # running `just doctor` while `just test-pg` is in flight reported the matrix's own
-            # working containers as leaks -- and advised `just containers`, which would have
-            # killed the run it was describing. A diagnostic that tells you to break something
-            # is worse than no diagnostic. Measured: two majors build concurrently, so the
-            # false warning appeared on every concurrent invocation, not as a rare race.
             all=$(docker ps -aq --filter 'label=kamu-money-pg.revision' | wc -l)
             live=$(docker ps -q --filter 'label=kamu-money-pg.revision' | wc -l)
             leaked=$((all - live))
@@ -249,14 +139,9 @@ doctor:
     fi
 
     echo "kamu-money-pg (pgrx)"
-    # PGRX_HOME is pinned to .pgrx/ by .cargo/config.toml, so this is a property of the
-    # CHECKOUT rather than of whoever is sitting at the machine.
     if [ -f ".pgrx/config.toml" ]; then
         ok "in-repo .pgrx present -- 'just check-pg' compiles kamu-money-pg without a container"
     else
-        # Not a hard failure: containers remain the supported path for actually RUNNING the
-        # suite. But without this, every kamu-money-pg mistake costs a two-minute container round
-        # trip instead of a two-second cargo check.
         warn "no .pgrx/ -- run 'just pgrx-init'; until then kamu-money-pg can only be built in containers"
     fi
     if command -v cargo-pgrx >/dev/null; then
@@ -265,7 +150,6 @@ doctor:
         if [ "$have_pgrx" = "$want_pgrx" ]; then
             ok "cargo-pgrx $have_pgrx matches the pinned pgrx dependency"
         else
-            # cargo-pgrx refuses to build an extension whose pgrx version differs from its own.
             fail "cargo-pgrx $have_pgrx but kamu-money-pg pins pgrx $want_pgrx -- they must match"
         fi
     else
@@ -275,17 +159,6 @@ doctor:
     echo "hygiene"
     if git rev-parse --git-dir >/dev/null 2>&1; then
         ok "inside a git work tree"
-        # THE CRATE MUST INHERIT ITS IDENTITY, NOT RESTATE IT. This block used to reconcile
-        # `repository` in kamu-money-core and kamu-money-iso against the git remote, because the
-        # repository this came from had no remote at all and those manifests named one anyway.
-        # Both crates are elsewhere now and this repository has a remote, so that reconciliation
-        # has nothing left to compare.
-        #
-        # What replaces it guards the thing the transplant actually got wrong: kamu-money-pg
-        # arrived carrying `license = "MIT"` and a `repository` pointing at the experimental
-        # repository it came from. Both are inherited from the lane's workspace root now, which is
-        # also where `publish = false` lives -- and a hard-coded value here would silently win over
-        # the root and put a stale URL, or a publishable flag, on a crate that must never publish.
         if grep -qE '^(repository|license|publish) = ' kamu-money-pg/Cargo.toml; then
             warn "kamu-money-pg/Cargo.toml hard-codes repository/license/publish -- these belong to [workspace.package] in the lane root; a literal here overrides it"
         else
@@ -305,11 +178,6 @@ doctor:
         fail "not a git work tree"
     fi
 
-    # The .gitignore path for the interception certificates is LOAD-BEARING, and it silently
-    # went stale the moment the crate directory was renamed -- a real CA certificate, whose
-    # subject embeds a tenant identifier, surfaced as untracked and one `git add -A` from
-    # being published. A rule that only holds while a path stays put is not a rule, so this
-    # asks git directly rather than trusting the glob to still match.
     leaked_certs=$(git status --porcelain --untracked-files=all 2>/dev/null | grep -cE '\.(crt|pem|key)$')
     if [ "$leaked_certs" -gt 0 ]; then
         fail "$leaked_certs certificate/key file(s) are UNTRACKED and not ignored -- fix .gitignore before any commit:"
@@ -325,45 +193,25 @@ doctor:
     fi
     echo "doctor: healthy ($soft warning(s))"
 
-# ---------------------------------------------------------------------------------------
-# Build, format, lint
-# ---------------------------------------------------------------------------------------
 
-# Format the workspace.
+# Build and static checks
+[doc("Format the extension workspace.")]
 fmt:
     cargo fmt --all
 
-# Never pipe this into `head` -- doing so swallows the exit code and turns a real failure
-# into a silent pass.
-#
-# `[doc]` rather than a bare comment throughout: `just --list` uses the LAST comment line as
-# a recipe's description, so any recipe whose comment explains something renders in the
-# listing as a mid-sentence fragment. The default recipe is meant to teach.
 [doc("Verify formatting without changing anything.")]
 fmt-check:
     cargo fmt --all --check
 
 
-# PINNED TO ONE MAJOR, NEVER `--all-features`. A pgrx crate's PG-major features are MUTUALLY
-# EXCLUSIVE: `--all-features` turns on pg15..pg18 at once and fails to compile, so a workspace-wide
-# `--all-features` sweep does not lint this crate strictly -- it fails to build it, and whoever
-# wired the sweep excludes it and moves on. That is how the extension went unlinted entirely in the
-# repository this came from.
-#
-# This was `cargo clippy --workspace --exclude kamu-money-pg` followed by the pinned run. There the
-# workspace held three crates and the exclusion had something left to lint. Here the workspace IS
-# kamu-money-pg, so that first line linted NOTHING while reading exactly like coverage. The other
-# two crates are `kamu-money-core` in the main workspace, and `just clippy-money` up there owns them.
 [doc("Clippy the extension at the pedantry its crate root denies, pinned to one PG major.")]
 lint:
     cargo clippy {{ CORE_PATCH }} -p kamu-money-pg --no-default-features --features pg18 --all-targets -- -D warnings
 
-# Populate the in-repo PGRX_HOME so kamu-money-pg can be compile-checked without a container.
-#
-# `.cargo/config.toml` already points PGRX_HOME at `.pgrx/` for every cargo invocation, on
-# every machine; this fills it in. Needs a host PostgreSQL whose pg_config matches a supported
-# major -- it does NOT compile its own, which is the slow path pgrx takes when given no
-# pg_config.
+[doc("Audit the lane lockfile, allowing only the pinned public pgrx fork.")]
+deny:
+    python3 scripts/deny.py
+
 [doc("Populate the in-repo PGRX_HOME from the host pg_config.")]
 pgrx-init pg_config="/usr/bin/pg_config":
     #!/usr/bin/env bash
@@ -371,12 +219,6 @@ pgrx-init pg_config="/usr/bin/pg_config":
     major=$("{{ pg_config }}" --version | grep -oE '[0-9]+' | head -1)
     echo "initialising .pgrx for PG${major} from {{ pg_config }}"
     cargo pgrx init "--pg${major}" "{{ pg_config }}"
-    # THE SYMLINK IS NOT OPTIONAL, and both YB Dockerfiles already carry this same workaround with
-    # the same comment -- which is why it belongs here instead: `cargo pgrx init` does NOT honour
-    # the `[env]` PGRX_HOME from .cargo/config.toml and writes to the default ~/.pgrx, while
-    # pgrx-pg-sys's BUILD SCRIPT (run under cargo) DOES honour it and then fails with
-    # "$PGRX_HOME does not exist". Reconciling the two is what makes `just lint` able to reach
-    # kamu-money-pg at all; without it the recipe reports success and the next command fails.
     if [ ! -e .pgrx ]; then
         ln -sfn "${PGRX_HOME:-$HOME/.pgrx}" .pgrx
         echo "linked .pgrx -> ${PGRX_HOME:-$HOME/.pgrx} (cargo pgrx init ignores the forced [env] path)"
@@ -384,66 +226,23 @@ pgrx-init pg_config="/usr/bin/pg_config":
     [ -f .pgrx/config.toml ] || { echo "pgrx-init: .pgrx/config.toml still missing" >&2; exit 1; }
     echo "pgrx-init: ready -- 'just check-pg' and the kamu-money-pg clippy leg can now run"
 
-# Type-check kamu-money-pg without a container. Catches the mechanical errors -- wrong module path,
-# macro used above its definition -- that otherwise cost a two-minute container round trip.
-#
-# TWO THINGS IT CANNOT DO, both learned the hard way:
-#   1. It proves the crate COMPILES, not that the extension installs or that a test passes.
-#      SQL ordering, opclass definitions and transaction semantics are invisible here.
-#   2. It only covers the major whose pg_config is in `.pgrx` -- one, on a normal machine.
-#      `pq_copymsgbytes` takes `*mut c_void` on PG18 and `*mut c_char` on PG15, so a turbofish
-#      cast passed this recipe and failed the matrix. Cross-major differences need `test-pg`.
 [doc("Compile-check kamu-money-pg locally against one major (no container, no tests).")]
 check-pg pg="18":
     cargo check {{ CORE_PATCH }} -p kamu-money-pg --no-default-features --features pg{{ pg }} --all-targets
 
-# The normalized fingerprint of the SQL surface `kamu-money-pg` generates. THE ORACLE FOR A
-# REFACTOR of that crate: pass the hash from before the change as `expect` and the recipe fails
-# if the surface moved.
-#
-# It exists because `sha256sum` over the generated file DOES NOT WORK. pgrx's output is not
-# reproducible -- two runs over identical source emit the entities in a different order (E21) --
-# so a byte comparison reports a false positive every time and teaches whoever hit it to stop
-# believing the check. The script strips the provenance comments that encode source position and
-# hashes the sorted object set instead.
-#
-# `features` reaches the in-backend test surface, which the default build cannot see at all:
-# pass `pg_test` when the thing being refactored is the test suite. "64 tests still pass" proves
-# the ones that RAN are green, not that the same 64 still exist.
-#
-# `expect` and `features` are quoted at the call site because they default to empty and `just`
-# args are positional.
+[doc("Fingerprint normalized generated SQL, optionally checking an expected hash.")]
 schema-hash pg="18" expect="" features="":
     ./kamu-money-pg/schema-hash.sh {{ pg }} "{{ expect }}" "{{ features }}"
 
-# Facts about the tree that no compiler checks: the Justfile's gates compose what they claim, the
-# scripts merge no docker streams on the host, the control file names the type it ships, the
-# licence texts have not drifted.
-#
-# THESE READ FILES AND LINK NOTHING, which is why they live in their own crate rather than under
-# kamu-money-pg/tests/. An integration test there drags in the pgrx build -- a trivial empty one
-# fails with `Error: $PGRX_HOME does not exist` -- and that would put PostgreSQL-from-source on the
-# critical path of a check that greps a Justfile. See hygiene/Cargo.toml.
-#
-# nextest, then the doctests, per this repository's cadence: nextest does NOT run doc examples, so
-# an unpaired invocation stops testing them silently. The lib here is empty and has none today;
-# the pairing is what keeps that true if one is ever added.
-[doc("Repository-hygiene guards: sixteen facts about the tree that no compiler checks.")]
+[doc("Run pgrx-free repository guards and safe-payload tests.")]
 test-hygiene:
     cargo nextest run {{ CORE_PATCH }} -p kamu-money-pg-hygiene
     cargo test {{ CORE_PATCH }} -p kamu-money-pg-hygiene --doc
 
-# ONE MAJOR, NOT `--all-features`. The `pgN` features are mutually exclusive -- each selects a
-# different pgrx backend -- so `--all-features` does not compile here and never did. `doc-pg-all`
-# below is the whole matrix, for when the majors are what changed.
-#
-# THIS IS IN `gate-offline`, not beside it. It was a standalone recipe in the repository this came
-# from, and the result was a green gate sitting next to a red docs build: two rustdoc link errors
-# that would have broken the docs.rs page of a crate the gate had just called releasable. A check
-# nobody runs is a check that does not exist.
-#
-# It builds the EXTENSION only. The kernel and the ISO register are `kamu-money-core` in the main
-# workspace now, and `just doc-money` up there owns them.
+[doc("Run Miri over the exact pgrx-free payload codec.")]
+miri-payload:
+    cargo +nightly miri test {{ CORE_PATCH }} -p kamu-money-pg-hygiene --test payload_miri
+
 [doc("Build the extension's API docs under one major, failing on a broken intra-doc link.")]
 doc-pg:
     #!/usr/bin/env bash
@@ -451,8 +250,6 @@ doc-pg:
     export RUSTDOCFLAGS="-D warnings"
     cargo doc {{ CORE_PATCH }} -p kamu-money-pg --no-default-features --features pg18 --no-deps
 
-# The documentation build across every supported PostgreSQL major. Not in `gate-offline`: it is four
-# rustdoc runs of the same crate and only the feature-gated items differ between them.
 [doc("Build the extension's docs on every supported PostgreSQL major, failing on warnings.")]
 doc-pg-all:
     #!/usr/bin/env bash
@@ -463,33 +260,7 @@ doc-pg-all:
         cargo doc {{ CORE_PATCH }} -p kamu-money-pg --no-default-features --features "pg${pg}" --no-deps
     done
 
-# ---------------------------------------------------------------------------------------
-# Tests
-#
-# Split by what each needs, not by crate: a suite that needs Docker is a different kind of
-# thing from one that needs only a compiler, and collapsing them means the cheap ones stop
-# being runnable on a machine that cannot host the expensive ones.
-# ---------------------------------------------------------------------------------------
-
-
-# YugabyteDB. Separate because it pulls a ~1.6GB image and takes about a minute.
-#
-# THE IDENTITY IS RESOLVED HERE, not hard-coded in the test. Until 2026-07-26 the test named
-# `yugabytedb/yugabyte:2025.2.4.1-b4` in a Rust constant -- a mutable tag, one release behind the
-# digest the native path is pinned to. `gate-pg-release` runs this through `gate-pg`, so the run
-# exercised TWO YugabyteDB identities while reading as one, and a retag could change what was
-# tested with nothing in the tree moving.
-#
-# `${KMONEY_YB_IMAGE:-...}` so a caller that has ALREADY resolved an identity -- gate-pg-release
-# does, once, for the whole run -- gets that one rather than a second resolution of the same tag.
-# Resolving twice is the straddle `yb-image.sh` exists to prevent.
-#
-# THE SUITE LIVES IN THE MAIN WORKSPACE, THE IMAGE IDENTITY LIVES HERE, and this recipe is the
-# seam. `yugabyte_roundtrip` is a kamu-money-core test -- it exercises the TEXT adapter, not the
-# extension -- so it belongs to the published crate and stays at crates/money-core. Resolving the
-# image is this lane's job, because `yb-image.sh` and the digest pin it enforces are here. Running
-# it from up there instead would either duplicate the resolver or hard-code a mutable tag again,
-# which is the exact failure the paragraph above records.
+# Database and artifact tests
 [doc("The text adapter against a live YugabyteDB. The suite is in the main workspace; the image identity is resolved here.")]
 test-yb tag="":
     #!/usr/bin/env bash
@@ -500,63 +271,14 @@ test-yb tag="":
         cargo test --manifest-path ../../Cargo.toml \
             -p kamu-money-core --features postgres --test yugabyte_roundtrip -- --ignored --nocapture
 
-# The pgrx extension suite, once per supported PostgreSQL major, each in its own container.
-# Pass majors to narrow it: `just test-pg "17 18"`.
-#
-# YugabyteDB is NOT a row in this PGDG matrix -- it is a different AXIS. The *naive* build
-# against the YB image fails (E15: the shipped `elog.h` includes `yb/yql/pggate/util/ybc_util.h`,
-# which the image does not distribute; and a `.so` built elsewhere fails on its older glibc).
-# But kamu-money-pg DOES run natively on YB against the 3-symbol pgrx fork, built
-# FROM the YB image with `--features pg15,yb-pg15` -- proven byte-exact by `just yb-native` / `just yb-ab`
-# (E16). That gate compiles from the YB image, so it lives BESIDE this matrix, not inside it.
-#
-# THIS NEEDS kamu-money-core ON crates.io, and CORE_PATCH cannot help. Every Docker build here uses
-# the LANE ROOT as its context and the Dockerfile does `COPY . .`, so `/work` inside the image
-# holds this directory and nothing above it -- `../../crates/money-core` is not in the image, and a
-# path patch naming it resolves to nothing. The host-side recipes (`check-pg`, `doc-pg`, `lint`)
-# take the patch and work today; every container-backed suite, and therefore `gate-pg` and
-# `gate-pg-release`, waits for the published crate. Broadening the build context to the repository
-# root would also work and is deliberately not done: it would put all nine published crates into
-# every extension image build to satisfy a dependency that is about to exist anyway.
 [doc("The pgrx extension suite, once per supported PostgreSQL major, each in a container.")]
 test-pg majors=PG_MAJORS jobs="1":
     MATRIX_JOBS={{ jobs }} ./kamu-money-pg/test-matrix.sh {{ majors }}
 
-# The evidence behind kamu-money-core's DESIGN.md E15, re-run against a live YugabyteDB.
-#
-# Deliberately OUTSIDE `gate-pg`. Every other recipe here asserts that this project works;
-# this one asserts that something else does NOT, which is a claim about a third party's
-# software on a given day rather than about our tree. A YugabyteDB release that fixes either
-# blocker would turn `gate-pg` red on a green working copy -- accurate, but it would train
-# whoever hit it to route around the gate. Kept as a named recipe so the evidence is
-# reproducible on demand, and so E15 cites a command rather than a memory.
-#
-# Needs `just test-pg 18` first: it reuses that image as the builder (modern glibc, has cc).
-#
-# NOTE: this proves the *naive* (unshimmed) build still fails -- the E15 measurement. It does
-# NOT contradict `just yb-native`, which builds the SAME extension against the 3-symbol pgrx fork
-# and runs it byte-exact on YB (E16). Same code, two builds: naive fails, adapted works.
-[doc("Re-run the YugabyteDB incompatibility (NAIVE build) evidence behind kamu-money-core's DESIGN.md E15.")]
+[doc("Reproduce the unadapted YugabyteDB build blockers.")]
 yb-probe yb-image="" builder-image="":
     ./kamu-money-pg/yb-compat-probe.sh "{{ yb-image }}" "{{ builder-image }}"
-
-# --- First-class YugabyteDB native gate (E16) -------------------------------------------
-# kamu-money-pg runs NATIVELY + byte-exact on YB against a 3-symbol pgrx-0.19.1 fork. These build
-# FROM the YB image, so they are heavy (a from-source compile) and kept OUT of gate-pg,
-# beside `test-pg`. `yb-ab` is the completion gate: the SAME battery on YB and on stock PG15
-# must be byte-identical -- with no ordering/opclass surface, there are zero YB edges.
-
-# THE DEPLOYABLE ARTIFACT, and the one the cluster suites actually run.
-#
-# `yb-build` below produces loose files, which is what a test harness needs to `docker cp` and what
-# the missing-library negative control needs to remove. It is NOT how the extension reaches
-# production: installing onto running nodes cannot survive a node being replaced, and requires
-# enumerating every tserver -- including read replicas, which are tservers too.
-#
-# Baking it into the image makes "is the extension on every node?" the same question as "is every
-# node on digest D?", which the orchestrator already answers. The digest printed here is the one to
-# pin in a deployment, exactly as YB-PINNED.txt pins the base image it derives from.
-[doc("Build the DEPLOYABLE node image: the YugabyteDB image with kmoney baked in.")]
+[doc("Build the deployable node image with kmoney baked in.")]
 yb-node-image tag="":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -570,92 +292,60 @@ yb-node-image tag="":
     echo "Every node -- primary and read replica, RF3 and RF5 -- runs this one image; nothing is"
     echo "ever installed onto a running node."
     echo
-    echo "AN IMAGE ID IS NOT A REGISTRY DIGEST. An orchestrator pulls repo@sha256:..., which does"
-    echo "not exist until this image is PUSHED, and publishing belongs to the platform release"
-    echo "path rather than to this repository. Record the registry digest against the ID above"
-    echo "when you publish it; 'just gate-pg-release' certifies the bytes, not their distribution."
+    echo "This local image ID is not a registry digest. Record the immutable registry digest"
+    echo "after the platform publishes it; 'just gate-pg-release' certifies bytes, not distribution."
 
 [doc("Build the kamu-money-pg artifact against YugabyteDB's PG15 fork (pgrx fork + yb-pg15).")]
 yb-build tag="":
     #!/usr/bin/env bash
     set -euo pipefail
-    # BEFORE THE BUILD, because `-o kamu-money-pg/yb/out` overwrites the artefact triplet a
-    # release check may be in the middle of hashing. This recipe took NO lock at all until a
-    # 2026-07-26 review pointed out that it is the one entry point nothing could refuse.
     source ./kamu-money-pg/yb/workspace-lock.sh
     workspace_lock "yb-build" || exit 1
+    RUN_ROOT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}"
     YB_REF="$(./kamu-money-pg/yb/yb-image.sh {{ tag }})"
     echo "yb: image identity $YB_REF"
-    docker build -f kamu-money-pg/yb/Dockerfile --target artifact \
-        --build-arg YB_IMAGE="$YB_REF" -o kamu-money-pg/yb/out .
+    source ./scripts/docker-core-context.sh
+    docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
+        -f kamu-money-pg/yb/Dockerfile --target artifact \
+        --build-arg YB_IMAGE="$YB_REF" -o "$RUN_ROOT" .
 
-# NOT `yb-native: yb-build`. Each would resolve the tag separately, which is the very straddle
-# this is meant to prevent -- the identity is resolved ONCE here and passed to both the build
-# and the runtime.
 [doc("Build for YB, run the ABI battery on a fresh YugabyteDB, print the result.")]
 yb-native tag="":
     #!/usr/bin/env bash
     set -euo pipefail
-    # BEFORE the artifact build below, not inside run-yb.sh at the end of it. `run-yb.sh` takes the
-    # lock too, but by then this recipe has already overwritten the shared triplet -- the refusal
-    # arrived after the damage, which is the P0-2 shape.
     source ./kamu-money-pg/yb/workspace-lock.sh
     workspace_lock "yb-native" || exit 1
+    RUN_ROOT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}"
     YB_REF="$(./kamu-money-pg/yb/yb-image.sh {{ tag }})"
     echo "yb: image identity $YB_REF"
-    docker build -f kamu-money-pg/yb/Dockerfile --target artifact \
-        --build-arg YB_IMAGE="$YB_REF" -o kamu-money-pg/yb/out .
-    ./kamu-money-pg/yb/run-yb.sh "$YB_REF" "" kamu-money-pg/yb/out/out-yb.txt kamu-money-pg/yb/abi_battery.sql
+    source ./scripts/docker-core-context.sh
+    docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
+        -f kamu-money-pg/yb/Dockerfile --target artifact \
+        --build-arg YB_IMAGE="$YB_REF" -o "$RUN_ROOT" .
+    ./kamu-money-pg/yb/run-yb.sh "$YB_REF" "$RUN_ROOT" "$RUN_ROOT/out-yb.txt" kamu-money-pg/yb/abi_battery.sql
 
-# One resolved identity feeds ALL THREE consumers: the YB artifact build, the live YB runtime,
-# and the stock-PG15 reference build. Byte-exactness is a claim about one image; resolving the
-# tag per-consumer could compare artifacts from two different builds of "the same" version.
-# The negative control on its own, against the last battery output. `yb-ab` runs this too; it is
-# exposed separately so the oracle can be exercised without a 20-minute rebuild.
 [doc("Negative control: prove every battery assertion still rejects a mutated output.")]
-yb-selftest out="kamu-money-pg/yb/out/out-yb.txt":
-    ./kamu-money-pg/yb/assert-battery-selftest.sh {{ out }}
-
-# --- The ported case suite (P0.1) --------------------------------------------------------------
-# The 64 `#[pg_test]`s ARE this type's contract -- 63 of them portable, plus one that asserts a
-# stock-PostgreSQL PLAN and says so as NOT-PORTABLE -- and until now they had only ever run on PGDG
-# PostgreSQL: `cargo pgrx test` manages its own server and cannot be aimed at YugabyteDB, so the
-# entire YB evidence surface was one ~112-line script. `tests/pg_regress` restates that contract as
-# sql/ + expected/ pairs which run against any live server, so the same cases and the SAME
-# hand-authored goldens are checked on YugabyteDB and on the stock-PG15 reference.
-#
-# NAMED `test-yb-regress`, NOT the readiness document's `test-yb-native`: `yb-native` already means
-# the single-script battery, and two recipes one word apart meaning different suites is exactly the
-# kind of name that gets run by mistake at 2am.
-
+yb-selftest out="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    OUT="{{ out }}"
+    [ -n "$OUT" ] || OUT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}/out-yb.txt"
+    ./kamu-money-pg/yb/assert-battery-selftest.sh "$OUT"
 [doc("The ported #[pg_test] suite against a live single-node YugabyteDB.")]
 test-yb-regress tag="":
     #!/usr/bin/env bash
     set -euo pipefail
     ./kamu-money-pg/yb/run-yb-regress.sh "$(./kamu-money-pg/yb/yb-image.sh {{ tag }})"
 
-# The oracle's own negative control: mutate a correct output fourteen ways and require each to be
-# rejected FOR ITS OWN REASON. Needs no database, so it sits in `gate-offline` beside the offline tests --
-# a suite runner that has rotted into always-passing certifies whatever the code currently does.
 [doc("Negative control: prove the case-suite runner still rejects a wrong output.")]
 test-regress-selftest:
     ./kamu-money-pg/tests/pg_regress/selftest.sh
-
-# --- Cluster, concurrency, resilience (P0.2, P0.3, P1.2) ---------------------------------------
-# Production YugabyteDB is several nodes, and the failures that only exist there are the ones a
-# money type cannot be wrong about: a node missing the .so, DDL that must reach every node, a
-# tablet split moving rows while values sit in columns, two transactions meeting on one row.
-
 [doc("kmoney on a 3-node RF=3 cluster: every node, a tablet split, and a missing-library control.")]
 test-yb-cluster tag="":
     #!/usr/bin/env bash
     set -euo pipefail
     ./kamu-money-pg/yb/run-yb-cluster.sh "$(./kamu-money-pg/yb/yb-image.sh {{ tag }})"
 
-# READ REPLICAS ARE TSERVERS. They run YSQL backends, so they need kmoney on their own
-# filesystem -- the catalog reaches them through `CREATE EXTENSION`, the shared library does not.
-# Every other YB suite here uses primary nodes only, so this whole class of node had no evidence
-# behind it, and a read replica is exactly the node someone forgets: it is not where writes go.
 [doc("kmoney on a read-replica placement: it needs the library too, and fails loudly without it.")]
 test-yb-readreplica tag="" replicas="1":
     #!/usr/bin/env bash
@@ -670,28 +360,12 @@ test-yb-concurrent workers="8" each="25" tag="":
     ./kamu-money-pg/yb/run-yb-concurrent.sh \
         "$(./kamu-money-pg/yb/yb-image.sh {{ tag }})" "" {{ workers }} {{ each }}
 
-# NOT in any gate: it restarts and kills nodes, so it is an operational recipe with a recorded
-# result rather than a pass/fail contract. A rolling VERSION upgrade is deliberately NOT covered --
-# it needs a second image digest and a second from-source artifact build. See yb/RUNBOOK.md §5.
 [doc("Node restart, node failure with writes continuing, and rejoin -- with kmoney data resident.")]
 yb-resilience tag="":
     #!/usr/bin/env bash
     set -euo pipefail
     ./kamu-money-pg/yb/run-yb-resilience.sh "$(./kamu-money-pg/yb/yb-image.sh {{ tag }})"
 
-# --- The YugabyteDB version pin (P1.1) -----------------------------------------------------------
-# The three adaptations are facts about YugabyteDB's HEADERS, so a release that moves a symbol is
-# the standing risk -- the pgrx fork relocates the patch, it does not remove that exposure. Three
-# things answer three different questions: this recipe asks whether the tag still resolves to the
-# validated digest; yb/probe-yb-abi.sh (inside the build) asks whether the headers still have the
-# assumed shape; and the COMPILER asks whether the adaptation applied at all -- which is what a
-# fork buys over the textual shim it replaced, where a patch matching nothing failed silently.
-# YB_PULL=1, and that is the whole point of this recipe. yb-image.sh normally trusts the LOCAL
-# image, which is right for the twenty other recipes that just need a stable identity for one run --
-# but "has the tag moved?" is a question about the REGISTRY, and answering it from a cache is how
-# this recipe came to print "the tag still resolves to the validated digest" over the top of a
-# stale local copy. It also used to print that line after yb-image.sh had merely WARNED about an
-# unrecorded tag; yb-image.sh now states its own verdict, so this one does not restate it.
 [doc("Is the YugabyteDB tag still the digest the pgrx fork was validated against? (hits the registry)")]
 yb-pin-check tag="":
     #!/usr/bin/env bash
@@ -704,101 +378,35 @@ yb-pin-check tag="":
 [doc("Negative controls for the image pin gate: every refusal path, and both overrides.")]
 yb-image-selftest:
     ./kamu-money-pg/yb/yb-image-selftest.sh
-
-# In `gate-offline`, not `gate-pg`, because it needs neither Docker nor a database: every rule it
-# controls is about names, versions and hashes in a directory, so the fixtures are `printf`. The
-# resolver decides WHICH BYTES a YB suite installs, which makes it the thing that determines what
-# any green run is a statement about -- too load-bearing to leave behind a container gate.
 [doc("Negative controls for the artifact resolver: provenance, coherence, and the maxdepth rule.")]
 artifact-selftest:
     ./kamu-money-pg/yb/artifact-selftest.sh
 
-
-# Also `gate-offline`: no Docker, no database, two subshells and a file descriptor. Both properties of
-# the lock are easy to break in a way that looks fine -- a lock that never excludes lets two runs
-# quietly corrupt one run's output, and a lock that is not re-entrant deadlocks `gate-pg-release`
-# against its own suites, which reads as a hung gate rather than as a bug in the lock.
 [doc("Negative controls for the single-writer lock: exclusion, re-entrancy, release on kill.")]
 workspace-lock-selftest:
     ./kamu-money-pg/yb/workspace-lock-selftest.sh
 
-
-# Also `gate-offline`: pure string comparison, no /sys, no /proc, no docker, no second socket. A pin
-# verifier that blesses a half-applied pin is worse than none, because the number it blesses looks
-# controlled -- and it did exactly that until 2026-07-26, comparing only the memory mask.
 [doc("Negative controls for the NUMA pin verifier: CPU-only and memory-only mismatch.")]
 numa-selftest:
     ./kamu-money-pg/bench/numa-selftest.sh
 
-# --- Measurement (P2) ---------------------------------------------------------------------------
-# Never gates. A benchmark has no pass/fail threshold on its first run -- there is nothing to
-# regress against -- and a soak's duration is a decision, not a default.
-#
-# THESE ARE FIXTURES, NOT ONE-OFFS, and that is the point. E20's figures were measured with code
-# that was deliberately thrown away, which left kamu-money-core's DESIGN.md §1 saying "reproduce before trusting"
-# directly above an entry nobody could reproduce. `bench-rust` and `bench-pg` are what make those
-# numbers checkable; they are deliberately OUTSIDE `gate-offline`, `gate-pg` and `gate-pg-release`,
-# because a timing that can fail a gate on a loaded machine is a gate that gets disabled.
-
-
+# Measurements; never gates
 [doc("SQL cost: kmoney vs numeric(36,18) on stock PostgreSQL, with the floor. Never a gate.")]
 bench-pg major="18":
     ./kamu-money-pg/bench/run-bench-pg.sh {{ major }}
 
-# What a pgrx CALL costs, separately from what any function does. Two functions with identical
-# signatures -- one five lines of C, one a `#[pg_extern]` -- each returning its argument; the
-# difference is the wrapper and nothing else.
-#
-# SEPARATE FROM `bench-pg` because it needs the extension built with `--features boundary-probe`,
-# which `bench-pg` deliberately does not use: the probe functions are not in the shipped SQL
-# surface. E20's boundary figures were produced by appending those functions to lib.rs inside a
-# container and committing none of it, which is why a 2026-07-26 review could not reproduce them.
 [doc("What a pgrx call costs, against a null C function of the same signature. Never a gate.")]
 bench-boundary major="18":
     ./kamu-money-pg/bench/run-bench-boundary.sh {{ major }}
 
-# THE SAME QUESTION ON THE DEPLOYMENT TARGET, and the answer that actually decides anything.
-# YSQL is multi-threaded, so `CurrentMemoryContext` is the thread-local `YbCurrentMemoryContext`
-# that pgrx's wrapper touches on every call -- a TLS access costs more than a process-global
-# load, and that is the one named mechanism for the boundary to be dearer here than on stock
-# PostgreSQL. "It passes on PostgreSQL" is not evidence about YugabyteDB.
-#
-# Builds `--target boundary-node`, which is NOT the deployable `node` image: both functions have
-# to be compiled against YB's own PG15 headers and glibc for the subtraction to mean anything,
-# and a deployable image must never carry a function that exists to be timed. `gate-pg-release`
-# greps the shipped artifact for exactly those symbols.
 [doc("The pgrx call cost on YugabyteDB, where the multi-threaded memory context lives.")]
 bench-boundary-yb tag="":
     ./kamu-money-pg/bench/run-bench-boundary-yb.sh {{ tag }}
 
-# THE SAME kmoney-vs-numeric FIXTURE, on the engine this deploys to.
-#
-# Not a formality. YugabyteDB scans DocDB over the network where stock PostgreSQL scans a local
-# heap -- E20 measured ~378 ms against ~23 ms for the same table -- so a per-row type difference
-# of tens of nanoseconds sits on top of a floor sixteen times larger. WHETHER THAT FLOOR SWAMPS
-# THE DIFFERENCE IS THE ANSWER a schema designer needs, and it is a measurement rather than a
-# deduction: "the direction is obvious" is how a magnitude nobody checked becomes a design input.
-#
-# Fewer rows than `bench-pg` by default, because DocDB writes cost more; the per-row figures
-# normalise and the row count is printed with them. Boots the DEPLOYABLE node image -- a
-# benchmark of the shipped extension has to be a benchmark of the shipped extension.
-#
-# May legitimately REFUSE: the fixture aborts rather than print a summary under a floor spread
-# above 1.5, and DocDB variance is exactly what trips it. That refusal is a result.
 [doc("kmoney vs numeric on YugabyteDB: arithmetic, render, parse, storage. Never a gate.")]
 bench-sql-yb rows="100000" passes="5" tag="":
     ./kamu-money-pg/bench/run-bench-sql-yb.sh {{ rows }} {{ passes }} "{{ tag }}"
 
-# WHY numeric costs what it does on YugabyteDB, rather than assuming.
-#
-# E20 first attributed it to varlena-versus-fixed-width decoding -- a generic story that should
-# hold on stock PostgreSQL too, and one that does not explain the gap WIDENING from ~2.7x on
-# PG18 to >=8.8x on YB. The operator proposed the mechanism that does: YugabyteDB separates
-# storage from compute, DocDB models decimals natively, so a PG `numeric` is translated at the
-# boundary on every read while a type DocDB has never heard of comes back as opaque bytes.
-#
-# `bytea` decides it -- variable-length like numeric, opaque like kmoney. Measured: it lands
-# with kmoney, four times cheaper than numeric. Variable length is not the cost.
 [doc("Why numeric is dear on YugabyteDB: bytea discriminates varlena cost from numeric cost.")]
 bench-why-yb rows="100000" passes="9" tag="":
     ./kamu-money-pg/bench/run-bench-sql-yb.sh {{ rows }} {{ passes }} "{{ tag }}" kamu-money-pg/bench/why-numeric-costs.sql
@@ -815,98 +423,62 @@ yb-soak minutes="3" tag="":
     set -euo pipefail
     ./kamu-money-pg/yb/run-yb-soak.sh {{ minutes }} "$(./kamu-money-pg/yb/yb-image.sh {{ tag }})"
 
-# The A/B, against an identity that has ALREADY been resolved. Split out of `yb-ab` on 2026-07-26
-# because `gate-pg-release` used to resolve `$YB_REF` and then call `just yb-ab {{ tag }}`, handing
-# the MUTABLE TAG back to a recipe that resolved it a second time. Both resolutions printed, both
-# happened to agree, and the comment above them claimed one resolution was what prevented a
-# straddle. On a shared daemon -- or with YB_PULL=1 while a tag moves -- the artifact build and A/B
-# could have run against a different immutable reference from the four suites after them, which is
-# the exact failure the single-resolution rule exists to prevent, reintroduced by the code that
-# described it.
-#
-# The argument is TYPE-CHECKED, not trusted. `yb-image.sh` prints `repo@sha256:...` (or a bare
-# image ID for a locally-built one); a mutable tag contains no `sha256:`. So passing a tag in here
-# is refused rather than silently resolved, and there is no path by which this recipe can pick an
-# identity of its own.
-# TWO identities, because they answer different questions. `base` is the stock YugabyteDB image:
-# the artifact and the PG15 reference are both COMPILED against it, which is what makes the diff
-# attributable to the fork's ABI and nothing else. `runtime` is the image the battery actually
-# BOOTS -- normally the same thing, but for a release it is the deployable node image, so that what
-# gets certified is the artifact that ships rather than a harness installing loose files onto stock.
 [private]
 _yb-ab-ref base runtime="":
     #!/usr/bin/env bash
     set -euo pipefail
-    # BEFORE the artifact build, the battery run and the PG15 reference extraction -- all three
-    # write fixed paths. `gate-pg-release` and `yb-ab` already hold it and are let through by the
-    # descriptor check; this covers the case where neither does.
     source ./kamu-money-pg/yb/workspace-lock.sh
     workspace_lock "yb-ab" || exit 1
+    RUN_ROOT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}"
     BASE="{{ base }}"
     RUNTIME="{{ runtime }}"
     [ -n "$RUNTIME" ] || RUNTIME="$BASE"
+    # The base compiles the artifact and PG15 reference; the runtime boots it.
     for ref in "$BASE" "$RUNTIME"; do
         case "$ref" in
             *sha256:*) ;;
             *)
                 echo "_yb-ab-ref: '$ref' is not an immutable reference." >&2
-                echo "_yb-ab-ref: this recipe takes ALREADY-RESOLVED identities so that one run is" >&2
+                echo "_yb-ab-ref: this recipe takes resolved identities so that one run is" >&2
                 echo "_yb-ab-ref: a claim about one image. Resolve first, or use 'just yb-ab <tag>'." >&2
                 exit 2 ;;
         esac
     done
     echo "yb: base identity    $BASE (artifact build and PG15 reference are compiled against this)"
     echo "yb: battery runtime  $RUNTIME"
+    source ./scripts/docker-core-context.sh
     if [ "$RUNTIME" = "$BASE" ]; then
-        # Stock base: the battery has to be given the extension, so build the loose triplet.
-        docker build -f kamu-money-pg/yb/Dockerfile --target artifact \
-            --build-arg YB_IMAGE="$BASE" -o kamu-money-pg/yb/out .
+        docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
+            -f kamu-money-pg/yb/Dockerfile --target artifact \
+            --build-arg YB_IMAGE="$BASE" -o "$RUN_ROOT" .
     else
-        # The runtime image carries kmoney already. NOTHING is built or copied for the YB side --
-        # that is the point: this run exercises the shipped bytes, in the image that ships them.
         echo "yb: runtime differs from base, so it is a node image that already carries kmoney;"
         echo "yb: no artifact build, and run-yb.sh will refuse to install onto it."
         export YB_REQUIRE_BAKED=1
     fi
-    ./kamu-money-pg/yb/run-yb.sh "$RUNTIME" "" kamu-money-pg/yb/out/out-yb.txt kamu-money-pg/yb/abi_battery.sql
-    # run-yb.sh and the PG15 build each assert their OWN output reached the end with its named
-    # markers and refusals. This asserts the ASSERTER: it mutates a real output seven ways and
-    # requires each to be rejected for its own reason, so an oracle that has rotted into
-    # always-passing cannot quietly certify the diff below. Pure grep, hence every run.
-    ./kamu-money-pg/yb/assert-battery-selftest.sh kamu-money-pg/yb/out/out-yb.txt
-    docker build -f kamu-money-pg/yb/Dockerfile.pg15 --target ref \
-        --build-arg YB_IMAGE="$BASE" -o kamu-money-pg/yb/out/ref .
-    # The PG15 side asserted itself during the build; re-assert the EXTRACTED file, because what
-    # gets diffed is this copy, not the one the build looked at.
-    ./kamu-money-pg/yb/assert-battery.sh kamu-money-pg/yb/out/ref/out-pg15.txt pg15-extracted 0
-    # Normalize ONLY the psql/ysqlsh error-location prefix (client binary + input path + line):
-    # that is harness metadata, not kmoney's error text, which follows it verbatim and must match.
+    ./kamu-money-pg/yb/run-yb.sh "$RUNTIME" "$RUN_ROOT" "$RUN_ROOT/out-yb.txt" kamu-money-pg/yb/abi_battery.sql
+    ./kamu-money-pg/yb/assert-battery-selftest.sh "$RUN_ROOT/out-yb.txt"
+    docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
+        -f kamu-money-pg/yb/Dockerfile.pg15 --target ref \
+        --build-arg YB_IMAGE="$BASE" -o "$RUN_ROOT/ref" .
+    ./kamu-money-pg/yb/assert-battery.sh "$RUN_ROOT/ref/out-pg15.txt" pg15-extracted 0
     norm() { sed -E 's/^(psql|ysqlsh):[^:]*:[0-9]+:/CLIENT:/'; }
     echo "=== A/B diff: YugabyteDB vs stock PG15 -- empty = byte-exact, zero YB edges ==="
-    if diff <(norm < kamu-money-pg/yb/out/out-yb.txt) <(norm < kamu-money-pg/yb/out/ref/out-pg15.txt); then
+    if diff <(norm < "$RUN_ROOT/out-yb.txt") <(norm < "$RUN_ROOT/ref/out-pg15.txt"); then
         echo "yb-ab: BYTE-EXACT -- kmoney behaves identically on YugabyteDB and stock PG15"
     else
         echo "yb-ab: DIVERGENCE (investigate above)"; exit 1
     fi
 
-# The hand-invocation entry point: resolve the tag ONCE, here, then hand the immutable reference
-# to the recipe that does the work. Every other caller that already holds a resolved identity
-# calls `_yb-ab-ref` directly, so no path resolves twice.
-[doc("Byte-exact A/B: the SAME battery on YB and stock PG15 -- an empty diff is the gate.")]
+[doc("Run one byte-exact battery on YugabyteDB and stock PostgreSQL 15.")]
 yb-ab tag="":
     #!/usr/bin/env bash
     set -euo pipefail
-    # Taken here as well as in `_yb-ab-ref`, because `yb-image.sh` can PULL and because a refusal
-    # should arrive before a twenty-minute resolve rather than after it.
     source ./kamu-money-pg/yb/workspace-lock.sh
     workspace_lock "yb-ab" || exit 1
     just _yb-ab-ref "$(./kamu-money-pg/yb/yb-image.sh {{ tag }})"
 
-# The one suite that puts a live extension and a Rust driver in the same process. kamu-money-pg's own
-# tests run inside the backend via SPI and cannot drive a client; the driver suites run against
-# `text` columns with no extension installed. Neither covers what an application actually does,
-# which is read a NATIVE kmoney column through postgres-types / sqlx.
-[doc("Dump a schema holding kmoney and restore it into a CLEAN cluster; prove nothing moved.")]
+[doc("Dump a kmoney schema and restore it into a clean cluster.")]
 test-yb-restore tag="":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -916,114 +488,26 @@ test-yb-restore tag="":
 test-pg-driver major="18":
     ./kamu-money-pg/native-driver-test.sh {{ major }}
 
-# The Rust drivers against a NATIVE `kmoney` column on YugabyteDB -- the one target seam the
-# other suites leave split in half.
-#
-# `test-pg-driver` proves the drivers against native `kmoney` on STOCK PostgreSQL. `test-yb`
-# proves the drivers against `text` columns on YugabyteDB. The regress/cluster/concurrent suites
-# prove native `kmoney` SQL on YugabyteDB. None of them proves the intersection this project
-# actually claims -- a Rust service reading and writing native `kmoney` on YB -- which is where
-# YSQL parameter inference, the explicit `($1::text)::kmoney` cast, typmod error propagation and
-# driver decoding meet the forked backend.
-#
-# Both parameters are quoted at the call site because `tag` defaults to empty and `just` args are
-# positional.
-[doc("The Rust drivers against a NATIVE kmoney column on YugabyteDB (the target integration seam).")]
+[doc("Test both Rust drivers against a native kmoney column on YugabyteDB.")]
 test-yb-driver tag="" major="18":
     ./kamu-money-pg/yb/run-yb-driver.sh "{{ tag }}" "{{ major }}"
 
-# Every suite reachable WITHOUT a from-source YugabyteDB build. Deliberately not "every engine
-# it supports" -- `yb-ab` is not here, and `gate-pg-release` below states that a revision which has
-# not run it has not been shown to work on one of the engines this project claims to support.
-# Those two comments contradicted each other in this file, 27 lines apart, until 2026-07-25.
-#
-# `just --list` uses a recipe's LAST comment line as its description, so without this the listing
-# rendered the sentence above as `test-pg-all`'s summary -- a note about a fixed contradiction,
-# presented as what the recipe does.
-[doc("Every suite reachable WITHOUT a from-source YugabyteDB build.")]
+[doc("Run every suite that avoids a from-source YugabyteDB build.")]
 test-pg-all: test-yb test-pg test-pg-driver test-yb-driver
 
-# ---------------------------------------------------------------------------------------
 # Gates
-# ---------------------------------------------------------------------------------------
+[doc("The gate for a change that touches no database: format, lint, audit, docs, Miri, and offline tests.")]
+gate-offline: fmt-check lint deny doc-pg test-hygiene miri-payload test-regress-selftest artifact-selftest workspace-lock-selftest numa-selftest
 
-# `doc-pg` is IN the gate, not beside it. It was a standalone recipe once, and the result was a
-# green `gate-pg` sitting next to a red `just doc-pg` -- two rustdoc link errors that would
-# have broken the doc-pg.rs build of a crate this gate had just declared releasable. A check
-# nobody runs is a check that does not exist.
-[doc("The gate for a change that touches no database: format, lint, shell, doc-pg, offline tests.")]
-gate-offline: fmt-check lint doc-pg test-hygiene test-regress-selftest artifact-selftest workspace-lock-selftest numa-selftest
+[doc("The offline gate plus every suite reachable without a from-source YugabyteDB build.")]
+gate-pg: gate-offline yb-image-selftest test-pg-all
 
-# Format, lint, doc-pg, and every suite reachable WITHOUT a from-source YugabyteDB build.
-# Expensive already: four extension builds plus a ~1.6GB image pull.
-#
-# This is NOT the release gate, and the distinction is the whole point. An earlier revision
-# of this comment claimed "every container-backed suite" while omitting YugabyteDB entirely;
-# adding `test-yb` fixed only half of that, because `test-yb` exercises the TEXT ADAPTER on
-# YB, not the native extension. The native path is proven by `yb-ab`, which is kept out of
-# this recipe because it compiles the extension from source inside the YB image. Claiming
-# "every engine" here while that sat outside was the same overclaim one level down.
-[doc("Format, lint, shell, doc-pg, and every suite reachable without a from-source YugabyteDB build.")]
-gate-pg: fmt-check lint doc-pg yb-image-selftest artifact-selftest workspace-lock-selftest numa-selftest test-pg-all
-
-# The RELEASE gate: `gate-pg` plus the native YugabyteDB completion gate. YugabyteDB is a
-# first-class target, so a revision that has not run these has NOT been shown to work on
-# one of the engines this project claims to support. Release status depends on this recipe, not on
-# `gate-pg`. CI may cache the heavy YB build or schedule it separately; it may not skip it
-# and still call the revision releasable.
-#
-# THE SIX ARE NOT REDUNDANT, and it is worth saying which question each one answers, because the
-# temptation to drop one for wall-clock is real. SIX, not the five this comment claimed until
-# 2026-07-26 and not the four it claimed before that: read replicas, then restore, were added to
-# the recipe and to the hygiene guard, and only the prose was left behind -- which is how a stage
-# becomes droppable without anyone deciding to drop it. The count has now drifted twice, so it is
-# worth saying why: the list below is maintained by hand beside a `SUITES` array the code actually
-# uses, and only the array is load-bearing. Trust `${SUITES[@]}`; this prose explains it.
-#
-#   yb-ab               does kmoney behave IDENTICALLY on YugabyteDB and stock PG15?
-#                       (byte-exact, but over one ~112-line script)
-#   test-yb-regress     do the 63 portable assertions that ARE the contract hold on YB at all?
-#                       (the whole contract, but one node, one session)
-#   test-yb-cluster     does it hold on EVERY node, and across a tablet split?
-#                       (and does a node without the library fail loudly rather than diverge)
-#   test-yb-concurrent  does the money still add up when transactions overlap?
-#                       (conservation under concurrent double-entry, with a live retry path)
-#   test-yb-readreplica does a READ REPLICA agree, and fail loudly without the library?
-#                       (replicas are tservers: they run YSQL backends and need the .so themselves,
-#                       while CREATE EXTENSION reaches them for free through the catalog)
-#
-# Each is the exit criterion for one item of the production-readiness plan (E16, E17, E18). A
-# revision that is green on the first three and has never run the fourth has not been shown safe
-# for money on a real cluster, which is the only claim this gate exists to make.
-#
-# A BASH RECIPE, not a dependency list, for two reasons. `just` runs prerequisites strictly in
-# order and has no `-j`, so a dependency list cannot express "build the artifact once, then run the
-# three suites that consume it concurrently" -- and it cannot resolve the image identity ONCE and
-# hand the same one to every stage, which is the property that makes the whole run a claim about a
-# single image.
-#
-# `jobs` fans out the five suites in the `SUITES` array (yb-ab stays a barrier before them). They are independent by construction: each brings up its
-# own containers, on its own private network, under its own run label. Sequential is still the
-# DEFAULT, because this daemon is shared across several organisations' runners -- 7 YugabyteDB
-# nodes at once is a decision an operator makes, not one a release gate makes for them.
-#
-# Parallel output is captured per suite and REPLAYED IN ORDER. This log is the release evidence;
-# three suites interleaving would make it unreadable, and unreadable evidence gets skimmed.
-[doc("The release gate: gate-pg plus every native YugabyteDB proof. Very expensive.")]
+[doc("Run the release gate, including every native YugabyteDB proof.")]
 gate-pg-release jobs="1" tag="":
     #!/usr/bin/env bash
     set -euo pipefail
 
-    # VALIDATED, not assumed to be a number. `just` takes recipe arguments POSITIONALLY -- there
-    # just-anti-example: the next line shows the BROKEN call on purpose.
-    # is no `name=value` call syntax -- so `just gate-pg-release jobs=3` passes the literal string
-    # "jobs=3", which reads exactly like it worked. It did not: every `[ "$jobs" -le 1 ]` below
-    # died with "integer expected", and a failed `[` inside an `if` or `while` condition is
-    # EXEMPT from `set -e`, so the recipe sailed on into the parallel branch with the throttle
-    # silently disabled. It passed, by accident, and the log said `jobs=jobs=3`.
-    #
-    # Measured on the 2026-07-25 gate run. A gate that green-lights a release must not be the
-    # thing quietly ignoring its own arguments.
+    # Just arguments are positional; reject a misleading `jobs=3` token.
     case "{{ jobs }}" in
         ''|*[!0-9]*)
             echo "gate-pg-release: jobs must be a positive integer, got '{{ jobs }}'" >&2
@@ -1033,69 +517,26 @@ gate-pg-release jobs="1" tag="":
     esac
     [ "{{ jobs }}" -ge 1 ] || { echo "gate-pg-release: jobs must be >= 1" >&2; exit 2; }
 
-    # ONE RELEASE CHECK AT A TIME IN THIS CHECKOUT. Containers and networks here are isolated by
-    # run ID and label; the scratch FILESYSTEM was not. Two concurrent runs share the extracted
-    # triplet, the A/B output and its PG15 reference, every regress work directory and the
-    # parallel suite logs -- so one run could overwrite what another is mid-way through reading.
-    # The reasoning, and why a lock rather than run-scoped paths, is in
-    # kamu-money-pg/yb/workspace-lock.sh.
     source ./kamu-money-pg/yb/workspace-lock.sh
     workspace_lock "gate-pg-release" || exit 1
 
-    # Output goes to the caller. Redirect it if you want a file -- `just gate-pg-release 4 > run.log
-    # 2>&1`. Piping the body through `tee` in here is what the `set -e` trap below was written
-    # about, and not doing it is the simplest way not to have the trap.
-
-    # ONE base identity, for the artifact compile, the PG15 reference AND the text adapter.
-    # Resolving per stage is the straddle this exists to prevent.
-    #
-    # RESOLVED BEFORE `gate-pg`, WHICH IS THE PART THAT CHANGED. It used to be resolved after,
-    # and `gate-pg` reaches the YugabyteDB text-adapter test, which named its own image in a
-    # Rust constant: `yugabytedb/yugabyte:2025.2.4.1-b4`, a mutable tag one release behind this
-    # digest. So the run was one identity for the native extension stages and quietly another for
-    # `gate-pg` -- and a retag could change what `gate-pg` tested with nothing here moving.
+    # Release proof resolves `kamu-money-core` from its version requirement.
+    export KMONEY_USE_LOCAL_CORE=0
     YB_REF="$(./kamu-money-pg/yb/yb-image.sh {{ tag }})"
     export KMONEY_YB_IMAGE="$YB_REF"
 
     just gate-pg
 
-    # AND ONE NODE IMAGE, BUILT ONCE, WHICH IS WHAT EVERY SUITE BELOW ACTUALLY BOOTS.
-    #
-    # This is the finding that made the previous release evidence not mean what it said. The
-    # Justfile, RUNBOOK.md §5 and the adoption contract all name the node image as the deployable
-    # artifact -- and every runtime suite here booted the STOCK base image and `docker cp`'d loose
-    # files in. So the gate certified a live-install harness while the contract promoted a
-    # different image, whose boot, paths, permissions and catalog creation nothing had exercised.
-    # The in-image manifest self-check proves files were copied consistently AT BUILD TIME; it
-    # cannot prove the image starts a cluster and runs the extension.
-    #
-    # `YB_REQUIRE_BAKED=1` makes that non-negotiable for the rest of this run: a node that does not
-    # already carry kmoney is a failure, not something to install onto. Without it, a node image
-    # that failed to deliver the extension would be silently rescued by the harness and the run
-    # would still be green -- evidence bound to an artifact that was never exercised.
+    # Every suite boots this node image; no suite installs loose files onto it.
     NODE_IMAGE="$(./kamu-money-pg/yb/node-image.sh "$YB_REF")"
     export YB_REQUIRE_BAKED=1
 
-    # The loose triplet comes OUT of that image rather than from a second `--target artifact`
-    # build. pgrx's generated SQL is not reproducible -- three builds of one revision produced
-    # three different SQL hashes -- so a separately built artifact is not guaranteed to be the
-    # bytes the image ships, and the whole provenance chain exists to stop exactly that
-    # substitution. Extracted, they are the image's own bytes by construction, so the checks
-    # below are reading the shipped artifact rather than a lookalike rebuild.
     source ./kamu-money-pg/yb/install.sh
-    yb_extract_artifact_from_image "$NODE_IMAGE" kamu-money-pg/yb/out
-    yb_resolve_artifacts kamu-money-pg/yb/out
+    RUN_ROOT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}"
+    yb_extract_artifact_from_image "$NODE_IMAGE" "$RUN_ROOT"
+    yb_resolve_artifacts "$RUN_ROOT"
 
-    # NO BENCHMARK SCAFFOLDING IN THE THING THAT SHIPS. `boundary-probe` adds two no-op
-    # `#[pg_extern]`s whose only purpose is to be timed (kamu-money-pg/bench/boundary/). They are
-    # behind a non-default cargo feature, the YB Dockerfile's EXTRA_FEATURES arg is empty by
-    # default, and the probe image is a separate `--target boundary-node` -- three independent
-    # reasons they cannot reach production.
-    #
-    # This checks the BYTES ANYWAY, because all three are properties of build files that someone
-    # can edit, and the question "is there a benchmark function in the extension we deploy?"
-    # should be answered by looking at the extension we deploy. It reads the artifact extracted
-    # from the node image, so it is the shipped SQL and the shipped library, not a rebuild.
+    # Inspect shipped bytes, not build configuration, for benchmark-only symbols.
     for sym in rs_noop rs_noop_kmoney; do
         if grep -qi "$sym" "$YB_ART_SQL"; then
             echo "gate-pg-release: REFUSING -- the shipped install SQL declares '$sym'." >&2
@@ -1113,9 +554,6 @@ gate-pg-release jobs="1" tag="":
     echo "gate-pg-release: base image $YB_REF"
     echo "gate-pg-release: every suite below boots the NODE IMAGE $NODE_IMAGE"
 
-    # yb-ab is the one genuine barrier: it produces the A/B verdict the suites' results are read
-    # against. `_yb-ab-ref`, NOT `yb-ab {{ tag }}` -- passing the tag would re-resolve it, and the
-    # claim this recipe makes is that every stage ran against one identity.
     just _yb-ab-ref "$YB_REF" "$NODE_IMAGE"
 
     SUITES=(
@@ -1123,9 +561,6 @@ gate-pg-release jobs="1" tag="":
         "cluster:./kamu-money-pg/yb/run-yb-cluster.sh $NODE_IMAGE"
         "concurrent:./kamu-money-pg/yb/run-yb-concurrent.sh $NODE_IMAGE '' 8 25"
         "readreplica:./kamu-money-pg/yb/run-yb-readreplica.sh $NODE_IMAGE '' 1"
-        # Restore is in the RELEASE gate, not beside it. It is required from the moment the first
-        # production value exists, not from the first version migration -- and the first time
-        # anyone runs it must not be during an incident.
         "restore:./kamu-money-pg/yb/run-yb-restore.sh $NODE_IMAGE"
     )
 
@@ -1135,7 +570,7 @@ gate-pg-release jobs="1" tag="":
         done
     else
         echo "gate-pg-release: running ${#SUITES[@]} YugabyteDB suites concurrently (jobs={{ jobs }})"
-        LOGDIR=kamu-money-pg/yb/out/release-suites
+        LOGDIR="$RUN_ROOT/release-suites"
         mkdir -p "$LOGDIR"
         pids=(); names=()
         for entry in "${SUITES[@]}"; do
@@ -1155,31 +590,15 @@ gate-pg-release jobs="1" tag="":
             exit 1
         fi
     fi
-    # Recorded only HERE, after every stage has actually returned zero. A `stages` line written
-    # up-front would name what the recipe intended to run, which is not the same claim.
-    #
     echo "gate-pg-release: all stages green on $NODE_IMAGE"
     echo
     echo "gate-pg-release: PASS"
 
-
-# ---------------------------------------------------------------------------------------
-# Release identity
-# ---------------------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------------------
 # Housekeeping
-# ---------------------------------------------------------------------------------------
-
-# Prove no container outlived its test. Dangling is never harmless.
+[doc("Report extension-lane containers that outlived their owning test.")]
 containers:
     #!/usr/bin/env bash
     set -uo pipefail
-    # Filter by LABEL, not by name prefix or ancestor. test-matrix.sh labels everything it
-    # creates `kamu-money-pg.run=<revision>-<pid>-<entropy>`, so this sees only containers this
-    # workspace made -- and cannot see, or offer to delete, another org's work on the shared
-    # daemon.
     left=$(docker ps -aq --filter 'label=kamu-money-pg.revision' 2>/dev/null)
     if [ -z "$left" ]; then
         echo "clean: no container from this workspace is still around"
@@ -1190,4 +609,3 @@ containers:
     echo
     echo "remove them with: docker rm -f \$(docker ps -aq --filter 'label=kamu-money-pg.revision')"
     exit 1
-

@@ -1,7 +1,7 @@
 [package]
 name = "kamu-snap-response"
-version = "2.3.0"
-description = "Framework-agnostic response envelope + error taxonomy for Bank Indonesia SNAP BI integrations"
+version = "3.0.0"
+description = "Validated response states and error taxonomy for Bank Indonesia SNAP BI integrations"
 documentation = "https://docs.rs/kamu-snap-response"
 categories = ["api-bindings", "encoding", "web-programming"]
 keywords = ["snap-bi", "response", "envelope", "error", "indonesia"]
@@ -26,6 +26,9 @@ kamu-snap-crypto = { workspace = true, optional = true }
 
 [lints]
 workspace = true
+
+[[example]]
+name = "client_parse"
 
 [package.metadata.docs.rs]
 all-features = true

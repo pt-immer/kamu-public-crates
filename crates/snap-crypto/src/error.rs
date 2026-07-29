@@ -9,17 +9,13 @@ use crate::signature::Encoding;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
-    /// PKCS#8 public-key PEM failed to parse. Carries the upstream message.
+    /// SPKI public-key PEM failed to parse. Carries the upstream message.
     #[error("invalid PEM public key: {0}")]
     InvalidPublicKey(String),
 
     /// PKCS#8 private-key PEM failed to parse. Carries the upstream message.
     #[error("invalid PEM secret key: {0}")]
     InvalidSecretKey(String),
-
-    /// HMAC secret length rejected by the underlying primitive.
-    #[error("invalid HMAC secret length")]
-    InvalidSecretLength,
 
     /// Encoded signature could not be decoded into bytes.
     #[error("signature decode failed ({encoding:?}): {reason}")]
@@ -30,6 +26,11 @@ pub enum Error {
         reason: String,
     },
 
+    /// Raw signature bytes do not have the selected algorithm's wire length or
+    /// structure.
+    #[error("invalid raw signature: {0}")]
+    InvalidRawSignature(String),
+
     /// HMAC verification failed (signature did not match canonical payload).
     #[error("symmetric verification failed")]
     SymmetricVerifyFailed,
@@ -38,15 +39,31 @@ pub enum Error {
     #[error("asymmetric verification failed")]
     AsymmetricVerifyFailed,
 
-    /// `snap_bi` recipe layer error (feature `snap-bi`).
+    /// Invalid SNAP BI input (feature `snap-bi`).
     #[cfg(feature = "snap-bi")]
-    #[error("snap-bi recipe error: {0}")]
-    SnapBi(String),
+    #[error(transparent)]
+    SnapBiInput(#[from] crate::snap_bi::InputError),
 
-    /// Webhook verifier error (feature `webhook`).
-    #[cfg(feature = "webhook")]
-    #[error("webhook verifier error: {0}")]
-    Webhook(String),
+    /// SNAP BI service-request verification failed (feature `snap-bi`).
+    #[cfg(feature = "snap-bi")]
+    #[error(transparent)]
+    ServiceVerification(#[from] crate::snap_bi::ServiceVerificationError),
+
+    /// A required HTTP header was absent.
+    #[cfg(any(feature = "snap-bi", feature = "webhook"))]
+    #[error("missing required header {name}")]
+    MissingHeader {
+        /// Canonical header name.
+        name: &'static str,
+    },
+
+    /// An HTTP header was not valid visible ASCII.
+    #[cfg(any(feature = "snap-bi", feature = "webhook"))]
+    #[error("invalid value for header {name}")]
+    InvalidHeader {
+        /// Canonical header name.
+        name: &'static str,
+    },
 }
 
 /// Shorthand for `core::result::Result<T, crate::Error>`.

@@ -7,43 +7,45 @@
 [![License][badge-license]][link-license]
 [![MSRV][badge-msrv]][link-msrv]
 
-actix-web inbound-verify glue for Bank Indonesia SNAP BI service signatures —
-the framework adapter for [`kamu-snap-crypto`](https://crates.io/crates/kamu-snap-crypto).
+Actix request translation for `kamu-snap-crypto`.
 
-Part of the [`kamu-public-crates`](https://github.com/pt-immer/kamu-public-crates) workspace.
-
-## What this crate is
-
-A single function, [`verify_request`], that takes the parts of an `actix-web`
-request (method, path, headers, body) plus a client secret and returns `Ok(())`
-iff the incoming `X-SIGNATURE` validates against the canonical SNAP BI service
-`stringToSign`. All crypto lives in `kamu-snap-crypto`; this crate only bridges
-actix's `Method` / `HeaderMap` types.
-
-> A full `Transform`/middleware wrapper is intentionally deferred to a future
-> release — body extraction inside actix middleware needs buffer-and-replay
-> plumbing best designed against a production caller. For now, call
-> `verify_request` from inside your handler (or a custom `FromRequest`
-> extractor) once the body is materialised.
-
-## Quickstart
+`verify_request` reads the three SNAP BI authentication headers, converts
+Actix's HTTP method, and delegates authorization parsing, canonicalization, and
+HMAC verification to the core crate.
 
 ```rust,no_run
-use actix_web::{HttpRequest, web};
+use actix_web::{HttpRequest, HttpResponse, web};
 use kamu_snap_crypto_actix::verify_request;
 
-async fn handler(req: HttpRequest, body: web::Bytes) -> actix_web::HttpResponse {
-    match verify_request(req.method(), req.path(), req.headers(), &body, "client-secret") {
-        Ok(()) => actix_web::HttpResponse::Ok().finish(),
-        Err(_) => actix_web::HttpResponse::Unauthorized().finish(),
+async fn handler(req: HttpRequest, body: web::Bytes) -> HttpResponse {
+    match verify_request(
+        req.method(),
+        req.path(),
+        req.headers(),
+        &body,
+        "client-secret",
+    ) {
+        Ok(()) => HttpResponse::Ok().finish(),
+        Err(_) => HttpResponse::Unauthorized().finish(),
     }
 }
 ```
 
+Configure Actix's payload limit for the route before materializing
+`web::Bytes`. Pass the same byte buffer to verification and deserialization.
+Use `req.path()`: BRI excludes query parameters from `stringToSign`.
+
+## 3.0 changes
+
+- Raw, Basic, empty, and multi-token authorization values are rejected.
+- `Bearer` scheme matching is ASCII case-insensitive.
+- Errors use `ServiceVerificationError`.
+- Canonicalization and signature decoding now live in `kamu-snap-crypto`.
+
 ## License
 
 Dual-licensed under either [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at
-your option (`MIT OR Apache-2.0`). Previously MIT-only in `pt-immer/lib-snap`.
+your option (`MIT OR Apache-2.0`).
 
 [badge-crates]: https://img.shields.io/crates/v/kamu-snap-crypto-actix?style=flat-square&logo=rust
 [badge-docs]: https://img.shields.io/docsrs/kamu-snap-crypto-actix?style=flat-square&logo=docs.rs&label=docs.rs

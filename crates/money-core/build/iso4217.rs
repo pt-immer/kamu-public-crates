@@ -1,24 +1,15 @@
 //! Generates `kamu-money-core`'s ISO 4217 register at build time, from the maintenance agency's
 //! published list.
 //!
-//! **Internal to this crate.** The emitted code names `crate::currency::StaticCurrency` and
-//! `crate::currency::private::Sealed`, so it only compiles inside `kamu-money-core`. That is
-//! sound — `private` is `pub(crate)`, so nothing leaks and no foreign crate can forge a
-//! currency. It is also why this was collapsed out of a separate published crate: as a
-//! `#[proc_macro]` on crates.io it could never have been used by anyone, because invoking it
-//! anywhere else fails with `cannot find 'currency' in 'crate'`.
+//! **Internal to this crate.** Emitted code names `crate::StaticCurrency` and the private
+//! `crate::sealed::Sealed`; downstream crates cannot invoke it or forge a currency.
 //!
 //! # Why generated, and not a committed table
 //!
-//! The currency register is **data**, not code. It has 178 entries, it changes on ISO's
-//! schedule rather than this project's, and the field most likely to be wrong — the minor-unit
-//! exponent — is the one that decides how money is rendered and settled. A table typed by hand
-//! reviews as correct and settles amounts wrongly.
+//! The register has 178 entries and changes on ISO's schedule. Generating from the vendored
+//! source avoids manually transcribing numeric codes and settlement exponents.
 //!
-//! Deriving it here means `vendor/list-one.xml` is the only place a currency fact exists. There
-//! is no generated file to regenerate, no verifier to forget to run, and no way to hand-edit a
-//! row: the source and the table are the same object. This is the same shape `kamu-iso3166`
-//! uses for its ISO 3166 tables.
+//! `vendor/list-one.xml` remains the single source; generated code lives only in `OUT_DIR`.
 //!
 //! # What this emits
 //!
@@ -28,54 +19,36 @@
 //! - `numeric`, `alpha3`, `exponent`, `name`, `from_numeric`, `from_alpha3`, `EVERY`
 //! - one ZST per currency (`pub struct USD;`) with `StaticCurrency` and `Sealed` impls
 //!
-//! `src/iso.rs` pulls the result in with `include!`, inside a `generated` module that relaxes
-//! two pedantic lints. That relaxation is the one real cost of generating from a build script
-//! rather than a proc macro: expanded macro output is largely exempt from clippy, whereas an
-//! `include!`d file is ordinary source and every lint applies to it.
+//! `src/iso.rs` includes the output inside a generated-code module.
 //!
 //! # Validation is a build failure, not a test
 //!
-//! The register is checked as it is read, and a violation fails the build of every crate that
-//! depends on this one. That is stronger than a test, which can be skipped, and stronger than a
-//! script, which can be forgotten:
+//! The register is checked while read; violations fail the build:
 //!
 //! - a currency appearing under several countries must agree with itself in every row
 //! - no two currencies may share a numeric code
-//! - no name may contain a character that would not survive a Rust string literal
+//! - every name must be non-empty; `quote` escapes all valid string contents
 //! - every alpha-3 must be three ASCII uppercase letters, and a legal Rust identifier
 //!
-//! The fixture tests covering those failure paths live in `tests/register_codegen.rs`, which
-//! pulls this module in with `#[path]` — a build script is not a test target, so without that
-//! they would never run.
+//! `tests/register_codegen.rs` imports this module to exercise failure paths.
 
 #![deny(missing_docs)]
 #![deny(clippy::all, clippy::pedantic)]
-// The `cargo_common_metadata` allow that stood here is GONE, for the reason kamu-money-core
-// records: it existed because `repository` was absent, and every crate manifest carries one now.
-// An exemption whose stated condition has stopped being true is worse than no exemption -- it
-// suppresses a real finding while its comment tells the reader why that is fine.
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::BTreeMap;
 
-/// The register itself, embedded at the time THIS crate is compiled.
+/// Register embedded when the crate is compiled.
 ///
-/// `include_str!` rather than a runtime read: a proc macro runs in the consumer's build, whose
-/// working directory is not this crate's, so a path lookup would be both non-hermetic and
-/// dependent on where cargo happened to invoke it.
+/// `include_str!` makes the path relative to this source file and embeds the
+/// bytes in the build-script binary. A runtime read would depend on Cargo's
+/// invocation directory and package layout.
 const REGISTER: &str = include_str!("../vendor/list-one.xml");
 
 /// The edition `list-one.xml` is pinned to — the machine-readable manifest.
 ///
-/// Provenance used to live in prose and in a lone `reg.len() == 178` assertion.
-/// Between them they could not tell a replaced file from the recorded one: a different edition
-/// with the same number of codes and the same handful of spot rows passed every check while the
-/// documented checksum and publication date silently described something else. The test was
-/// named `the_vendored_register_is_the_edition_it_claims_to_be`, which is a stronger claim than
-/// a row count can support.
-///
-/// Every field below is now checked against the file itself — the date and the three counts
+/// Every field below is checked against the file itself — the date and the three counts
 /// while the build script parses, as build failures; the digest in a test, because hashing needs a
 /// dependency the build does not otherwise want. `VENDORED.md` is checked against these
 /// constants too, so the human-readable credit cannot drift from the machine-checked facts.
@@ -100,12 +73,8 @@ mod edition {
     pub const DISTINCT_CODES: usize = 178;
 }
 
-/// Check the parsed file against [`edition`]. `Err` becomes a build-script panic.
-///
-/// Deliberately NOT folded into [`parse_register`]: that function is exercised by fixture
-/// documents of two or three rows, and an edition check inside it would fail every one of them.
-/// Separating the two also separates the questions — "is this a well-formed register?" and "is
-/// it the register we recorded?" are different failures with different fixes.
+/// Check the parsed file against [`edition`]. Kept separate so parser fixtures
+/// need not match the vendored edition.
 fn validate_edition(xml: &str, distinct_codes: usize) -> Result<(), String> {
     let doc = roxmltree::Document::parse(xml).map_err(|e| format!("not parseable as XML: {e}"))?;
 
@@ -150,20 +119,10 @@ struct Currency {
 /// Takes no arguments. The register is fixed at this crate's compile time;
 /// parameterising it would imply a choice that does not exist.
 ///
-/// This was a `#[proc_macro]` in a separate published crate. It could never have been used by
-/// anyone: the tokens it emits name `crate::currency::StaticCurrency` and
-/// `crate::currency::private::Sealed`, so it only ever compiled inside `kamu-money-core`.
-/// Generating from a build script instead deletes a crates.io package nobody could depend on,
-/// and matches how `kamu-iso3166` builds its tables from vendored data.
-///
-/// A `panic!` here replaces the `compile_error!` the macro emitted. Cargo prints a build
-/// script's panic message, and the failure reaches every crate downstream, so the property
-/// that matters -- a bad register cannot be skipped past with `--skip` -- is unchanged.
+/// A parse or validation error fails the build.
 pub(crate) fn generate() -> TokenStream {
     match parse_register(REGISTER).and_then(|c| {
-        // The edition gate runs AFTER the shape gate, so a mangled file reports what is wrong
-        // with it rather than "the counts do not match" -- which is true of a corrupted file
-        // and tells whoever replaced it nothing useful.
+        // Report shape errors before edition-count mismatches.
         validate_edition(REGISTER, c.len())?;
         Ok(c)
     }) {
@@ -174,8 +133,7 @@ pub(crate) fn generate() -> TokenStream {
 
 /// Turn a validated register into the tokens `kamu-money-core` compiles.
 ///
-/// Split out of [`iso4217_register`] so the entry point is just "read, validate, emit" and
-/// this is just the emission -- clippy's line limit was the prompt, but the seam is real.
+/// Separate token emission from parsing and validation.
 #[allow(clippy::too_many_lines)] // one `quote!` block; splitting it would hide the shape
 fn emit(currencies: &BTreeMap<String, Currency>) -> TokenStream {
     let variants = currencies.iter().map(|(code, c)| {
@@ -192,9 +150,7 @@ fn emit(currencies: &BTreeMap<String, Currency>) -> TokenStream {
 
     let exponent_arms = currencies.iter().map(|(code, c)| {
         let ident = format_ident!("{}", code);
-        // Fully qualified: `quote!` stamps `Span::call_site()`, so a bare `Some`/`None`
-        // resolves in the CONSUMER's scope. A module that shadows `Option` would break
-        // expansion with an error naming neither this macro nor the cause.
+        // Fully qualify Option because emitted tokens resolve in the consumer's scope.
         let value = c.exponent.map_or_else(
             || quote!(::core::option::Option::None),
             |e| quote!(::core::option::Option::Some(#e)),
@@ -230,17 +186,15 @@ fn emit(currencies: &BTreeMap<String, Currency>) -> TokenStream {
         quote! {
             #[doc = #name]
             ///
-            /// Named for its ISO alpha-3 code, not `UpperCamelCase`. The code IS the name; a
-            /// separate `Usd`-style spelling would be a second name for a thing that already
-            /// has one. It also makes `USD` and `Iso4217::USD` agree.
+            /// Named for its ISO alpha-3 code so `USD` and `Iso4217::USD` agree.
             #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
             pub struct #ident;
 
-            impl crate::currency::StaticCurrency for #ident {
+            impl crate::StaticCurrency for #ident {
                 const CODE: Iso4217 = Iso4217::#ident;
             }
 
-            impl crate::currency::private::Sealed for #ident {}
+            impl crate::sealed::Sealed for #ident {}
         }
     });
 
@@ -255,11 +209,7 @@ fn emit(currencies: &BTreeMap<String, Currency>) -> TokenStream {
         ///
         #[doc = #count_doc]
         ///
-        /// `#[non_exhaustive]` stays, because completeness is a fact about a *date*, not a
-        /// property. ISO adds and withdraws codes, so a downstream `match` must carry a
-        /// wildcard arm or the next currency to exist is a breaking change for every consumer.
-        /// (This does not weaken the closed-set contract, which is about parsing: an
-        /// unrecognized code still fails, it is never silently accepted.)
+        /// `#[non_exhaustive]` permits later ISO editions without accepting unknown input.
         #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
         #[repr(u16)]
         #[non_exhaustive]
@@ -267,10 +217,7 @@ fn emit(currencies: &BTreeMap<String, Currency>) -> TokenStream {
 
         impl Iso4217 {
             /// ISO 4217 numeric-3 code.
-            // The ONE permitted `as` in the crate. The enum is `#[repr(u16)]` with explicit
-            // discriminants, so this reads the discriminant exactly -- it does not narrow a
-            // value, and cannot lose one. `mem::discriminant` returns an opaque type and cannot
-            // produce the number, so there is no non-`as` alternative. (DESIGN.md C10)
+            // Exact read of an explicit `#[repr(u16)]` discriminant.
             #[allow(clippy::as_conversions)]
             #[must_use]
             pub const fn numeric(self) -> u16 { self as u16 }
@@ -284,7 +231,7 @@ fn emit(currencies: &BTreeMap<String, Currency>) -> TokenStream {
             /// ISO 4217 **settlement** exponent. `None` for metals/funds/test codes
             /// (XAU, XDR, XXX...) which genuinely have no minor unit.
             ///
-            /// This is NOT the display exponent. IDR settles at 2 and displays at 0.
+            /// This is not the display exponent. IDR settles at 2 and displays at 0.
             #[must_use]
             pub const fn exponent(self) -> ::core::option::Option<u8> {
                 match self { #(#exponent_arms),* }
@@ -308,33 +255,17 @@ fn emit(currencies: &BTreeMap<String, Currency>) -> TokenStream {
             /// trait, rust-lang/rust#143874), and `match` on `str` is not allowed in a const fn.
             #[must_use]
             pub fn from_alpha3(s: &str) -> ::core::option::Option<Self> {
-                // A `match` on `&str`, not a chain of `if s == "..."`. The chain was inherited
-                // from the const-fn era and cost up to 178 sequential string comparisons per
-                // lookup; `match` lets rustc build a length-and-first-byte decision tree. The
-                // "not const" note above still applies -- it is about `PartialEq`, not about
-                // which construct the body uses.
+                // `match` lets rustc build a decision tree instead of a linear comparison chain.
                 match s {
                     #(#from_alpha3_arms,)*
                     _ => ::core::option::Option::None,
                 }
             }
 
-            /// Every currency in the register.
+            /// Every currency, ordered by alpha-3 code.
             ///
-            /// **Not `ALL`.** `ALL` is the Albanian lek, so an associated const by that name is
-            /// shadowed by its own variant once the register is complete -- the path
-            /// `Iso4217::ALL` stops meaning "every currency" and starts meaning "Lek". It
-            /// surfaces as `` `Iso4217` is not an iterator ``, which is a confusing way to be
-            /// told a constant was overwritten by data, and it cannot happen while a table
-            /// holds only a handful of hand-picked codes.
-            ///
-            /// The general shape: an associated item sharing a namespace with
-            /// externally-defined identifiers will eventually collide, because the register
-            /// grows and the names in it are not ours to choose.
-            ///
-            /// Ordered by **alpha-3 code**, not by the numeric discriminant that `Ord` on
-            /// `Iso4217` compares — so this is deliberately NOT sorted per its own `Ord`, and
-            /// `binary_search` over it would be wrong. Iterate it.
+            /// Named `EVERY` because `ALL` is the Albanian lek. This order differs
+            /// from the numeric discriminant used by [`Ord`].
             pub const EVERY: &'static [Iso4217] = &[ #(#every),* ];
         }
 
@@ -387,9 +318,7 @@ fn parse_register(xml: &str) -> Result<BTreeMap<String, Currency>, String> {
         if code.len() != 3 || !code.bytes().all(|b| b.is_ascii_uppercase()) {
             return Err(format!("{code} is not three ASCII uppercase letters"));
         }
-        // ISO numeric-3 is 0..=999 and the widest minor unit ISO uses is 4 (CLF). kamu-money-core's
-        // tests asserted both -- downstream of the code that should have refused them, which
-        // makes a bad register a failing test instead of a failing build.
+        // ISO numeric-3 is 0..=999; the widest settlement exponent is 4 (CLF).
         if numeric > 999 {
             return Err(format!("{code}'s numeric code {numeric} is not a 3-digit ISO code"));
         }
@@ -401,10 +330,6 @@ fn parse_register(xml: &str) -> Result<BTreeMap<String, Currency>, String> {
         if name.is_empty() {
             return Err(format!("{code} has no name"));
         }
-        if name.contains('"') || name.contains('\\') {
-            return Err(format!("{code}'s name would not survive a string literal: {name}"));
-        }
-
         let parsed = Currency { numeric, exponent, name };
 
         // A currency used in several countries appears once per country. Every such row must
@@ -434,7 +359,7 @@ fn parse_register(xml: &str) -> Result<BTreeMap<String, Currency>, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Currency, parse_register};
+    use super::{Currency, emit, parse_register};
 
     /// A register with `rows` spliced in, so each fixture states only what it is testing.
     fn xml(rows: &str) -> String {
@@ -460,8 +385,7 @@ mod tests {
         assert_eq!(reg["EUR"], Currency { numeric: 978, exponent: Some(2), name: "Euro".to_owned() });
     }
 
-    /// The check that matters most: the register lists one row per COUNTRY, so a currency
-    /// disagreeing with itself would make the table depend on which row parsed first.
+    /// Repeated country rows for one currency must agree.
     #[test]
     fn a_currency_that_disagrees_with_itself_is_refused() {
         let doc = xml(&format!(
@@ -501,6 +425,19 @@ mod tests {
     }
 
     #[test]
+    fn names_with_quotes_and_backslashes_are_escaped_by_the_emitter() {
+        let doc = xml(&row("A", r"Alpha &quot;Quote&quot; \ Reserve", "AAA", "111", "2"));
+        let register = parse_register(&doc).unwrap();
+        assert_eq!(register["AAA"].name, r#"Alpha "Quote" \ Reserve"#);
+
+        let tokens = emit(&register).to_string();
+        assert!(
+            tokens.contains(r#"Alpha \"Quote\" \\ Reserve"#),
+            "emitted tokens did not preserve the escaped name: {tokens}"
+        );
+    }
+
+    #[test]
     fn malformed_rows_are_refused_one_reason_at_a_time() {
         let cases: &[(String, &str)] = &[
             (xml(&row("A", "Alpha", "aaa", "111", "2")), "uppercase"),
@@ -524,11 +461,7 @@ mod tests {
         assert!(err.contains("not parseable as XML"), "{err}");
     }
 
-    /// The one check that can tell a replaced file from the recorded one.
-    ///
-    /// Counts and spot rows cannot: a different edition with 178 codes and the same USD row
-    /// passes every other test here. A digest is the only assertion that fails when the bytes
-    /// change for any reason at all, which is why the crate carries a test-only `sha2` for it.
+    /// Pin the exact vendored bytes, beyond counts and spot rows.
     #[test]
     fn the_vendored_register_hashes_to_its_recorded_digest() {
         use core::fmt::Write as _;
@@ -551,8 +484,7 @@ mod tests {
         );
     }
 
-    /// The edition gate the macro runs at compile time, exercised here too so its failure paths
-    /// are known to work rather than assumed to. A compile error cannot be unit-tested directly.
+    /// Exercise the compile-time edition gate's success and failure paths.
     #[test]
     fn the_edition_gate_accepts_the_real_file_and_refuses_a_substitute() {
         let reg = parse_register(super::REGISTER).unwrap();
@@ -563,33 +495,21 @@ mod tests {
         let err = super::validate_edition(&substitute, 1).unwrap_err();
         assert!(err.contains("CcyNtry rows"), "{err}");
 
-        // Right counts, wrong date -- the case a count-only check waves through.
+        // Right counts, wrong date.
         let wrong_date = super::REGISTER
             .replace(&format!("Pblshd=\"{}\"", super::edition::PUBLISHED), "Pblshd=\"2027-01-01\"");
         let err = super::validate_edition(&wrong_date, reg.len()).unwrap_err();
         assert!(err.contains("Pblshd"), "{err}");
     }
 
-    /// `VENDORED.md` is the human-readable credit, and it went stale: it recorded "281 country
-    /// rows" against a file with 280, of which 277 carry a code. Nothing read the prose, so
-    /// nothing caught it — the same failure mode as the control file that kept describing a
-    /// renamed type. The document must now quote the machine-checked numbers.
-    /// Each value must appear IN ITS OWN LABELLED ROW, not merely somewhere in the file.
-    ///
-    /// A bare `doc.contains("280")` looked equivalent and is not — measured, while mutating the
-    /// manifest to check this test bites. The document discusses the old wrong count in prose
-    /// ("this table read 178, from 281 country rows"), so a `contains` search for the mutated
-    /// 281 found that sentence and passed. The test would have reported agreement with a
-    /// provenance table stating the opposite of the manifest.
-    ///
-    /// Anchoring on the row label is what makes the assertion about the table.
+    /// Require each machine-checked provenance value in its labelled
+    /// `VENDORED.md` table row.
     #[test]
     fn the_credit_document_agrees_with_the_machine_checked_manifest() {
         let doc = include_str!("../VENDORED.md");
         let row_states = |label: &str, value: &str| {
             doc.lines().filter(|l| l.starts_with('|') && l.contains(label)).any(|l| {
-                // Split the row into cells so the value must BE a cell, not sit inside a
-                // longer number: "178" is a substring of "1780".
+                // Compare whole cells so `178` cannot match `1780`.
                 l.split('|').any(|cell| cell.trim().trim_matches('*').trim_matches('`') == value)
             })
         };
@@ -620,8 +540,7 @@ mod tests {
         assert_eq!(reg["KWD"].exponent, Some(3));
         assert_eq!(reg["CLF"].exponent, Some(4));
         assert_eq!(reg["XAU"].exponent, None);
-        // ALL is the Albanian lek, which collided with the `Iso4217::ALL` const and forced it
-        // to become `EVERY`. Named here so the collision has a test, not just a comment.
+        // `ALL` is the Albanian lek; the collection is therefore named `EVERY`.
         assert_eq!(reg["ALL"].name, "Lek");
     }
 }

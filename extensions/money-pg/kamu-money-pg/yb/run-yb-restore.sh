@@ -3,10 +3,7 @@
 #
 #   kamu-money-pg/yb/run-yb-restore.sh [yb-image] [artifact-dir]
 #
-# WHY THIS EXISTS. Restore readiness was documented as unrehearsed and deferred "until a version
-# migration". An external review disagreed with the second half and was right: a rolling VERSION
-# upgrade can wait for a migration to be planned, but restore is needed the moment the first
-# production value exists -- and the first time anybody runs it must not be during an incident.
+# Rehearse the extension-owned part of backup restoration before production data depends on it.
 #
 # WHAT THIS REPOSITORY CAN AND CANNOT ANSWER, stated up front so the result is not over-read.
 # `kmoney` is a library and an extension, not a deployment system, so the operator-owned half --
@@ -35,19 +32,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
-# ONE WRITER AT A TIME, TAKEN BEFORE ANYTHING SHARED IS TOUCHED. This script reads and writes under
-# ${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}, which with that variable unset is the single tree
-# every other suite also uses; a 2026-07-26 review found several entry points reaching those paths
-# before -- or entirely without -- taking the lock, so a stray run could overwrite the artefact
-# triplet a release was in the middle of hashing. Setting KMONEY_RUN_ROOT gives a run its own tree,
-# which removes the contention rather than serialising it; the lock stays for the shared default.
-# Re-entrant: a suite started by `release-check` inherits the descriptor and proceeds.
+# Lock before touching the shared default run root. A distinct `KMONEY_RUN_ROOT` isolates a run;
+# descendants of the release gate inherit the descriptor and re-enter.
 # shellcheck source=kamu-money-pg/yb/workspace-lock.sh
 source ./kamu-money-pg/yb/workspace-lock.sh
 workspace_lock "$(basename "$0")" || exit 1
 
 YB_IMAGE="${1:-$(./kamu-money-pg/yb/yb-image.sh)}"
-ART="${2:-${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}}"
+RUN_ROOT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}"
+ART="${2:-$RUN_ROOT}"
 
 # shellcheck source=kamu-money-pg/yb/install.sh
 source ./kamu-money-pg/yb/install.sh
@@ -56,7 +49,7 @@ RUN_ID="kmoney-restore-$$-$(od -An -N4 -tx4 /dev/urandom | tr -d ' \n')"
 SRC="$RUN_ID-src"
 DST="$RUN_ID-dst"
 BARE="$RUN_ID-bare"
-WORK="kamu-money-pg/yb/out/restore-$RUN_ID"
+WORK="$RUN_ROOT/restore-$RUN_ID"
 
 # Every container belongs to this script, by LABEL -- the daemon is shared across several
 # organisations' runners, so cleanup can never be scoped by name prefix or image. EXIT alone is
@@ -78,11 +71,7 @@ node_up() {
     docker run -d --name "$name" --label "kamu-money-pg.ybtest=$RUN_ID" \
         "$image" bin/yugabyted start --background=false >/dev/null
     local _
-    # READINESS IS A QUERY THAT ANSWERED, NOT AN ADDRESS THAT RESOLVED. The guard below used to
-    # be `[ -n "$host" ]`, and `hostname -i` succeeds within a second of the container starting
-    # -- so a node whose YSQL never came up at all still returned its address as "ready", four
-    # minutes later, and the real failure surfaced as a confusing error from the first query
-    # after it. The loop already broke only on a successful `SELECT 1`; nothing recorded that.
+    # Readiness requires a successful query; resolving the advertised address alone is insufficient.
     for _ in $(seq 1 120); do
         host="$(docker exec "$name" hostname -i 2>/dev/null | awk '{print $1}')" || true
         if [ -n "${host:-}" ] && docker exec "$name" bin/ysqlsh -h "$host" -U yugabyte \
@@ -148,12 +137,9 @@ fingerprint_of() {
 BEFORE="$WORK/fingerprint-before.txt"
 fingerprint_of "$SRC" "$SRC_HOST" > "$BEFORE"
 
-# NOT an independent total, and this comment used to claim it was. Both sides run the same
-# `sum(balance)` expression, so this compares one code path with itself across the restore. That
-# is still worth having -- it catches an aggregate that stopped working on the destination, which
-# a row-by-row comparison would not -- but the INDEPENDENT storage oracle is the byte fingerprint
-# above: `kmoney_send` renders the raw 18-byte payload, and `diff` compares the bytes without
-# asking any kmoney code what they mean.
+# The total checks aggregate behavior across the restore, not an independent implementation.
+# Storage integrity comes from the byte fingerprint above: `kmoney_send` renders each raw
+# 18-byte payload, and `diff` compares those bytes without interpreting them.
 TOTAL_BEFORE="$(sql_on "$SRC" "$SRC_HOST" "SELECT sum(balance)::text FROM account")"
 TYPMOD_BEFORE="$(sql_on "$SRC" "$SRC_HOST" "
     SELECT format_type(atttypid, atttypmod) FROM pg_attribute
@@ -267,12 +253,7 @@ if docker exec "$BARE" bash -c \
         'exec bin/ysqlsh -h "$1" -U yugabyte -X -q -v ON_ERROR_STOP=1 -f /tmp/dump.sql 2>&1' \
         ysqlsh "$BARE_HOST" > "$WORK/restore-bare.log"; then
     bad "the dump restored onto a node with NO kmoney.so -- so it is not carrying the extension"
-# THE LOADER FAILURE, NAMED. This used to accept any failed restore whose log matched the bare
-# token `kmoney` -- which a syntax error, a type error or a permissions error mentioning the type
-# would satisfy just as well. The control would then have reported "fails loudly for the right
-# reason" about a failure it had not actually identified, which is the one thing a negative
-# control must not do. Both halves must appear on ONE line: a loader-shaped phrase, and the
-# extension it failed to load.
+# The negative control requires a loader-shaped error and `kmoney` on the same line.
 elif LOADER_LINE="$(grep -iE 'could not (load library|access file|open extension control file)' \
         "$WORK/restore-bare.log" | grep -i kmoney | head -1)" && [ -n "$LOADER_LINE" ]; then
     ok "restoring onto a node without the library fails at load: $(printf '%s' "$LOADER_LINE" | tr -s ' ')"

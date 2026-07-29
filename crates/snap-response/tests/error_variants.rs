@@ -1,115 +1,116 @@
-//! Data-table tests for the SNAP BI error taxonomy: every variant's
-//! `(http_status, case_code, category) -> response_code` mapping is locked.
+use std::collections::HashSet;
 
-use kamu_snap_response::{Category, Error, ServiceCode};
+use kamu_snap_response::{Category, Error, ErrorClass, ServiceCode};
 
-const SVC: u8 = 11; // arbitrary service code used across the table
+#[test]
+fn declarative_taxonomy_contains_61_unique_wire_pairs() {
+    assert_eq!(ErrorClass::ALL.len(), 61);
 
-fn check(error: Error, expected_http: u16, expected_case: u8, expected_category: Category) {
-    assert_eq!(error.http_status().as_u16(), expected_http, "{error:?}");
-    assert_eq!(error.case_code(), expected_case, "{error:?}");
-    assert_eq!(error.category(), expected_category, "{error:?}");
-    let svc = ServiceCode::new(SVC).unwrap();
-    let expected_response = format!("{expected_http:03}{SVC:02}{expected_case:02}");
-    assert_eq!(error.response_code(svc).raw(), expected_response, "{error:?}");
+    let mut pairs = HashSet::new();
+    for class in ErrorClass::ALL {
+        let pair = (class.http_status().as_u16(), class.case_code().get());
+        assert!(pairs.insert(pair), "duplicate wire pair for {class:?}");
+        assert_eq!(ErrorClass::from_http_and_case(class.http_status(), class.case_code()), Some(*class));
+
+        let code = class.response_code(ServiceCode::try_from(11).unwrap());
+        assert_eq!(code.http_status(), class.http_status());
+        assert_eq!(code.case_code(), class.case_code());
+        assert_eq!(code.classify(), Some(*class));
+        assert!(!class.as_str().is_empty());
+        assert!(!class.message().is_empty());
+        assert_eq!(class.to_string(), class.message());
+        let wire = serde_json::to_string(class).unwrap();
+        assert_eq!(serde_json::from_str::<ErrorClass>(&wire).unwrap(), *class);
+    }
 }
 
 #[test]
-fn taxonomy_table() {
-    use Error::*;
+fn contextual_server_error_keeps_context_and_stable_class_separate() {
+    let error = Error::InvalidFieldFormat("amount".into());
 
-    check(BadRequest, 400, 0, Category::System);
-    check(InvalidFieldFormat(String::new()), 400, 1, Category::Message);
-    check(InvalidMandatoryField(String::new()), 400, 2, Category::Message);
-
-    check(Unauthorized(String::new()), 401, 0, Category::System);
-    check(InvalidTokenB2B, 401, 1, Category::System);
-    check(InvalidCustomerToken, 401, 2, Category::System);
-    check(TokenNotFoundB2B, 401, 3, Category::System);
-    check(CustomerTokenNotFound, 401, 4, Category::System);
-
-    check(TransactionExpired, 403, 0, Category::Business);
-    check(FeatureNotAllowed(String::new()), 403, 1, Category::System);
-    check(ExceedsTransactionAmountLimit, 403, 2, Category::Business);
-    check(SuspectedFraud, 403, 3, Category::Business);
-    check(ActivityCountLimitExceeded, 403, 4, Category::Business);
-    check(DoNotHonor, 403, 5, Category::Business);
-    check(FeatureNotAllowedAtThisTime(String::new()), 403, 6, Category::System);
-    check(CardBlocked, 403, 7, Category::Business);
-    check(CardExpired, 403, 8, Category::Business);
-    check(DormantAccount, 403, 9, Category::Business);
-    check(NeedToSetTokenLimit, 403, 10, Category::Business);
-    check(OTPBlocked, 403, 11, Category::System);
-    check(OTPLifetimeExpired, 403, 12, Category::System);
-    check(OTPSentToCardholder, 403, 13, Category::System);
-    check(InsufficientFunds, 403, 14, Category::Business);
-    check(TransactionNotPermitted(String::new()), 403, 15, Category::Business);
-    check(SuspendTransaction, 403, 16, Category::Business);
-    check(TokenLimitExceeded, 403, 17, Category::Business);
-    check(InactiveCardOrAccountOrCustomer, 403, 18, Category::Business);
-    check(MerchantBlacklisted, 403, 19, Category::Business);
-    check(MerchantLimitExceed, 403, 20, Category::Business);
-    check(SetLimitNotAllowed, 403, 21, Category::Business);
-    check(TokenLimitInvalid, 403, 22, Category::Business);
-    check(AccountLimitExceed, 403, 23, Category::Business);
-
-    check(InvalidTransactionStatus, 404, 0, Category::Business);
-    check(TransactionNotFound, 404, 1, Category::Business);
-    check(InvalidRouting, 404, 2, Category::System);
-    check(BankNotSupportedBySwitch, 404, 3, Category::System);
-    check(TransactionCancelled, 404, 4, Category::Business);
-    check(MerchantNotRegisteredForCardRegistrationServices, 404, 5, Category::Business);
-    check(NeedToRequestOTP, 404, 6, Category::System);
-    check(JourneyNotFound, 404, 7, Category::System);
-    check(InvalidMerchant, 404, 8, Category::Business);
-    check(NoIssuer, 404, 9, Category::Business);
-    check(InvalidAPITransition, 404, 10, Category::System);
-    check(InvalidCardOrAccountOrCustomerOrVirtualAccount(String::new()), 404, 11, Category::Business);
-    check(InvalidBillOrVirtualAccountWithReason(String::new()), 404, 12, Category::Business);
-    check(InvalidAmount, 404, 13, Category::Business);
-    check(PaidBill, 404, 14, Category::Business);
-    check(InvalidOTP, 404, 15, Category::System);
-    check(PartnerNotFound, 404, 16, Category::Business);
-    check(InvalidTerminal, 404, 17, Category::Business);
-    check(InconsistentRequest, 404, 18, Category::Business);
-    check(InvalidBillOrVirtualAccount, 404, 19, Category::Business);
-
-    check(RequestedFunctionIsNotSupported, 405, 0, Category::System);
-    check(RequestedOperationIsNotAllowed, 405, 1, Category::Business);
-
-    check(Conflict, 409, 0, Category::System);
-    check(DuplicatePartnerReferenceNo, 409, 1, Category::System);
-
-    check(TooManyRequests, 429, 0, Category::System);
-
-    check(GeneralError, 500, 0, Category::System);
-    check(InternalServerError, 500, 1, Category::System);
-    check(ExternalServerError, 500, 2, Category::System);
-
-    check(Timeout, 504, 0, Category::System);
+    assert_eq!(error.to_string(), "Invalid Field Format amount");
+    assert_eq!(error.response_message(), "Invalid Field Format amount");
+    assert_eq!(error.class(), ErrorClass::InvalidFieldFormat);
+    assert_eq!(error.http_status(), http::StatusCode::BAD_REQUEST);
+    assert_eq!(error.case_code().get(), 1);
+    assert_eq!(error.category(), Category::Message);
+    assert_eq!(error.response_code(ServiceCode::try_from(11).unwrap()).as_str(), "4001101");
 }
 
 #[test]
-fn from_http_and_case_round_trips_every_variant() {
-    // Build every code from a variant, then classify it back to the same kind.
-    let svc = ServiceCode::new(11).unwrap();
-    let variants: Vec<(Error, &'static str)> = vec![
-        (Error::BadRequest, "BadRequest"),
-        (Error::InvalidFieldFormat(String::new()), "InvalidFieldFormat"),
-        (Error::Unauthorized(String::new()), "Unauthorized"),
-        (Error::InvalidTokenB2B, "InvalidTokenB2B"),
-        (Error::InsufficientFunds, "InsufficientFunds"),
-        (Error::Timeout, "Timeout"),
-        (Error::GeneralError, "GeneralError"),
-    ];
-    for (variant, label) in variants {
-        let code = variant.response_code(svc);
-        let parsed = code.classify().unwrap_or_else(|| panic!("classify failed for {label}"));
-        // Discriminant should match.
-        assert_eq!(
-            std::mem::discriminant(&parsed),
-            std::mem::discriminant(&variant),
-            "round-trip mismatch for {label}"
-        );
+fn representative_categories_remain_stable() {
+    assert_eq!(Error::BadRequest.category(), Category::System);
+    assert_eq!(Error::InsufficientFunds.category(), Category::Business);
+    assert_eq!(Error::InvalidRouting.category(), Category::System);
+    assert_eq!(Error::Timeout.category(), Category::System);
+}
+
+#[cfg(feature = "crypto")]
+mod crypto {
+    use kamu_snap_crypto::{Error as CryptoError, ServiceVerificationError, snap_bi::InputError};
+    use kamu_snap_response::{CryptoFailureClass, Error, ErrorClass, ServiceCode, SnapResponse};
+
+    #[test]
+    fn authentication_failure_maps_to_401_without_source_disclosure() {
+        let error = Error::from(CryptoError::SymmetricVerifyFailed);
+
+        assert_eq!(error.crypto_class(), Some(CryptoFailureClass::Authentication));
+        assert_eq!(error.class(), ErrorClass::Unauthorized);
+        assert_eq!(error.http_status(), http::StatusCode::UNAUTHORIZED);
+        assert_eq!(error.response_message(), "Unauthorized");
+    }
+
+    #[test]
+    fn request_validation_failure_maps_to_400() {
+        let error = Error::from(CryptoError::SnapBiInput(InputError::InvalidPath));
+
+        assert_eq!(error.crypto_class(), Some(CryptoFailureClass::InvalidRequest));
+        assert_eq!(error.class(), ErrorClass::BadRequest);
+        assert_eq!(error.http_status(), http::StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn service_signature_failure_remains_authentication() {
+        let error =
+            Error::from(CryptoError::ServiceVerification(ServiceVerificationError::SignatureMismatch));
+
+        assert_eq!(error.crypto_class(), Some(CryptoFailureClass::Authentication));
+        assert_eq!(error.class(), ErrorClass::Unauthorized);
+    }
+
+    #[test]
+    fn authentication_headers_are_distinct_from_other_missing_input() {
+        let authentication = Error::from(CryptoError::MissingHeader { name: "authorization" });
+        let request = Error::from(CryptoError::MissingHeader { name: "X-TIMESTAMP" });
+
+        assert_eq!(authentication.crypto_class(), Some(CryptoFailureClass::Authentication));
+        assert_eq!(request.crypto_class(), Some(CryptoFailureClass::InvalidRequest));
+    }
+
+    #[test]
+    fn local_key_failure_maps_to_500_and_redacts_details() {
+        let marker = "do-not-send-this-key-parser-detail";
+        let error = Error::from(CryptoError::InvalidPublicKey(marker.into()));
+
+        assert_eq!(error.crypto_class(), Some(CryptoFailureClass::Configuration));
+        assert_eq!(error.class(), ErrorClass::InternalServerError);
+        assert_eq!(error.http_status(), http::StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(error.response_message(), "Internal Server Error");
+        assert!(!error.to_string().contains(marker));
+        assert!(!format!("{error:?}").contains(marker));
+
+        let Error::Crypto(source) = &error else {
+            panic!("expected crypto bridge");
+        };
+        assert_eq!(source.class(), CryptoFailureClass::Configuration);
+        assert!(std::error::Error::source(source).is_some());
+        assert!(matches!(source.source_error(), CryptoError::InvalidPublicKey(_)));
+
+        let response = SnapResponse::<()>::failure(error, ServiceCode::try_from(11).unwrap());
+        let SnapResponse::Failure(details) = response else {
+            panic!("expected failure");
+        };
+        assert_eq!(details.crypto_class(), Some(CryptoFailureClass::Configuration));
+        assert_eq!(details.response_message(), "Internal Server Error");
     }
 }

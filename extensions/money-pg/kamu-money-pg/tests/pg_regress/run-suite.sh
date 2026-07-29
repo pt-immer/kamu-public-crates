@@ -6,8 +6,8 @@
 #                [--server-exec "<prefix that reads a script on stdin>"] [case ...]
 #
 # WHY THIS EXISTS. `cargo pgrx test` manages its own PostgreSQL and cannot be aimed at
-# YugabyteDB, so the 54 `#[pg_test]`s in kamu-money-pg/src/lib.rs -- which are this type's
-# actual contract -- had never run there. Everything YugabyteDB was known to do came from one
+# YugabyteDB, so the in-backend `#[pg_test]` contract had never run there. Everything YugabyteDB
+# was known to do came from one
 # ~112-line script (yb/abi_battery.sql). This suite is that contract restated as SQL, so it
 # runs against a single YB node, any node of a YB cluster, or the stock-PG15 reference,
 # unchanged.
@@ -71,15 +71,10 @@ fi
 
 mkdir -p "$OUTDIR"
 
-# TWO normalizations, and NOTHING else. Both remove something that describes the HARNESS rather
-# than the type; every character of every refusal message is compared verbatim.
+# Normalize only harness-specific output; refusal messages remain byte-exact.
 #
-# 1. The error-location prefix -- `psql:<stdin>:12:` / `ysqlsh:/tmp/x.sql:12:`. Deleted rather than
-#    replaced with a placeholder, because psql emits it INCONSISTENTLY: reading a script with `-f`
-#    it prints `psql:<file>:<line>: ERROR: ...`, and reading the identical script on stdin it
-#    prints a bare `ERROR: ...`. Measured on YugabyteDB 2025.2.5.1 -- the first run of this suite
-#    failed 9 of 11 cases on exactly that, byte-identical message text underneath. Deleting it lets
-#    one golden serve a stdin run here, an `-f` run in the PG15 reference, and anything later.
+# 1. Delete the error-location prefix (`psql:<stdin>:12:` or `ysqlsh:/tmp/x.sql:12:`), which
+#    differs between stdin and `-f` execution.
 #
 # 2. A trailing ` at character N`. Under VERBOSITY terse psql still appends the cursor POSITION for
 #    errors that carry one -- and N is a byte offset into the statement text, so re-indenting a
@@ -89,6 +84,25 @@ mkdir -p "$OUTDIR"
 norm() {
     sed -E -e 's/^(psql|ysqlsh):[^:]*:[0-9]+:[[:space:]]?//' \
            -e 's/ at character [0-9]+$//'
+}
+
+cleanup_server_case() {
+    local cleanup=$1
+    local directory=$2
+    local log=$3
+
+    case "$directory" in
+        /tmp/kmoney-suite.*) ;;
+        *)
+            echo "run-suite[$LABEL]: refusing cleanup of unexpected path: $directory" >&2
+            return 2
+            ;;
+    esac
+
+    # Pass the validated path as a shell assignment before the fixed cleanup script. `%q`
+    # preserves it as one value; server-exec is required to invoke bash.
+    # shellcheck disable=SC2086 # SERVER_EXEC is a command line; splitting is the point
+    { printf 'KMONEY_SUITE_DIR=%q\n' "$directory"; cat "$cleanup"; } | $SERVER_EXEC > "$log" 2>&1
 }
 
 pass=0
@@ -116,6 +130,8 @@ for c in "${CASES[@]}"; do
     # needs deliberately malformed binary-COPY files to exist on the SERVER's filesystem, and
     # SQL has no primitive that writes arbitrary bytes to a file.
     setup="$SUITE/sql/$c.setup.sh"
+    cleanup="$SUITE/sql/$c.cleanup.sh"
+    server_directory=""
     if [ -f "$setup" ]; then
         if [ -z "$SERVER_EXEC" ]; then
             echo "run-suite[$LABEL]: FAIL $c -- needs sql/$c.setup.sh but no --server-exec was given"
@@ -125,7 +141,28 @@ for c in "${CASES[@]}"; do
         if ! $SERVER_EXEC < "$setup" > "$OUTDIR/$c.setup.log" 2>&1; then
             echo "run-suite[$LABEL]: FAIL $c -- server-side setup failed:"
             sed 's/^/    /' "$OUTDIR/$c.setup.log"
+            server_directory=$(sed -n 's/^KMONEY_SUITE_DIR=//p' "$OUTDIR/$c.setup.log" | tail -1)
+            if [ -n "$server_directory" ] && [ -f "$cleanup" ]; then
+                cleanup_server_case "$cleanup" "$server_directory" "$OUTDIR/$c.cleanup.log" || true
+            fi
             fail=$((fail+1)); failed_cases+=("$c:setup"); continue
+        fi
+        mapfile -t server_directories < <(sed -n 's/^KMONEY_SUITE_DIR=//p' "$OUTDIR/$c.setup.log")
+        if [ "${#server_directories[@]}" -ne 1 ]; then
+            echo "run-suite[$LABEL]: FAIL $c -- setup must report exactly one KMONEY_SUITE_DIR"
+            fail=$((fail+1)); failed_cases+=("$c:setup-directory"); continue
+        fi
+        server_directory="${server_directories[0]}"
+        case "$server_directory" in
+            /tmp/kmoney-suite.*) ;;
+            *)
+                echo "run-suite[$LABEL]: FAIL $c -- setup reported unexpected directory: $server_directory"
+                fail=$((fail+1)); failed_cases+=("$c:setup-directory"); continue
+                ;;
+        esac
+        if [ ! -f "$cleanup" ]; then
+            echo "run-suite[$LABEL]: FAIL $c -- setup exists but sql/$c.cleanup.sh is missing"
+            fail=$((fail+1)); failed_cases+=("$c:no-cleanup"); continue
         fi
     fi
 
@@ -134,9 +171,20 @@ for c in "${CASES[@]}"; do
     # structural -- could not connect, file unreadable, backend died -- and is its own failure.
     set +e
     # shellcheck disable=SC2086 # CLIENT is a command line; splitting is the point
-    $CLIENT -X -q -v ON_ERROR_STOP=0 < "$sql" > "$got" 2>&1
+    if [ -n "$server_directory" ]; then
+        $CLIENT -X -q -v ON_ERROR_STOP=0 -v "kmoney_suite_dir=$server_directory" < "$sql" > "$got" 2>&1
+    else
+        $CLIENT -X -q -v ON_ERROR_STOP=0 < "$sql" > "$got" 2>&1
+    fi
     status=$?
     set -e
+
+    if [ -n "$server_directory" ] &&
+       ! cleanup_server_case "$cleanup" "$server_directory" "$OUTDIR/$c.cleanup.log"; then
+        echo "run-suite[$LABEL]: FAIL $c -- server-side cleanup failed:"
+        sed 's/^/    /' "$OUTDIR/$c.cleanup.log"
+        fail=$((fail+1)); failed_cases+=("$c:cleanup"); continue
+    fi
 
     if [ "$status" -ne 0 ]; then
         echo "run-suite[$LABEL]: FAIL $c -- client exited $status; under ON_ERROR_STOP=0 that is structural, not an expected SQL error"

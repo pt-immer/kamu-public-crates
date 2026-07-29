@@ -1,156 +1,156 @@
-//! Built-in [`WebhookVerifier`] implementations for known PT IMMER providers.
-//!
-//! All canonical-payload shapes here reflect the *current* upstream contract
-//! at the time of writing; if a provider changes the recipe, override the
-//! shipped impl or implement [`WebhookVerifier`] directly for the new shape.
+//! Built-in provider verifiers.
+
+use core::fmt;
 
 use http::HeaderMap;
 
-use crate::error::{Error, Result};
-use crate::signature::Signature;
+#[cfg(feature = "snap-bi")]
+use crate::snap_bi::{ServiceRequestParts, ServiceVerificationError, request::verify_service_request_with};
+use crate::{HmacSigner, Result, Signature};
 
-use super::{WebhookVerifier, header_str, hmac_compare};
+use super::BodyWebhookVerifier;
+#[cfg(feature = "snap-bi")]
+use super::RequestWebhookVerifier;
 
-/// Inacash cashout-callback verifier. Canonical payload = body bytes; signature
-/// arrives in the `X-Signature` header as base64-encoded HMAC-SHA512.
-pub struct InacashCashoutVerifier {
-    /// Shared secret issued by Inacash for this merchant.
-    pub secret: String,
-}
-
-impl WebhookVerifier for InacashCashoutVerifier {
-    fn canonical_payload(&self, _headers: &HeaderMap, body: &[u8]) -> Result<Vec<u8>> {
-        Ok(body.to_vec())
-    }
-
-    fn extract_signature(&self, headers: &HeaderMap) -> Result<Signature> {
-        Signature::from_base64(header_str(headers, "X-Signature")?)
-    }
-
-    fn compare(&self, sig: &Signature, canonical: &[u8]) -> Result<()> {
-        hmac_compare(self.secret.as_bytes(), sig, canonical)
-    }
-}
-
-/// Inacash QRIS-status verifier. Same canonical shape as cashout, separate
-/// secret slot so rotation is independent.
-pub struct InacashQrisVerifier {
-    /// Shared secret issued by Inacash for the QRIS product.
-    pub secret: String,
-}
-
-impl WebhookVerifier for InacashQrisVerifier {
-    fn canonical_payload(&self, _headers: &HeaderMap, body: &[u8]) -> Result<Vec<u8>> {
-        Ok(body.to_vec())
-    }
-
-    fn extract_signature(&self, headers: &HeaderMap) -> Result<Signature> {
-        Signature::from_base64(header_str(headers, "X-Signature")?)
-    }
-
-    fn compare(&self, sig: &Signature, canonical: &[u8]) -> Result<()> {
-        hmac_compare(self.secret.as_bytes(), sig, canonical)
-    }
-}
-
-/// BRI VA paid-status callback verifier.
+/// Body-only HMAC-SHA512 verifier.
 ///
-/// **This base impl cannot verify a BRI VA callback on its own.** BRI VA signs
-/// the full SNAP BI service `stringToSign`
-/// (`method:path:accessToken:lowercaseHex(SHA256(body)):timestamp`), which
-/// requires request context (HTTP method, path, access token, `X-TIMESTAMP`)
-/// that a `(headers, body)` pair does not carry. So [`canonical_payload`] here
-/// returns an error rather than silently HMAC-ing the raw body (which would
-/// reject every legitimate callback, or pass only against a same-shaped test
-/// signature and then fail in production).
-///
-/// To verify a BRI VA service signature, use the request-context-aware
-/// `verify_request` in `kamu-snap-crypto-actix` / `kamu-snap-crypto-axum`, or
-/// implement [`WebhookVerifier`] yourself with the request metadata in hand and
-/// override [`canonical_payload`] to build the real `stringToSign`.
-///
-/// [`canonical_payload`]: WebhookVerifier::canonical_payload
+/// Signatures use standard padded base64 in `X-Signature`.
+#[derive(Clone)]
+pub struct BodyHmacVerifier {
+    signer: HmacSigner,
+}
+
+impl BodyHmacVerifier {
+    /// Initialise with the provider secret.
+    #[must_use]
+    pub fn new(secret: impl AsRef<[u8]>) -> Self {
+        Self { signer: HmacSigner::new(secret) }
+    }
+}
+
+impl BodyWebhookVerifier for BodyHmacVerifier {
+    fn verify_body(&self, headers: &HeaderMap, body: &[u8]) -> Result<()> {
+        let signature = headers
+            .get("x-signature")
+            .ok_or(crate::Error::MissingHeader { name: "X-Signature" })?
+            .to_str()
+            .map_err(|_| crate::Error::InvalidHeader { name: "X-Signature" })?;
+        self.signer.verify(&Signature::from_base64(signature)?, body)
+    }
+}
+
+impl fmt::Debug for BodyHmacVerifier {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("BodyHmacVerifier").field("signer", &"[REDACTED]").finish()
+    }
+}
+
+/// Inacash cashout callback verifier.
+pub type InacashCashoutVerifier = BodyHmacVerifier;
+
+/// Inacash QRIS status callback verifier.
+pub type InacashQrisVerifier = BodyHmacVerifier;
+
+/// Request-aware BRI VA paid-status verifier.
+#[cfg(feature = "snap-bi")]
+#[derive(Clone)]
 pub struct BriVaPaidVerifier {
-    /// Client secret issued by BRI for this product.
-    pub secret: String,
+    signer: HmacSigner,
 }
 
-impl WebhookVerifier for BriVaPaidVerifier {
-    fn canonical_payload(&self, _headers: &HeaderMap, _body: &[u8]) -> Result<Vec<u8>> {
-        Err(Error::Webhook(
-            "BriVaPaidVerifier cannot verify from the body alone: BRI VA signs the SNAP BI \
-             service stringToSign (method:path:accessToken:lowercaseHex(SHA256(body)):timestamp), \
-             not the raw body. Use kamu-snap-crypto-actix / kamu-snap-crypto-axum `verify_request`, \
-             or implement WebhookVerifier with the request context and override canonical_payload."
-                .to_owned(),
-        ))
+#[cfg(feature = "snap-bi")]
+impl BriVaPaidVerifier {
+    /// Initialise with the BRI client secret.
+    #[must_use]
+    pub fn new(secret: impl AsRef<[u8]>) -> Self {
+        Self { signer: HmacSigner::new(secret) }
     }
+}
 
-    fn extract_signature(&self, headers: &HeaderMap) -> Result<Signature> {
-        Signature::from_base64(header_str(headers, "X-SIGNATURE")?)
+#[cfg(feature = "snap-bi")]
+impl RequestWebhookVerifier for BriVaPaidVerifier {
+    fn verify_request(
+        &self,
+        request: ServiceRequestParts<'_>,
+    ) -> core::result::Result<(), ServiceVerificationError> {
+        verify_service_request_with(&self.signer, request)
     }
+}
 
-    fn compare(&self, sig: &Signature, canonical: &[u8]) -> Result<()> {
-        hmac_compare(self.secret.as_bytes(), sig, canonical)
+#[cfg(feature = "snap-bi")]
+impl fmt::Debug for BriVaPaidVerifier {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("BriVaPaidVerifier").field("signer", &"[REDACTED]").finish()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::HmacSigner;
+    #[cfg(feature = "snap-bi")]
+    use crate::snap_bi::{AccessToken, ServiceStringToSign, sign_service};
+    use crate::webhook::BodyWebhookVerifier;
+    #[cfg(feature = "snap-bi")]
+    use crate::webhook::RequestWebhookVerifier;
 
-    /// Build a header map carrying the base64 HMAC-SHA512 of `body` under `name`.
-    fn signed_headers(name: &str, secret: &str, body: &[u8]) -> HeaderMap {
-        let sig = HmacSigner::new(secret.as_bytes()).unwrap().sign(body).to_base64();
-        let mut h = HeaderMap::new();
-        let hn = http::HeaderName::from_bytes(name.as_bytes()).unwrap();
-        h.insert(hn, http::HeaderValue::from_str(&sig).unwrap());
-        h
+    fn signed_headers(secret: &str, body: &[u8]) -> HeaderMap {
+        let signature = HmacSigner::new(secret).sign(body).to_base64();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-signature", http::HeaderValue::from_str(&signature).unwrap());
+        headers
     }
 
     #[test]
-    fn inacash_cashout_round_trip() {
-        let secret = "inacash-cashout-secret";
+    fn body_hmac_round_trip() {
         let body = br#"{"status":"PAID"}"#;
-        let v = InacashCashoutVerifier { secret: secret.to_owned() };
-        let headers = signed_headers("X-Signature", secret, body);
-        assert!(v.verify(&headers, body).is_ok());
+        let verifier = InacashCashoutVerifier::new("cashout-secret");
+        assert!(verifier.verify_body(&signed_headers("cashout-secret", body), body).is_ok());
     }
 
     #[test]
-    fn inacash_cashout_rejects_tampered_body() {
-        let secret = "inacash-cashout-secret";
-        let v = InacashCashoutVerifier { secret: secret.to_owned() };
-        let headers = signed_headers("X-Signature", secret, b"original-body");
-        assert!(v.verify(&headers, b"tampered-body").is_err());
+    fn body_hmac_rejects_tampering() {
+        let verifier = InacashQrisVerifier::new("qris-secret");
+        let headers = signed_headers("qris-secret", b"original");
+        assert!(verifier.verify_body(&headers, b"tampered").is_err());
     }
 
     #[test]
-    fn inacash_qris_round_trip_with_independent_secret() {
-        let secret = "inacash-qris-secret";
-        let body = br#"{"qris":"ok"}"#;
-        let v = InacashQrisVerifier { secret: secret.to_owned() };
-        let headers = signed_headers("X-Signature", secret, body);
-        assert!(v.verify(&headers, body).is_ok());
+    fn body_hmac_requires_signature_header() {
+        let verifier = BodyHmacVerifier::new("secret");
+        assert!(matches!(
+            verifier.verify_body(&HeaderMap::new(), b"body"),
+            Err(crate::Error::MissingHeader { .. })
+        ));
+    }
+
+    #[cfg(feature = "snap-bi")]
+    #[test]
+    fn bri_va_verifies_full_request_context() {
+        let method = http::Method::POST;
+        let path = "/snap/v1.0/transfer-va/payment";
+        let authorization = "Bearer access-token";
+        let timestamp = "2026-07-28T12:34:56+07:00";
+        let body = br#"{"status":"PAID"}"#;
+        let token = AccessToken::parse(authorization).unwrap();
+        let canonical = ServiceStringToSign::new(&method, path, token, body, timestamp).unwrap();
+        let signature = sign_service("bri-secret", &canonical).to_base64();
+        let request =
+            ServiceRequestParts::new(&method, path, authorization, &signature, timestamp, body).unwrap();
+
+        let verifier = BriVaPaidVerifier::new("bri-secret");
+        assert!(verifier.verify_request(request).is_ok());
     }
 
     #[test]
-    fn missing_signature_header_errors() {
-        let v = InacashCashoutVerifier { secret: "s".to_owned() };
-        assert!(v.verify(&HeaderMap::new(), b"body").is_err());
+    fn body_verifier_debug_redacts_secret() {
+        let body_debug = format!("{:?}", BodyHmacVerifier::new("body-secret"));
+        assert!(!body_debug.contains("body-secret"));
     }
 
+    #[cfg(feature = "snap-bi")]
     #[test]
-    fn bri_va_verifier_refuses_body_only_verification() {
-        // Even with a body-HMAC that *would* match, BriVaPaidVerifier must fail
-        // loud at canonical_payload — it cannot reconstruct the real stringToSign.
-        let secret = "bri-secret";
-        let v = BriVaPaidVerifier { secret: secret.to_owned() };
-        let headers = signed_headers("X-SIGNATURE", secret, b"body");
-        match v.verify(&headers, b"body") {
-            Err(Error::Webhook(msg)) => assert!(msg.contains("stringToSign")),
-            other => panic!("expected fail-loud Webhook error, got {other:?}"),
-        }
+    fn request_verifier_debug_redacts_secret() {
+        let request_debug = format!("{:?}", BriVaPaidVerifier::new("request-secret"));
+        assert!(!request_debug.contains("request-secret"));
     }
 }

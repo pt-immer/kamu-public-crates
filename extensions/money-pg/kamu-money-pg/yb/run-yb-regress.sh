@@ -3,13 +3,8 @@
 #
 #   kamu-money-pg/yb/run-yb-regress.sh [yb-image] [artifact-dir]
 #
-# This is P0.1 of the readiness plan, and the single highest-value item in it. Before this, the
-# whole YugabyteDB evidence surface was one ~112-line script; the 54 #[pg_test]s that encode this
-# type's contract had never run there, because `cargo pgrx test` manages its own PostgreSQL and
-# cannot be aimed at a YB backend. The suite speaks the wire protocol instead, so it runs here
-# unchanged -- and the stock-PG15 reference (Dockerfile.pg15) runs the SAME cases against the SAME
-# hand-authored goldens, which is what makes a failure here a divergence rather than a guess about
-# whether the port is faithful.
+# `cargo pgrx test` owns its PostgreSQL server and cannot target YugabyteDB. This portable wire
+# suite runs the same cases and hand-authored goldens against YugabyteDB and stock PostgreSQL 15.
 #
 # Prereq: kamu-money-pg/yb/out/{kmoney.so,kmoney.control,kmoney--*.sql} built by `just yb-build`.
 set -euo pipefail
@@ -45,11 +40,7 @@ docker run -d --name "$NAME" --label "kamu-money-pg.ybtest=$RUN_ID" \
   --label "kamu-money-pg.revision=$(git rev-parse --short HEAD 2>/dev/null || echo nogit)" \
   "$YB_IMAGE" bin/yugabyted start --background=false >/dev/null
 
-# READINESS IS A QUERY THAT ANSWERED, NOT AN ADDRESS THAT RESOLVED. The guard after this loop
-# used to be `[ -n "$HOST" ]`, and `hostname -i` succeeds within a second of the container
-# starting -- so a node whose YSQL never came up at all still reported ready, four minutes later,
-# and the real failure surfaced as a confusing error from whatever ran next. The loop already
-# broke only on a successful `SELECT 1`; nothing recorded that it had.
+# Readiness requires a successful query; resolving the advertised address alone is insufficient.
 HOST=""
 READY=0
 for _ in $(seq 1 120); do
@@ -67,14 +58,8 @@ echo "YB ready at $HOST: $(docker exec "$NAME" bin/ysqlsh -h "$HOST" -U yugabyte
 yb_ensure_extension "$NAME" "$ART"
 echo "kmoney present ($YB_INSTALL_MODE, sha256 $YB_INSTALL_SHA); running the case suite ..."
 
-# The client is a generated wrapper rather than a `docker exec ...` string, for two reasons that
-# are both load-bearing:
-#
-#  1. ysqlsh's stderr is merged into its stdout INSIDE the container. `docker exec` carries the two
-#     as separately multiplexed streams, so a host-side `2>&1` cannot order them -- measured, this
-#     put expected-error lines one `\echo` section late, intermittently, in 2 of 11 cases.
-#  2. run-suite.sh word-splits --client to append its own flags, so the quoted `bash -c` script
-#     could not survive being embedded in that string. A file has no quoting problem.
+# The generated wrapper merges ysqlsh streams inside the container and avoids quoting loss when
+# run-suite.sh appends client flags.
 #
 # --server-exec is how 09-wire's crafted BINARY COPY payloads get onto the SERVER's filesystem:
 # kmoney_recv takes `internal`, so COPY (FORMAT BINARY) from a file is the only in-database route
@@ -89,11 +74,8 @@ chmod +x "$CLIENT_WRAPPER"
 # The wrapper names this run, so it goes when the run does.
 trap 'cleanup; rm -f "$CLIENT_WRAPPER"' EXIT INT TERM HUP
 
-# NOT `exec`. An earlier revision ran the suite with `exec`, which REPLACES this shell -- and a
-# replaced shell has no traps, so every failing run left a YugabyteDB container alive on a daemon
-# shared across several organisations' runners. Three of them accumulated in one session before
-# `just containers` noticed. `set -e` propagates the suite's exit status here just as well, and
-# the trap still fires.
+# Do not `exec`: this shell owns the cleanup trap. `set -e` propagates the suite's status while
+# preserving cleanup on the shared daemon.
 ./kamu-money-pg/tests/pg_regress/run-suite.sh \
     --client "$CLIENT_WRAPPER" \
     --server-exec "docker exec -i $NAME bash" \

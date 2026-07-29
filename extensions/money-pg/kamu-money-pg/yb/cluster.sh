@@ -8,21 +8,13 @@
 #   yb_sql <index> "SELECT 1"     # run SQL on node <index> (0-based)
 #   # teardown is automatic: yb_cluster_up installs the trap
 #
-# WHY A CLUSTER AT ALL. Every existing piece of YugabyteDB evidence in this repository was
-# gathered from `yugabyted start` -- one node. Production YugabyteDB is several, and the things
-# that only exist there are exactly the ones a money type cannot be wrong about: the .so has to be
-# present on EVERY node at the same version, CREATE EXTENSION is DDL that must reach all of them,
-# and a tablet split moves rows between nodes while `kmoney` values are sitting in columns.
-#
-# CONTAINER LIFETIME BELONGS TO THIS FILE, NOT TO WHOEVER REMEMBERS. The daemon here is shared
-# across several organisations' runners, so: every container and the network carry this run's
-# label, cleanup is scoped to that label and can therefore never touch another org's work, and the
-# trap covers INT/TERM/HUP as well as EXIT because a kill during the readiness wait would
-# otherwise orphan a three-node cluster.
+# The cluster proves node-wide extension installation, distributed DDL, and
+# values moving during tablet splits. Every container and network carries this
+# run's label; cleanup uses only that label and traps INT/TERM/HUP/EXIT.
 set -euo pipefail
 
-# Getting the extension onto a node -- baked or copied -- and proving it by hash is ONE function,
-# shared with the single-node harnesses. install.sh sources artifact.sh in turn.
+# Installation and artifact-hash verification are shared with single-node
+# harnesses through install.sh.
 # shellcheck source=kamu-money-pg/yb/install.sh
 source "$(dirname "${BASH_SOURCE[0]}")/install.sh"
 
@@ -36,26 +28,10 @@ YB_IMAGE_REF=""
 # shellcheck source=kamu-money-pg/yb/node-limits.sh
 source "$(dirname "${BASH_SOURCE[0]}")/node-limits.sh"
 
-# WHAT COUNTS AS RETRYABLE, in ONE place, for EVERY script that retries a transaction.
-#
-# It was two copies -- one in run-yb-concurrent.sh, one in run-yb-soak.sh -- and they had already
-# drifted apart: the soak's list was missing `Restart`. A classifier that exists twice means the
-# forgotten copy is the one deciding whether a real failure gets retried into silence, so it lives
-# here, beside the cluster both scripts bring up.
-#
-# The same class had bitten once already inside run-yb-concurrent.sh, when its workers' list and
-# its positive control's list disagreed about `deadlock`: the control watched a deliberately-forced
-# write skew return `ERROR: deadlock detected ... kDeadlock [serializable]` -- exactly the error it
-# existed to demand -- and reported that no retryable error had occurred.
-#
-# `deadlock` belongs here on YugabyteDB specifically: under SERIALIZABLE it takes read locks, so two
-# transactions that read each other's rows before writing deadlock rather than raising a
-# serialization failure. It is the same "abort and try again" contract under a different name, and
-# YugabyteDB says so in the message itself.
-#
-# Matching on MESSAGE TEXT rather than SQLSTATE is a known weakness -- it is locale- and
-# version-fragile, and a consuming service should classify on SQLSTATE instead. It is what a shell
-# harness driving `ysqlsh` can see; the obligation is recorded rather than hidden.
+# Shared retry classifier for every cluster script. YugabyteDB SERIALIZABLE
+# transactions can report deadlock instead of serialization failure; both mean
+# abort and retry. `ysqlsh` exposes message text here, so this harness cannot use
+# the less fragile SQLSTATE classification expected in an application.
 # shellcheck disable=SC2034 # read by the scripts that source this file, not by this file
 YB_RETRYABLE='could not serialize|conflict|restart read|Try again|deadlock|expired or aborted|Restart'
 
@@ -81,13 +57,8 @@ yb_sql() {
 
 # A client wrapper for node <index>, for run-suite.sh's --client. Echoes the wrapper's PATH.
 #
-# A generated file rather than a `docker exec ...` string, for two reasons that both bite:
-#
-#  1. ysqlsh's stderr is merged into its stdout INSIDE the container. `docker exec` carries the two
-#     as separately multiplexed streams, so a host-side `2>&1` cannot order them -- measured, this
-#     put expected-error lines one `\echo` section late, intermittently.
-#  2. run-suite.sh word-splits --client to append its flags, so a quoted `bash -c` script cannot
-#     survive being embedded in that string. A file has no quoting problem.
+# A generated wrapper merges ysqlsh streams inside the container and survives run-suite.sh
+# appending client flags.
 yb_client_for() {
     local i="$1"
     local w="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}/client-${YB_RUN_ID}-n$i.sh"
@@ -258,17 +229,8 @@ yb_read_replica_up() {
         return 1
     fi
 
-    # ORDER MATTERS, AND IT IS THE REVERSE OF THE OBVIOUS ONE. The read-replica nodes are started
-    # FIRST and the cluster is configured AFTERWARDS, because `configure_read_replica new`
-    # DISCOVERS the replica tservers in order to assign them a placement uuid. Configuring first
-    # crashes it outright:
-    #
-    #   File "/home/yugabyte/bin/yugabyted", line 3167, in configure_read_replica_new
-    #     placement_uuid = [uuid for uuid in list(all_tserver_info.keys()) ...
-    #   IndexError: list index out of range
-    #
-    # -- an empty list comprehension over tservers that do not exist yet. Measured against
-    # 2025.2.5.1-b1; the traceback is recorded here because the message itself explains nothing.
+    # Start replica nodes before configuration: `configure_read_replica new` discovers their
+    # tservers to assign the placement UUID and fails when that set is empty.
     local i name h
     for i in $(seq 0 $((n - 1))); do
         name="$YB_RUN_ID-rr$i"

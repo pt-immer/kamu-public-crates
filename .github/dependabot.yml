@@ -10,6 +10,33 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
+  # Excluded workspace: separate manifest, patch, and lockfile.
+  - package-ecosystem: cargo
+    directory: "/extensions/money-pg"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Standalone Cloudflare Worker: its Cargo and npm graphs are outside the root
+  # workspaces and therefore need their own update owners.
+  - package-ecosystem: cargo
+    directory: "/crates/logging/examples/cloudflare-worker"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: npm
+    directory: "/crates/logging/examples/cloudflare-worker"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

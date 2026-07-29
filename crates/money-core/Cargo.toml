@@ -1,7 +1,7 @@
 [package]
 name = "kamu-money-core"
 version = "0.1.0"
-description = "Exact monetary arithmetic: i128 at a fixed scale of 18, with compile-time currency identity and a residue that cannot be silently dropped"
+description = "Exact ISO 4217 monetary arithmetic with fixed-scale i128 and compile-time currencies"
 documentation = "https://docs.rs/kamu-money-core"
 categories = ["data-structures", "finance"]
 keywords = ["currency", "decimal", "fixed-point", "money", "postgres"]
@@ -12,10 +12,7 @@ license.workspace = true
 publish.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-# `include` is explicit because `vendor/list-one.xml` is LOAD-BEARING, not an
-# asset: build.rs reads it at compile time, so a package missing it does not
-# degrade, it fails to build. An explicit include is a WHITELIST — every licence
-# and notice file has to be named here or it silently stops shipping.
+# Explicit package contents keep the build-time ISO register and license notices present.
 include = [
   "CHANGELOG.md",
   "Cargo.toml",
@@ -30,21 +27,14 @@ include = [
   "build/**/*.rs",
   "examples/**/*.rs",
   "src/**/*.rs",
+  "tests/**/*.rs",
   "vendor/list-one.xml",
 ]
-# `benches/` and `examples/` are listed because `[[bench]]` and `[[example]]`
-# below NAME those files: an include list that omits them leaves cargo warning
-# "ignoring benchmark `kernel` as benches/kernel.rs is not included in the
-# published package" on every publish, and ships target declarations that point
-# at nothing. The examples are also the clearest documentation this crate has of
-# the wire and FX surfaces, so they are worth the few kilobytes.
+# Declared targets and the extension lane consume benches, examples, and tests from the
+# normalized package.
 
 [features]
-# The postgres-types and sqlx adapters live HERE, not in adapter crates:
-# `impl ToSql for Money<C>` from an external crate is E0117 (foreign trait,
-# foreign type). Same shape `serde` already has, and the same choice chrono and
-# uuid make. It is why kamu-money-core has no *-postgres sibling the way
-# kamu-snap-response has *-actix and *-axum.
+# Database adapters live here because an external adapter crate would violate E0117.
 postgres = ["dep:bytes", "dep:postgres-types"]
 serde = ["dep:serde"]
 sqlx = ["dep:sqlx"]
@@ -59,6 +49,7 @@ postgres-types = { workspace = true, optional = true }
 # rather than widening the workspace default for everyone.
 serde = { workspace = true, optional = true, features = ["derive", "std"] }
 sqlx = { workspace = true, optional = true }
+thiserror = { workspace = true, features = ["std"] }
 
 [build-dependencies]
 proc-macro2 = { workspace = true }
@@ -68,10 +59,7 @@ roxmltree = { workspace = true }
 [dev-dependencies]
 postcard = { workspace = true }
 postgres = { workspace = true }
-# proc-macro2 / quote / roxmltree are duplicated from [build-dependencies] on
-# purpose: `tests/register_codegen.rs` pulls `build/iso4217.rs` in with `#[path]`
-# so the build script's own fixture tests actually run, and a test target
-# resolves against dev-dependencies, not build-dependencies.
+# register_codegen imports the build module, so these are test dependencies too.
 proc-macro2 = { workspace = true }
 proptest = { workspace = true }
 quote = { workspace = true }
@@ -88,14 +76,16 @@ trybuild = { workspace = true }
 [lints]
 workspace = true
 
-# `harness = false`: a `fn main()` that prints, not a set of `#[bench]`s. It
-# reports best-of-N because that is what DESIGN.md's measurement reports, and a
-# fixture producing a different statistic could not corroborate the entry it
-# exists to make checkable. It NEVER gates — a threshold invented before there
-# is a baseline is worse than no threshold.
+# Standalone diagnostic benchmark; it reports samples and never gates.
 [[bench]]
 harness = false
 name = "kernel"
+
+[[example]]
+name = "fx"
+
+[[example]]
+name = "ledger"
 
 # Needs the optional feature. Declaring it here means `cargo build --examples`
 # and `clippy --all-targets` skip it cleanly under default features instead of

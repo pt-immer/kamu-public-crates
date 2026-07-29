@@ -1,6 +1,6 @@
 -- the_binary_wire_round_trips_and_is_not_more_trusted_than_text
-has_send=true has_recv=true
-send_width=18
+types=2 all_send=true all_recv=true
+send_widths=18/18
 usd_one_hex=000064a7b3b6e00d00000000000000004803
 roundtrip_exact=true rows=2
 -- recv_refuses_an_out_of_domain_binary_payload
