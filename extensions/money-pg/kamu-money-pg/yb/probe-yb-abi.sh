@@ -1,24 +1,11 @@
 #!/usr/bin/env bash
-# Assert the three ABI facts the pgrx fork's `yb-pg15` feature rests on are STILL TRUE of this
-# image's headers.
+# Assert the three ABI facts required by the pgrx fork's `yb-pg15` feature.
 #
 #   probe-yb-abi.sh [pg-include-server-dir]
 #
-# WHY THIS EXISTS, AND WHY A FORK DID NOT MAKE IT REDUNDANT. The three adaptations are facts about
-# YugabyteDB's headers, and a YugabyteDB release is free to change any of them. The compiler now
-# catches the loudest case -- a fork's patch that no longer applies is a compile error, which the
-# old textual shim could not promise -- but it cannot catch the quiet one: an adaptation that still
-# compiles while no longer being the RIGHT adaptation. `index_build_range_scan` dropping back to 11
-# parameters would compile with three arguments too many; the alias would still compile if YB
-# restored a process-global `CurrentMemoryContext` beside the thread-local one, and would then
-# shadow it. Money read through the wrong memory context is the failure at the end of that path.
-#
-# So the shape is asserted at build time, BEFORE the extension is compiled, and a mismatch fails
-# the build naming the symbol that moved. That is the P1.1 conversion the readiness plan asks for:
-# a production incident becomes a build failure.
-#
-# Two different questions -- "is the world still shaped the way we assumed?" and "did our change
-# compile?" -- and only the compiler answers the second.
+# Compilation proves that the fork applies, but not that a still-compiling adaptation matches
+# changed YugabyteDB headers. Assert the assumed header shape before compiling the extension and
+# name the mismatched symbol on failure.
 set -euo pipefail
 
 INC="${1:-/home/yugabyte/postgres/include/server}"

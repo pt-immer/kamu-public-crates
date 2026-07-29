@@ -3,47 +3,13 @@
 -- Driven by kamu-money-pg/bench/run-bench-pg.sh (`just bench-pg`). Timed inside the server with
 -- clock_timestamp rather than psql's \timing, so client round-trip and formatting are excluded.
 --
--- ============================================================================================
--- FIVE RULES, EACH PAID FOR BY A BENCHMARK THAT MEASURED NOTHING (E20 records nine).
---
--- 1. A RESULT EQUAL TO THE FLOOR IS ELIMINATION UNTIL PROVEN OTHERWISE. `count(*)` over a
---    subquery does not need the column, so the planner drops the projection and the arithmetic
---    never runs. The tell was four different operations within 0.5 ms of each other and of the
---    floor. Every query below forces evaluation with a predicate ON the computed value, and the
---    floor is measured alongside so the comparison is always available.
---
--- 2. MEASURE THE PROFILE YOU SHIP. `cargo pgrx install` builds DEBUG; `cargo pgrx package`
---    builds release. E20's entire SQL table was a debug extension compared against `numeric` --
---    PostgreSQL's own release-built C -- and reported kmoney as 6-43x SLOWER when it is ~2x
---    FASTER. run-bench-pg.sh now refuses an artifact over 8 MB.
---
--- 3. SAMPLE PAIRED, BRACKETED AND ROTATED. This file first ran all reps of one query then all
---    reps of the next, which let drift land unevenly on different rows -- on YugabyteDB that
---    made a *null C function* measure slower than a pgrx one. Pass-interleaving fixed the worst
---    of it and was still not paired: the floor ran ONCE at the head of each pass and every
---    operation kept a fixed offset behind it, with the two slow SQL-language controls always
---    last. So the floor a row was differenced against was separated from it by a different
---    amount of preceding work for every row. Now the floor runs BETWEEN every pair of
---    operations, each operation is differenced against the mean of the floors immediately before
---    and after it, and the operation order ROTATES per pass so nothing keeps a fixed position.
---
--- 4. A PER-CALL NUMBER REQUIRES A SERIAL PLAN. Wall time divided by 500,000 rows is time per row
---    only if the rows went through one process. Under a parallel plan it is wall-time-per-row
---    across N workers, which is a different quantity wearing the same units. Parallelism is
---    turned OFF below and the plans are ASSERTED to contain no Gather, so the ns/row column
---    means what its name says.
---
--- 5. THE FIXTURE MUST REFUSE, NOT JUST REPORT. Until 2026-07-26 this printed a `disagreements`
---    count that nothing checked, called a floor-spread SELECT a "gate" that gated nothing, and
---    said raw samples were retained while `run-bench-pg.sh` deleted the container holding them.
---    Three claims, none of them enforced by anything. A correctness failure now RAISES, an
---    unusable floor REFUSES to print a summary beneath itself, and every raw sample is printed
---    into the transcript, which is the artefact that actually survives.
---
---    Refusing an unusable measurement is NOT gating on a performance number. There is still no
---    pass/fail threshold on any duration here, and there will not be one until there is a
---    baseline on known hardware to regress against.
--- ============================================================================================
+-- Method:
+--   1. Force every measured expression to evaluate.
+--   2. Benchmark release artifacts only.
+--   3. Pair each operation with floor measurements before and after it; rotate order per pass.
+--   4. Disable and assert away parallel plans before reporting per-row time.
+--   5. Raise on correctness failures or unusable noise; retain raw samples in the transcript.
+-- No duration has a pass/fail threshold.
 \set ON_ERROR_STOP 1
 \pset pager off
 \timing off
@@ -65,25 +31,11 @@
 
 CREATE EXTENSION IF NOT EXISTS kmoney;
 
--- RULE 4. Set before anything is measured, and asserted below rather than assumed.
+-- Set before measurement and assert below.
 SET max_parallel_workers_per_gather = 0;
 
--- :rows rows (500k by default), the SAME values in THREE representations. Chosen inside BOTH domains: E4
--- established that kmoney and numeric are incomparable at the edges, so a benchmark over
--- kmoney's full domain would be timing numeric's failure path.
---
--- `cur` AND `canon` ARE WHAT MAKE THE COMPARISON HONEST, and they were missing until 2026-07-26.
---
--- Every `numeric` row in this file used to be BARE `numeric(36,18)`, which flatters it: a schema
--- that stores money in `numeric` must ALSO store the currency, and must check it before adding
--- two values, or it silently adds USD to JPY. `kmoney` does both by construction -- the currency
--- is in the 18 bytes and mixing them RAISES. Comparing an 18-byte tagged value against a bare
--- untagged number is not a comparison a schema can act on, because no correct schema has the
--- bare column on its own.
---
--- So `numeric+cur` rows exist below, and they are the ones to read. The bare `numeric` rows are
--- KEPT, because the difference between the two IS the price of the currency discipline and it is
--- worth seeing rather than folding in.
+-- Use values inside both domains and store the same value in three representations. Read
+-- `numeric+cur` for the schema-level comparison; bare numeric stays as a component-cost floor.
 --
 --   cur    char(3), the companion column the bare `numeric` figure pretends is free
 --   canon  the canonical text form both types parse FROM, so parse is measured off a stored
@@ -104,12 +56,8 @@ ANALYZE t;
 
 \echo
 \echo '=== CORRECTNESS FIRST: the two columns really do hold the same value ==='
--- AND IT RAISES. This used to `SELECT count(*) AS disagreements` and print it, directly under a
--- comment claiming it asserted correctness before timing anything. `ON_ERROR_STOP` does not turn
--- a successful SELECT returning 47 into a failure, so a wrong implementation would have been
--- benchmarked and the number reported -- which is an argument for shipping the wrong thing.
--- Compared as MONEY, not as trimmed strings: numeric(36,18) renders all 18 decimals while kmoney
--- renders the canonical form, so a string comparison would measure the renderers.
+-- Raise on disagreement before timing. Compare monetary values here; render bytes are checked
+-- separately.
 DO $$
 DECLARE disagreements bigint; render_diffs bigint; example text;
 BEGIN
@@ -129,14 +77,7 @@ BEGIN
     END IF;
     RAISE NOTICE 'correctness: 0 disagreements over % rows', (SELECT count(*) FROM t);
 
-    -- THE TWO RENDER ROWS MUST PRODUCE THE SAME BYTES, or the timing compares two different jobs.
-    --
-    -- Until 2026-07-26 the numeric render row was labelled canonical and evaluated
-    -- `rtrim(rtrim(n::text,'0'),'.')`, which emits `USD 10.5` and `USD 0` where the canonical form
-    -- pads to the currency's ISO exponent: `USD 10.50`, `USD 0.00`. Nothing compared the two
-    -- outputs, so the fixture timed a shorter, different string and presented it as the
-    -- apples-to-apples rendering alternative. A cost comparison that shapes a schema decision has
-    -- to be between the same result, so this asserts it.
+    -- Render comparisons require byte-identical outputs.
     SELECT count(*), min(cur || ' ' || to_char(n, 'FM99999999999999999990.00') || ' <> ' || m::text)
     INTO render_diffs, example
     FROM t
@@ -151,14 +92,8 @@ BEGIN
         (SELECT count(*) FROM t);
 END $$;
 
--- The controls in section 3 are `LANGUAGE sql` and are KEPT DESPITE FAILING at what they were
--- built for. They were meant to bracket what the varlena transition state costs: noop_sum has the
--- same bytea state and no arithmetic, cnt_sum has a pass-by-value state. Both measure ~14x
--- SLOWER than the real aggregate, because a SQL-language transition function costs more per row
--- than the pgrx one it was meant to be a cheaper baseline for. They measure SQL call overhead,
--- not state plumbing, and the "varlena copying" hypothesis stays untested -- the experiment that
--- would settle it is building the `internal`-state variant. Left here, labelled, because
--- deleting them leaves the next person to build the same control expecting it to work.
+-- These SQL-language controls measure SQL call overhead, not bytea-state plumbing. Keep them
+-- labelled as invalid controls so they are not mistaken for aggregate baselines.
 CREATE OR REPLACE FUNCTION noop_accum(state bytea, v kmoney) RETURNS bytea
   AS $$ SELECT COALESCE($1, repeat(E'\\000', 34)::bytea) $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION noop_final(state bytea) RETURNS bigint
@@ -237,11 +172,7 @@ DECLARE
     -- natively costs a settlement-exponent pad as well as the currency concat. The bare row below
     -- understates the render by exactly this much.
     --
-    -- `to_char`, NOT `rtrim(rtrim(n::text,'0'),'.')`, WHICH IS A DIFFERENT STRING. That was the
-    -- expression here until 2026-07-26 and it emits `USD 10.5` and `USD 0`, while the canonical
-    -- form pads to the currency's ISO exponent: `USD 10.50`, `USD 0.00`. The correctness block
-    -- above now asserts this expression equals `m::text` on every row, so the two render rows
-    -- produce the same bytes and the comparison is between renderers rather than between outputs.
+    -- `to_char` emits the same settlement-width form as `kmoney`; the correctness block checks it.
     --
     -- THE `.00` IS USD'S EXPONENT, HARDCODED, AND THAT FAVOURS NUMERIC. A schema that stores money
     -- in `numeric` has to look the exponent up per currency to render it; this row pays nothing
@@ -249,8 +180,7 @@ DECLARE
     -- `kmoney` carries the currency in its 18 bytes and gets the exponent for free.
     'SELECT count(*) FROM t WHERE length(cur || '' '' || to_char(n, ''FM99999999999999999990.00'')) > 0',
     'SELECT count(*) FROM t WHERE length(n::text) > 0',
-    -- Parse from a STORED column, never from a string the predicate builds per row -- that is
-    -- invalid-benchmark #1 in E20's table, and it was committed once already.
+    -- Parse a stored column, not a string assembled inside the measured predicate.
     'SELECT count(*) FROM t WHERE canon::kmoney > ''USD -1000000000.00''::kmoney',
     'SELECT count(*) FROM t WHERE substr(canon, 5)::numeric(36,18) > -1000000000
                               AND substr(canon, 1, 3) = ''USD''',
@@ -336,12 +266,7 @@ BEGIN
           UNION ALL SELECT floor_after_ms FROM bench_samples) x;
     spread := round((hi / lo)::numeric, 2);
 
-    -- WHAT ACTUALLY CORRUPTS A DELTA. Each operation is differenced against the mean of the two
-    -- floors either side of it, so the error in that delta is how far the floor moved ACROSS
-    -- THAT ONE BRACKET -- not how far it wandered over the whole run. A global min/max spread
-    -- gate answers the second question and was the only gate here until 2026-07-26, which made
-    -- it simultaneously too strict (one spike anywhere refuses an otherwise clean run) and too
-    -- weak (a floor that drifts smoothly by 40% passes while every delta rides that drift).
+    -- Each delta uses the mean of its adjacent floors, so bracket drift is its local error.
     SELECT round((percentile_cont(0.5) WITHIN GROUP (ORDER BY d))::numeric, 4),
            round((percentile_cont(0.9) WITHIN GROUP (ORDER BY d))::numeric, 4)
     INTO med_drift, p90_drift
@@ -413,12 +338,8 @@ SELECT pg_column_size(m)                        AS kmoney_bytes,
 FROM t LIMIT 1;
 
 \echo
-\echo 'THE ASYMMETRY IS NOW MEASURED, NOT JUST DECLARED. Until 2026-07-26 every numeric row here'
-\echo 'was BARE numeric(36,18) -- no currency stored, no currency checked before adding, and no'
-\echo 'canonical rendering -- compared against a kmoney that does all three. The numeric+cur rows'
-\echo 'are the pairing a schema actually picks between; the bare rows are kept beside them so the'
-\echo 'price of the currency discipline is visible rather than folded in. E19 measured the same'
-\echo 'pairing end to end. NO pass/fail threshold here.'
+\echo 'Read numeric+cur as the schema comparison. Bare numeric remains a component-cost floor.'
+\echo 'No duration has a pass/fail threshold.'
 \echo
 \echo 'WHAT IS NOT IN ANY ROW: kmoney REFUSES a cross-currency add, numeric+cur returns NULL for'
 \echo 'it, and bare numeric returns a wrong number. That is a correctness difference, and timing'

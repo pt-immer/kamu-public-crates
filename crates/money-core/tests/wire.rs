@@ -1,4 +1,4 @@
-//! The serde wire. (DESIGN.md C7)
+//! Serde wire contracts.
 //!
 //! Runs only with `--features serde`. `cargo test --workspace --all-features` covers it.
 
@@ -12,18 +12,12 @@ use proptest::prelude::*;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------------------
-// THE measured trap: serde encodes an enum variant by POSITION, not by discriminant.
+// Serde derives binary enum values from variant position, not numeric discriminants.
 // ---------------------------------------------------------------------------------------
 
 /// Binary must carry the ISO **numeric** code, which a standards body assigns permanently —
 /// never the variant's ordinal position, which moves the moment a currency is inserted
-/// mid-table. The register is complete at 178 codes and still grows — ISO issues them — and
-/// because variants are emitted in alpha-3 order, a new code lands between existing ones rather
-/// than after them. (This comment previously justified the risk with "12 of ~180 and WILL
-/// grow", which stopped being true when the table was generated from the published list.)
-///
-/// Measured previously with a derived impl: after inserting one currency, stored `IDR` decoded
-/// as `GBP`, silently, with `#[repr(u16)]` and `IDR = 360` unchanged in both versions.
+/// mid-table. The register is generated in alpha-3 order, so new codes can shift later variants.
 ///
 /// A JSON suite cannot catch this — human-readable formats emit the NAME. That is why this
 /// test is binary, and why it is the most important one in the file.
@@ -43,8 +37,7 @@ fn binary_encodes_the_iso_numeric_never_the_variant_position() {
 
 #[test]
 fn human_readable_uses_the_alpha3_code_with_no_rename_all_mangling() {
-    // `rename_all = "SCREAMING_SNAKE_CASE"` would emit "I_D_R" here — measured, and it reads
-    // MORE correct in the source than it behaves.
+    // `SCREAMING_SNAKE_CASE` would incorrectly emit "I_D_R".
     assert_eq!(serde_json::to_string(&Iso4217::IDR).unwrap(), r#""IDR""#);
     assert_eq!(serde_json::from_str::<Iso4217>(r#""IDR""#).unwrap(), Iso4217::IDR);
     assert!(serde_json::from_str::<Iso4217>(r#""I_D_R""#).is_err());
@@ -151,7 +144,7 @@ fn a_rate_checks_both_ends_of_the_pair_on_the_wire() {
 fn out_of_domain_and_over_precise_payloads_are_refused_not_rounded() {
     assert!(
         serde_json::from_str::<Money<USD>>(r#"{"currency":"USD","amount":"0.0000000000000000005"}"#).is_err(),
-        "19dp must be refused, never rounded — this is the rust_decimal failure (E2)"
+        "19dp must be refused, never rounded"
     );
     assert!(
         serde_json::from_str::<Money<USD>>(r#"{"currency":"USD","amount":"1000000000000000000.00"}"#)
@@ -167,11 +160,7 @@ fn out_of_domain_and_over_precise_payloads_are_refused_not_rounded() {
 /// Binary carries the currency as its ISO **numeric** code, ahead of the units — the same
 /// stable tag the human-readable form carries as alpha-3.
 ///
-/// This replaces a test that asserted the opposite: that the binary encoding was byte-identical
-/// to a bare `i128`, "the currency costs zero bytes". That elegance was the R2-F2 defect — a
-/// bare `i128` carries no identity, so `Money<USD>` bytes decoded as `Money<IDR>` with the units
-/// preserved and the currency silently reassigned. A number without its currency is not money,
-/// which is this crate's whole thesis; the wire may not spend the one thing it refuses to.
+/// A bare `i128` carries no identity and could be decoded under a different currency type.
 #[test]
 fn binary_carries_the_iso_numeric_tag_before_the_units() {
     let units = 10_500_000_000_000_000_000i128;
@@ -182,13 +171,12 @@ fn binary_carries_the_iso_numeric_tag_before_the_units() {
     let expected = postcard::to_allocvec(&(Iso4217::USD, units)).unwrap();
     assert_eq!(bytes, expected, "binary is (ISO numeric, i128 units)");
 
-    // And it must NOT be the bare `i128` that reinterpreted silently before R2-F2.
+    // The currency tag makes this distinct from a bare amount.
     let bare = postcard::to_allocvec(&units).unwrap();
     assert_ne!(bytes, bare, "the currency must now be on the wire");
 }
 
-/// The defect itself, as a regression guard: a `Money<USD>` payload must not decode as
-/// `Money<IDR>`. Before R2-F2 this succeeded, unit-for-unit, silently redenominating the money.
+/// A `Money<USD>` payload must not decode as `Money<IDR>`.
 #[test]
 fn binary_refuses_a_cross_currency_reinterpretation() {
     let m = Money::<USD>::try_from_units(10 * kamu_money_core::advanced::domain::POW10_SCALE).unwrap();
@@ -284,9 +272,7 @@ proptest! {
         prop_assert_eq!(via_structured, m);
     }
 
-    /// Positive-only since H1 (2026-07-27). The wire is one of the four ingresses that made
-    /// `Rate` enforce positivity at all; what a non-positive rate does on the way IN is
-    /// asserted in `rate_ingress.rs` rather than here, where the property is round-tripping.
+    /// Non-positive ingress cases live in `rate_ingress.rs`; this property covers valid values.
     #[test]
     fn prop_rate_round_trips_through_both_shapes(units in 1..=DOMAIN_MAX) {
         #[derive(Serialize, Deserialize, PartialEq, Debug)]

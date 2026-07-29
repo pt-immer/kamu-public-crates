@@ -1,4 +1,4 @@
-//! FX conversion: rates, and the money that passes through them. (DESIGN.md C6)
+//! FX rates and typed money conversion.
 
 use crate::Money;
 use crate::StaticCurrency;
@@ -10,39 +10,23 @@ use ethnum::I256;
 
 /// `POW10_SCALE^2`: the divisor for a two-leg conversion, which applies the scale twice.
 ///
-/// Derived from [`POW10_SCALE`] rather than written as `1e36`, so it follows `SCALE` if that
-/// constant moves again — a hand-written literal here would still compile and silently be
-/// wrong by six orders, which is exactly how the 12 -> 18 migration bit elsewhere.
-///
-/// `1e18 * 1e18 = 1e36` fits `i128` (~1.7e38) with the same ~170x margin as `DOMAIN_MAX`, and
-/// overflow in a `const` initializer is a **build** error rather than a runtime one — so the
-/// bound is enforced by compiling, with nothing to check at call time.
+/// Derived from [`POW10_SCALE`] so scale changes remain coupled. The product fits `i128`, and
+/// const evaluation checks that bound at build time.
 const POW10_SCALE_SQUARED: i128 = POW10_SCALE * POW10_SCALE;
 
 /// The one-leg conversion kernel, shared by the typed and the runtime path.
 ///
-/// Extracted when a runtime-rate twin existed and could have drifted from it. That twin is
-/// gone, but the split is kept: it is the one place the scale relationship is written down, so
-/// `prop_a_unit_rate_moves_the_currency_and_nothing_else` has a single thing to pin.
-///
-/// Returns `None` iff the result does not fit an `i128`. The **domain** check deliberately is
-/// not here: it belongs to `Money`'s constructors, which is the only place a value becomes
-/// money, and duplicating it would give two answers to maintain.
+/// Returns `None` iff the result does not fit `i128`; `Money` construction owns the domain
+/// check.
 fn apply_rate(units: i128, rate_units: i128, mode: Rounding) -> Option<i128> {
-    // Both operands are in-domain, so |product| <= (1e36)^2 = 1e72 — about five orders below
-    // I256::MAX (~1.16e77). `checked_mul` cannot return None here; it is used instead of `*`
-    // because clippy::arithmetic_side_effects is denied crate-wide, and because an unchecked
-    // operator would silently become wrong if the domain ever moved.
+    // In-domain operands bound the product at 1e72, below I256::MAX.
     let product = I256::from(units)
         .checked_mul(I256::from(rate_units))
         .expect("|units| <= DOMAIN_MAX ~1e36 twice over, so |product| <= 1e72 < I256::MAX");
 
     let (quotient, _below_one_unit) = div_round_i256(product, I256::from(POW10_SCALE), mode);
 
-    // The quotient can reach 1e54, so THIS narrowing is the real overflow gate — and it must
-    // stay checked. Truncating here returns a plausible, silently wrong amount: a quotient of
-    // exactly 2^128 truncates to ZERO, which is `Ok($0.00)` with the money simply gone.
-    // Pinned by `a_quotient_that_would_truncate_back_into_the_domain_is_still_refused`.
+    // The quotient can exceed i128; narrowing must stay checked.
     i128::try_from(quotient).ok()
 }
 
@@ -63,55 +47,28 @@ fn apply_rate_pair(units: i128, first: i128, second: i128, mode: Rounding) -> Op
     i128::try_from(quotient).ok()
 }
 
-/// A directed FX rate: how many `T` one `F` buys, as a fixed-point number at the crate's
-/// one [`SCALE`](crate::advanced::domain::SCALE).
+/// A directed FX rate: how many `Quote` units one `Base` unit buys.
+///
+/// The value uses the crate's fixed [`SCALE`](crate::advanced::domain::SCALE).
 ///
 /// The pair is carried in the type, so `Money<USD>` can only be converted by a
 /// `Rate<USD, IDR>` and the result can only be `Money<IDR>` — a mismatched pair does not
-/// compile. A runtime quote table hands out typed rates through a generic accessor rather than
-/// a value-carrying rate type — see C6.
+/// compile.
 ///
-/// **A rate is a price, so its units are strictly positive.** `Rate` bounds magnitude by
-/// `Money`'s domain (`|units| <= DOMAIN_MAX`) and additionally refuses zero and negatives at
-/// construction — see [`try_from_units`](Self::try_from_units).
-///
-/// That reverses a decision taken on 2026-07-21, and the reversal is written down because the
-/// original was deliberate rather than an oversight. C6 bounds magnitude and is silent on
-/// sign, so `Rate` was kept a plain fixed-point number exactly like `Money`, with the cost
-/// **documented here instead of enforced**: a negative rate flipped the sign of the money
-/// passing through it and a zero rate sent it to zero, both silently, with no overflow and no
-/// residue. Sign was the quote feed's responsibility — and that decision recorded one
-/// condition for revisiting it, *"if a feed is ever ingested without validation."*
-///
-/// **That condition is met by this crate's own code.** [`FromStr`](core::str::FromStr),
-/// serde's `Deserialize`, `postgres-types`' `FromSql` and sqlx's `Decode` each build a `Rate`
-/// straight from untrusted bytes, so four of the feed adapters the responsibility was
-/// delegated to are shipped in this repository. The phantom pair proves `Rate<USD, IDR>` is
-/// not `Rate<IDR, USD>`; it cannot prove a runtime number is positive, and runtime
-/// construction is what finishes that proof.
-///
-/// If a signed scaling factor is ever wanted, it is a different thing from a price and wants
-/// its own name — weakening `Rate` to obtain it would give back the silent sign flip.
+/// Rates are strictly positive and domain-bounded. Every constructor and decoding adapter
+/// enforces those runtime invariants.
 ///
 /// There is deliberately no `inverse()` and no `compose()`: real FX has bid and ask, so
 /// inverting or composing mid-rates fabricates a price nobody can trade at. Every pair is
 /// stored in both directions; multi-leg conversion is [`Money::convert_via`], which rounds
-/// once. (DESIGN.md C6)
+/// once.
 pub struct Rate<Base: StaticCurrency, Quote: StaticCurrency> {
     units: i128,
-    // `Money<C>` proves it uses `C` through a real field (`tag: C::Tag`). `Rate` has no such
-    // field — `units` is currency-agnostic — so without this the parameters are unconstrained
-    // (E0392). This is the one structural difference between the two types.
+    // The value is currency-agnostic, so the phantom pair carries both type parameters.
     _pair: PhantomData<(Base, Quote)>,
 }
 
-// Hand-written, NOT derived, for the reason given at `money.rs:17`: `#[derive(Clone)]` would
-// emit `impl<F: Clone, T: Clone>`, bounding the phantom parameters when nothing about a rate's
-// units depends on them. Note this is a correctness-of-signature argument and NOT a testable
-// one — `StaticCurrency` is sealed and every generated marker derives `Clone`, so no downstream
-// type could observe the difference. It is a comment rather than a test on purpose: a
-// `#[test] fn rate_is_copy()` would pass against a derive too, and a test that cannot fail is
-// worse than no test.
+// Manual impls avoid unnecessary `Clone`/`Copy` bounds on the phantom parameters.
 impl<Base: StaticCurrency, Quote: StaticCurrency> Clone for Rate<Base, Quote> {
     fn clone(&self) -> Self {
         *self
@@ -133,11 +90,7 @@ impl<Base: StaticCurrency, Quote: StaticCurrency> core::fmt::Debug for Rate<Base
 impl<Base: StaticCurrency, Quote: StaticCurrency> Rate<Base, Quote> {
     /// Construct from canonical units, reporting **why** a value was refused.
     ///
-    /// This is the single owner of `Rate`'s invariant. Every ingress — the text parser, both
-    /// serde forms, `postgres-types` and sqlx — reaches a `Rate` through here or through
-    /// [`FromStr`](core::str::FromStr), which itself lands here, so no adapter can enforce a
-    /// weaker rule by omission. That is the whole reason the check is not repeated at each
-    /// boundary: five copies of an invariant is five chances to have four.
+    /// Every text, serde, PostgreSQL, and sqlx ingress reaches this invariant owner.
     ///
     /// # Errors
     /// [`RateError::Amount`] if the magnitude leaves the domain, and
@@ -170,14 +123,8 @@ impl<C: StaticCurrency> Money<C> {
     /// **base**, and the result is denominated in the rate's **quote**. A mismatched pair does
     /// not compile.
     ///
-    /// **No [`Residue`](crate::Residue), and that is not an oversight.** The divisor here is
-    /// `POW10_SCALE`, so the remainder is always strictly less than one canonical unit —
-    /// measured over 200 000 random pairs, the worst loss was `0.499999` units, which is `0`
-    /// as an integer count. An always-empty residue would be worse than none: `#[must_use]`
-    /// would train every caller of the crate's most common operation to reflexively write
-    /// `let (m, _) = ...`, and that reflex carries to [`Money::div_int`], where the residue is
-    /// real money. The loss here is real but **unrepresentable** — below `1e-18` of a currency
-    /// unit — so there is nothing to hand back. (DESIGN.md C6)
+    /// No [`Residue`](crate::Residue) is returned: conversion loss is strictly below one
+    /// canonical unit and therefore cannot be represented as money.
     ///
     /// There is deliberately **no `impl Mul`**: an operator that fails on ordinary input is a
     /// lie, and this one does — `USD -> ZWL` at the 2008 rate leaves the domain at a $100 000
@@ -204,12 +151,8 @@ impl<C: StaticCurrency> Money<C> {
 
     /// Convert through a bridge currency, rounding **once**, at the end.
     ///
-    /// This is not a precision optimisation — measured at realistic magnitudes, two sequential
-    /// conversions differ by `4.885e-14` currency units, ten orders below anything a currency
-    /// can express. It is a **ledger** requirement: two sequential conversions materialise a
-    /// `Money<Bridge>` balance the holder never held, quantising it to a whole canonical unit on the
-    /// way through. `convert_via` never creates that balance, so there is no moment at which a
-    /// party appears to hold a currency they do not. (DESIGN.md C6)
+    /// This is a ledger rule: sequential conversions materialize and quantize a
+    /// `Money<Bridge>` balance the holder never held. `convert_via` does not create that balance.
     ///
     /// This is also what callers reaching for a `compose()` actually want. Composing two
     /// mid-rates would fabricate a third that cannot be traded at, and its error grows
@@ -217,9 +160,8 @@ impl<C: StaticCurrency> Money<C> {
     ///
     /// # Errors
     /// [`RateError::ConversionOverflow`] if the conversion leaves the domain — including when
-    /// the three-way product exceeds `I256`. That rejection is **correct, not conservative**:
-    /// verified analytically and over 300 000 full-domain trials, an in-domain result implies
-    /// `m*r1*r2 <= 1e72 < I256::MAX`, with zero false rejects.
+    /// the three-way product exceeds `I256`. An in-domain result implies
+    /// `m*r1*r2 <= 1e72 < I256::MAX`, so this does not reject a representable result.
     ///
     /// # Panics
     /// Never. The `expect` below is proven unreachable by the domain invariant.
@@ -260,20 +202,6 @@ mod tests {
         assert_eq!(got, Money::<IDR>::try_from_major(160_000).unwrap());
     }
 
-    /// THE INVERSION OF A TEST THAT USED TO PIN THE OPPOSITE, and the history is the point.
-    ///
-    /// Until 2026-07-27 this file carried `a_negative_rate_flips_sign_and_a_zero_rate_sends_to_zero`,
-    /// which asserted that a negative rate flips the money's sign and a zero rate sends it to
-    /// zero. It was not an accident and it was not dead weight: C6 bounds magnitude and is
-    /// silent on sign, the operator chose the signed domain from an explicit two-option fork on
-    /// 2026-07-21, and the test existed **so that a later "defensive" sign/zero guard could not
-    /// be added without something going red**. It did its job -- this is that red, arriving as
-    /// designed, with the decision re-taken rather than drifted past.
-    ///
-    /// What changed is the condition the original decision named for revisiting itself: *"if a
-    /// feed is ever ingested without validation."* Four such feeds ship in this crate. So the
-    /// two values below are now refused at construction, and neither conversion is reachable
-    /// to test at all. (DESIGN.md C6)
     #[test]
     fn a_zero_or_negative_rate_is_refused_at_construction() {
         assert_eq!(
@@ -290,16 +218,12 @@ mod tests {
         assert!(Rate::<USD, IDR>::try_from_units(0).is_err());
         assert!(Rate::<USD, IDR>::try_from_units(-1).is_err());
 
-        // The smallest representable rate is still constructible: this refuses non-positive
-        // values, NOT small ones. A guard written as `units < POW10_SCALE` would pass every
-        // assertion above and quietly outlaw every sub-unit quote in existence.
+        // The smallest representable positive rate remains valid.
         assert!(Rate::<USD, IDR>::try_from_units(1).is_ok(), "1e-18 is positive and in domain");
     }
 
-    /// The two refusals are DIFFERENT ERRORS, and a caller has to be able to tell them apart:
-    /// an out-of-domain rate is a magnitude bug in the sender, a non-positive one is usually a
-    /// feed that handed over a spread, a delta, or a not-quoted sentinel. Domain is tested
-    /// first, so `i128::MIN` -- which is both -- reports the magnitude.
+    /// Magnitude and sign failures remain distinguishable. Domain is tested first, so
+    /// `i128::MIN` reports its magnitude failure.
     #[test]
     fn the_two_rate_refusals_are_reported_separately() {
         assert_eq!(
@@ -314,17 +238,14 @@ mod tests {
         );
     }
 
-    /// `convert_via` rounds ONCE, at the end, and this is a LEDGER requirement rather than a
-    /// precision optimisation. The difference is not a rounding digit: chosen so the
-    /// intermediate quantisation destroys the money outright.
+    /// `convert_via` rounds once, at the end.
     ///
     /// USD -> EUR at 0.5, then EUR -> IDR at 2.0, applied to one canonical unit. The
     /// intermediate is half a unit, which the ledger cannot express, so a sequential
     /// conversion quantises it to zero and the second leg multiplies nothing by two. Via,
     /// `0.5 * 2 == 1` exactly and the unit survives — because no `Money<EUR>` balance the
-    /// holder never held is ever created. (DESIGN.md C6)
+    /// holder never held is ever created.
     ///
-    /// Mutation-check: make `convert_via` call `convert` twice; this test must go red.
     #[test]
     fn convert_via_rounds_once_where_two_conversions_would_destroy_the_money() {
         let m = Money::<USD>::try_from_units(1).unwrap();
@@ -340,9 +261,9 @@ mod tests {
     }
 
     /// `convert_via`'s second `checked_mul` is the one that can genuinely overflow, and
-    /// rejecting is CORRECT rather than conservative: an in-domain result implies
+    /// rejecting is exact rather than conservative: an in-domain result implies
     /// `m*r1*r2 <= 1e72 < I256::MAX`, so anything that overflows would have left the domain
-    /// anyway. (DESIGN.md C6)
+    /// anyway.
     #[test]
     fn convert_via_refuses_a_product_that_cannot_fit_the_intermediate() {
         let m = Money::<USD>::try_from_units(DOMAIN_MAX).unwrap();
@@ -355,9 +276,8 @@ mod tests {
         );
     }
 
-    /// Domain overflow in a conversion is a CONDITION, not a bug — which is why `convert`
-    /// returns `Result` and there is no `impl Mul`. Measured: `USD -> ZWL` at the 2008 rate
-    /// leaves the domain at a $100 000 balance. (DESIGN.md C6)
+    /// Domain overflow in conversion is a runtime condition, so `convert` returns `Result` and
+    /// there is no `impl Mul`.
     ///
     /// Both gates must report the same thing, and that is the point of this test: the
     /// quotient can be too big for `DOMAIN_MAX` while still fitting `i128`, or too big for
@@ -381,21 +301,8 @@ mod tests {
         );
     }
 
-    /// The narrowing gate, pinned on its own — and it needed pinning.
-    ///
-    /// HISTORY, because mutation-checking is the only reason this test exists. The test above
-    /// claimed to cover "both gates", and did not: replacing `i128::try_from(quotient)` with a
-    /// truncating `as_i128()` — the exact silent-wrap bug C10 forbids — left all five tests in
-    /// this module GREEN. Both of its cases wrap to a value that is *still* outside the domain,
-    /// so `try_from_units` refuses them anyway and the two gates are indistinguishable.
-    ///
-    /// This case is the dangerous one: `2^64 * 10^9` units at a rate of `2^64 * 10^9` gives a
-    /// quotient of exactly `2^128`, which truncates to **exactly zero**. A truncating narrowing
-    /// returns `Ok($0.00)` — no overflow, no residue, no signal, and the money is simply gone.
-    /// That is the failure this crate exists to make impossible, and nothing was testing it.
-    ///
-    /// Mutation-check: swap `i128::try_from(quotient).ok()` for `Some(quotient.as_i128())`;
-    /// this test must go red and the one above must stay green.
+    /// A quotient of exactly `2^128` would truncate to zero under an unchecked narrowing.
+    /// This case therefore distinguishes checked narrowing from the later domain check.
     #[test]
     fn a_quotient_that_would_truncate_back_into_the_domain_is_still_refused() {
         // 2^64 * 10^9, comfortably in domain, chosen so the product is 2^128 * 10^18.
@@ -411,24 +318,8 @@ mod tests {
     }
 
     proptest::proptest! {
-        /// C6's justification for returning **no** `Residue`, pinned rather than asserted.
-        ///
-        /// The argument is that a conversion divides by `POW10_SCALE`, so whatever rounding
-        /// moves is always strictly less than one canonical unit — which is `0` as an integer
-        /// count, so a residue here would carry zero units every single time. That
-        /// reasoning is the *only* thing standing between this design and silently leaking
-        /// money, and until now it lived exclusively in prose.
-        ///
-        /// This recomputes the exact remainder in `I256` and checks it stays sub-unit. If the
-        /// divisor or the scale relationship ever changed such that whole units could be lost
-        /// here, the no-`Residue` decision would silently become wrong — money would go
-        /// missing with nothing to catch it. This test is what makes that change loud.
-        ///
-        /// `units` spans both signs because money is signed; `rate_units` starts at **1**
-        /// because a rate is not, as of 2026-07-27. That narrowing was forced by the
-        /// constructor rather than chosen -- the old range ran through zero and the negatives
-        /// and reached `.unwrap()`, so leaving it would have turned a property about rounding
-        /// into a property about which values still construct.
+        /// Conversion rounding must discard less than one canonical unit. Rates start at one
+        /// because zero and negative values are outside the type's domain.
         #[test]
         fn prop_the_discarded_remainder_is_always_below_one_canonical_unit(
             units in -100_000_000_000_000_000_000_000_000i128..=100_000_000_000_000_000_000_000_000,
@@ -455,7 +346,7 @@ mod tests {
                 proptest::prop_assert!(
                     remainder < one_unit && remainder > minus_one_unit,
                     "{mode:?}: rounding moved {remainder}, which is a whole canonical unit or \
-                     more — a Residue would NOT always be zero and C6's reasoning is broken"
+                     more — conversion would need to return a Residue"
                 );
             }
         }

@@ -2,8 +2,7 @@
 //!
 //! This module is **not** feature-gated and does not depend on serde. It is the single place
 //! the crate turns money into characters, so that the `Display` a developer reaches for and
-//! the wire a service emits cannot disagree — the serde codec (C7) is a thin wrapper over
-//! exactly this.
+//! the wire a service emits cannot disagree; the serde codec delegates here.
 //!
 //! # The rule
 //!
@@ -16,19 +15,17 @@
 //! stored  0.000000000000000001   ->   USD 0.000000000000000001            (nothing is dropped)
 //! ```
 //!
-//! The minimum is the **settlement** exponent, not a display one. C2 keeps display dp in
-//! `LocalePolicy` and off the wire — IDR settles at 2 and renders at 0 — so using the
+//! The minimum is the **settlement** exponent, not a display one. Locale display policy stays
+//! off the wire — IDR settles at 2 and renders at 0 — so using the
 //! settlement number keeps this form canonical and independent of any locale.
 //!
-//! Padding up to the minimum is the only thing added, which is what makes trimming compatible
-//! with §0.1's *"display pads, never rounds"*: every significant digit survives.
+//! Padding up to the minimum is the only addition. Trimming never removes a significant digit.
 //!
 //! # Round-tripping, stated honestly
 //!
 //! Render is canonical; **parse is liberal**, accepting any exact decimal. So
 //! `parse(render(v)) == v` holds for all `v`, but the converse does not — `"USD 10.5"` parses
-//! and re-renders as `"USD 10.50"`. That makes the pair a **retraction**, not the bijection
-//! C7 originally claimed.
+//! and re-renders as `"USD 10.50"`. The pair is therefore a **retraction**, not a bijection.
 
 use crate::Money;
 use crate::Rate;
@@ -63,17 +60,14 @@ fn scale_usize() -> usize {
 /// the digits ARE. They are allowed to differ in `min_dp`, in separators, and in decoration;
 /// they are not allowed to differ in the number.
 pub(crate) fn fixed_point_parts(units: i128, min_dp: usize) -> (bool, String, String) {
-    // `unsigned_abs` rather than `abs`: i128::MIN has no positive counterpart, and while it is
-    // outside the domain, a Display impl must not be the thing that panics on a corrupted
-    // value. (DESIGN.md E7)
+    // `i128::MIN` has no positive counterpart. Formatting remains total even for a corrupted
+    // internal value.
     let magnitude = units.unsigned_abs();
     let whole = magnitude.checked_div(SCALE_U128).expect("SCALE_U128 is 10^18, never zero");
     let frac = magnitude.checked_rem(SCALE_U128).expect("SCALE_U128 is 10^18, never zero");
 
     let mut digits = format!("{frac:0width$}", width = scale_usize());
-    // Trims DOWN to `min_dp` and pads UP to it, and does neither past a significant digit:
-    // the loop stops at the first non-zero from the right. That is §0.1's "display pads,
-    // never rounds" expressed as the only line of code that could violate it.
+    // Trim to `min_dp` but stop at the first non-zero digit from the right.
     while digits.len() > min_dp && digits.ends_with('0') {
         digits.pop();
     }
@@ -92,8 +86,7 @@ fn render_fixed_point(units: i128, min_dp: usize) -> String {
 
 /// Parse a fixed-point decimal into canonical units. Liberal: any exact decimal.
 ///
-/// Refuses excess precision rather than rounding — the failure that disqualified
-/// `rust_decimal` (E2).
+/// Refuses excess precision rather than rounding.
 fn parse_fixed_point(text: &str) -> Result<i128, ParseMoneyError> {
     let (negative, digits) = match text.strip_prefix('-') {
         Some(rest) => (true, rest),
@@ -180,12 +173,9 @@ fn split_tagged(text: &str) -> Result<(Iso4217, &str), ParseMoneyError> {
 
 /// Render `units` as `"<ISO> <amount>"` for a currency known only at **run time**.
 ///
-/// The non-generic twin of [`Money`]'s [`Display`](core::fmt::Display), sharing its
-/// implementation rather than
-/// resembling it. A PostgreSQL type cannot be generic — C8 measured why the currency has to
-/// travel in the value there — so without this, every adapter reimplements the trim rule and
-/// C9's "thin over one codec" becomes a wish. Drift here is a *silent* wrong number in one
-/// system and a right one in another, which is the failure mode this crate exists to remove.
+/// The non-generic twin of [`Money`]'s [`Display`](core::fmt::Display), used by runtime-currency
+/// boundaries such as PostgreSQL. Sharing this implementation prevents adapter-specific trim
+/// rules.
 /// # Errors
 /// [`AmountError`] if `units` is outside the domain.
 ///
@@ -270,22 +260,10 @@ impl<C: StaticCurrency> fmt::Display for Money<C> {
     }
 }
 
-/// Honour the formatter's width and alignment, and REFUSE its precision.
+/// Honour width and alignment without letting formatter precision truncate the canonical text.
 ///
-/// `f.write_str` ignores both, so `format!("{:>16}", money)` silently produced `"USD 10.00"`
-/// with no padding and no diagnostic — and right-aligning amounts in a column is the most
-/// common thing anyone asks of this type.
-///
-/// `f.pad` fixes that but brings a hazard with it: `pad` treats `precision` as a **truncation**,
-/// so `{:.2}` would render `Money` as `"US"`. A mangled amount in front of a human is the
-/// failure this crate is organised around, so precision is ignored rather than honoured. There
-/// is no sensible meaning for it here anyway — the number of fractional digits is the
-/// currency's to decide, not the format string's, and a caller who wants a different width
-/// wants [`crate::locale::LocalePolicy`].
-///
-/// This does NOT touch the frozen output. `to_string()` and `{}` build a `Formatter` with
-/// width, precision and alignment all `None`, and `pad` in that case is exactly `write_str` —
-/// so all five consumers of the canonical form see byte-identical bytes.
+/// Currency policy owns fractional digits. With no formatting options, `pad` is byte-identical
+/// to `write_str`.
 fn pad_without_truncating(f: &mut fmt::Formatter<'_>, rendered: &str) -> fmt::Result {
     if f.precision().is_some() { f.write_str(rendered) } else { f.pad(rendered) }
 }
@@ -295,8 +273,8 @@ fn pad_without_truncating(f: &mut fmt::Formatter<'_>, rendered: &str) -> fmt::Re
 ///
 /// Shape is ISO 15022 field 92B's: `:4!c//3!a/3!a/15d`, e.g. `:92B::EXCH//GBP/USD/1,619`
 /// meaning 1,00 GBP = 1,619 USD — first code the BASE, second the QUOTE. One deviation,
-/// deliberate: the decimal separator is a POINT, not SWIFT's comma, because C7's reason for
-/// using a string at all is exact decimal transport into JavaScript, and `parseFloat("1,619")`
+/// deliberate: the decimal separator is a point, not SWIFT's comma, for exact decimal transport
+/// into JavaScript, where `parseFloat("1,619")`
 /// is `1`.
 impl<Base: StaticCurrency, Quote: StaticCurrency> fmt::Display for Rate<Base, Quote> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -380,9 +358,7 @@ mod tests {
     use super::*;
     use crate::iso::{IDR, USD};
 
-    /// The parser reads the fraction by PADDING, not by scaling — so a short fraction and its
-    /// zero-extended form must land on the same units. Mutation-check: change the `take` to
-    /// `SCALE - 1` and this goes red.
+    /// Short and zero-extended fractional forms must produce the same units.
     #[test]
     fn short_and_padded_fractions_agree() {
         let a = Money::<USD>::from_str("USD 1.5").unwrap();

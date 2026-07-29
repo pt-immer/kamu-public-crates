@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The Rust drivers against a NATIVE `kmoney` column on YugabyteDB. (round-3 review, H2)
+# The Rust drivers against a native `kmoney` column on YugabyteDB.
 #
 #   kamu-money-pg/yb/run-yb-driver.sh [yb-tag] [pg-major-for-the-client-image]
 #

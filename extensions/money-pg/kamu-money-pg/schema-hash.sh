@@ -1,38 +1,21 @@
 #!/usr/bin/env bash
-# A stable fingerprint of the SQL this extension generates. THE ORACLE FOR A REFACTOR.
+# A stable fingerprint of the SQL this extension generates.
 #
 #   kamu-money-pg/schema-hash.sh [pg_major] [expected_hash]
 #
-# WHY THIS EXISTS, AND WHY IT IS NOT `sha256sum schema.sql`.
+# pgrx may emit unchanged SQL entities in different orders. Normalize provenance and ordering
+# before hashing so the fingerprint tracks the SQL surface rather than generator order.
 #
-# pgrx's generated SQL is NOT REPRODUCIBLE. Measured 2026-07-27 (DESIGN.md E21): two runs of
-# `cargo pgrx schema pg18` over BYTE-IDENTICAL source produce different files, because the order
-# in which entities are emitted varies between runs. The observed diff was 437 lines in which
-# `kmoney_mixed_eq` and `kmoney_mixed_ne` swapped places, neither having moved in source.
-#
-# So a byte diff of generated SQL cannot tell a refactor that changed the contract from one that
-# changed nothing. It reports a loud false positive on the first attempt, which is worse than no
-# check at all: it trains whoever hit it to stop believing the check.
-#
-# What IS stable is the SET of objects. This strips the provenance comments pgrx embeds --
+# The set of objects is stable. Strip the source-position comments pgrx embeds:
 #
 #     -- <any source file>.rs:<line>
 #     -- kmoney::<item>
 #     CREATE SCHEMA ...; /* kmoney::<module> */
 #
-# -- because both encode SOURCE POSITION, so ANY refactor changes them by construction and
+# Both encode source position, so a refactor changes them by construction and
 # neither says anything about the SQL contract.
 #
-# THE FILE PATH IS MATCHED GENERICALLY, and that is not incidental tidiness. The first version
-# matched `kamu-money-pg/src/lib.rs` literally, and the first real use of this oracle -- moving
-# two functions into `division.rs` and `allocation.rs` -- reported a MISMATCH on a refactor that
-# had changed nothing, because the two relocated functions now carried their new file's name in
-# a comment this filter had failed to strip. A path-agnostic pattern is the fix, and it is sound
-# rather than convenient: before that split every provenance line named `lib.rs`, so a filter
-# that strips ANY path produces the identical baseline on the old tree. Then each object is collapsed to one line,
-# the lines are sorted, and that is hashed. Across three generations at revision 9ac102f --
-# baseline, a rerun of unchanged source, and one `#[pg_extern]` moved into a child module --
-# the raw hashes were all different and this hash was identical.
+# Match source paths generically, collapse each object to one line, sort the lines, then hash.
 #
 # WHAT IT DOES NOT PROVE. That the extension works: it is a statement about generated SQL text,
 # not about behaviour. `just test-pg` is what proves behaviour, and the in-backend `#[pg_test]`

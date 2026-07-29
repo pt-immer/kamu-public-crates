@@ -1,4 +1,4 @@
-//! Money through a real PostgreSQL, over the canonical text form. (DESIGN.md C9)
+//! Money through a real PostgreSQL using the canonical text form.
 //!
 //! # Why `testcontainers` and not a script
 //!
@@ -111,8 +111,7 @@ fn a_row_cannot_be_read_as_the_wrong_currency() {
 }
 
 /// **`numeric` is not accepted, deliberately.** Accepting it would let a schema drift onto the
-/// one storage type this design rejects (E13: silent rounding on ingress, uncatchable by CHECK
-/// or DOMAIN), and the failure would show up as a wrong amount rather than a type error.
+/// one storage type this design rejects: it can round before `CHECK` or `DOMAIN` sees the value.
 #[test]
 fn a_numeric_column_is_refused_rather_than_silently_used() {
     let mut pg = start();

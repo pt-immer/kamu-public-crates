@@ -35,6 +35,7 @@ SHARED_FILES = {
     "deny.toml",
     "package-lock.json",
     "package.json",
+    "rust-toolchain.toml",
     "rustfmt.toml",
     "taplo.toml",
     "typos.toml",

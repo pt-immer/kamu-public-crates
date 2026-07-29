@@ -137,8 +137,7 @@ sed -i 's/invalid money literal/invalid money literals/' "$FAKE_FIXTURE_DIR/02-t
 expect_reject 02-text 'output differs' "a single letter changed in a refusal message is REJECTED"
 
 golden 02-text
-# The one that matters most: an error that stops being raised at all. A refusal probe whose ERROR
-# line simply vanishes is exactly what a regression in the input function looks like.
+# An error that stops being raised must also fail the oracle.
 before=$(wc -l < "$FAKE_FIXTURE_DIR/02-text.fixture")
 sed -i '/^ERROR:  kmoney: invalid money literal/d' "$FAKE_FIXTURE_DIR/02-text.fixture"
 # The mutation itself is asserted. A `sed` whose pattern has gone stale deletes nothing, the

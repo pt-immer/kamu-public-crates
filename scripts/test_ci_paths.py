@@ -28,6 +28,7 @@ class PathClassifierTests(unittest.TestCase):
             ".github/CODEOWNERS",
             "LICENSE-APACHE",
             "Cargo.toml",
+            "rust-toolchain.toml",
         ):
             with self.subTest(path=path):
                 self.assertIn("shared", classify_path(path))

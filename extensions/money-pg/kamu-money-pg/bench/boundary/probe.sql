@@ -19,9 +19,7 @@
 --
 -- THE SAMPLING IS sql-cost.sql's: a floor between every pair of operations, each operation
 -- differenced against the mean of the floors either side of it, and the order rotated per pass.
--- The first version of this probe sampled sequentially and made a null C function measure
--- SLOWER than a null pgrx one, which is not a result about C -- it is proof the rows were never
--- compared to each other. E20 records that as its own failed benchmark.
+-- Pairing and rotation keep drift from assigning a fixed bias to one operation.
 --
 -- SERIAL, ASSERTED. Wall time over N rows is time per row only if the rows went through one
 -- process. The first attempt planned two workers and reported wall-clock-per-row as though it
@@ -39,7 +37,7 @@ CREATE EXTENSION IF NOT EXISTS kmoney;
 -- PostgreSQL, by the `boundary-build` Dockerfile stage on YugabyteDB. The path differs between
 -- them, so the caller names it rather than this file guessing: `-v c_noop_so=<path>`.
 -- A SENTINEL rather than `\quit`, because `\quit` ends the script with status 0 and the runner
--- would read that as a successful measurement that simply printed nothing. The bad path makes
+-- would read that as a successful measurement that printed nothing. The bad path makes
 -- CREATE FUNCTION fail, and `ON_ERROR_STOP` turns that into a non-zero exit.
 \if :{?c_noop_so}
 \else
@@ -88,14 +86,7 @@ DECLARE
   floor_q text := format('SELECT count(*) FROM generate_series(1,%s) g WHERE g > 0', n);
   -- ONLY THE `bigint` PAIR, AND THE MISSING ROWS ARE THE POINT.
   --
-  -- The first version of this file also measured `rs_noop_kmoney(kmoney)` and
-  -- `kmoney_hash(kmoney)` with a CONSTANT argument -- `'USD 1.25'::kmoney` -- to avoid
-  -- invalid-benchmark #1 in E20's table, where the predicate built its own argument by string
-  -- concatenation and timed the parser. It avoided that and walked into #2: both functions are
-  -- IMMUTABLE and the argument was constant, so the planner CONSTANT-FOLDED the call. It ran
-  -- once at plan time, never per row, and both rows measured 26-28 ns/call BELOW the floor in
-  -- 9 passes of 9 -- faster than doing nothing, which is the signature of an eliminated
-  -- expression, not of a fast function.
+  -- Constant `kmoney` arguments would let PostgreSQL fold these immutable calls at plan time.
   --
   -- The two forms are a vice. An argument that varies with `g` has to be BUILT from `g`, and
   -- building an 18-byte currency-tagged value costs hundreds of nanoseconds -- swamping the few
@@ -188,11 +179,8 @@ END $$;
 
 \echo
 \echo '=== ELIMINATION CHECK: a function that measures at or below the floor did not run. ==='
--- E20's first rule, enforced rather than written down. An IMMUTABLE function applied to a
--- constant is folded at plan time; a projection nothing consumes is dropped. Either way the
--- query measures the absence of the work, and the tell is a delta at or below zero. The first
--- version of THIS file hit it -- two rows at 26-28 ns/call below the floor in 9 of 9 passes --
--- while the comment above them explained how it had avoided a different invalid benchmark.
+-- An immutable constant call can fold at plan time, and an unused projection can disappear.
+-- A delta at or below the floor therefore invalidates the row.
 DO $$
 DECLARE bad text;
 BEGIN

@@ -24,22 +24,14 @@
 //! - [`advanced`] exposes raw-unit kernels, domain constants, residue internals,
 //!   and stable hashing;
 //! - feature-gated `wire` and [`adapters`] expose boundary integrations.
-// Enables the per-item "Available on crate feature ..." banners on docs.rs. Nightly-only,
-// hence cfg_attr: a stable build simply does not see it.
+// Enables per-item "Available on crate feature ..." banners on docs.rs. `cfg_attr` keeps the
+// nightly-only feature out of stable builds.
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(unsafe_code, missing_docs)]
 #![deny(clippy::all, clippy::pedantic, clippy::cargo)]
-// `clippy::cargo` lints the WORKSPACE's metadata, not just this crate's, so denying it here
-// makes kamu-logging's published `with-otlp` / `with-actix-web` feature names errors in this
-// crate's build. They are that crate's public API, renaming them is a breaking change, and
-// this crate cannot fix them — so the one cargo lint that reaches across is allowed and the
-// rest of the group stays denied.
+// This workspace-wide lint flags published feature names owned by other crates.
 #![allow(clippy::redundant_feature_names)]
-// Cherry-picked from `clippy::restriction` and `clippy::nursery`, which are NOT meant to be
-// enabled wholesale: `restriction` is self-contradictory by design (it exists to be sampled)
-// and `nursery` is under development. Denying either group would let a toolchain upgrade break
-// every local build for reasons unrelated to this code. Naming the lints gets the benefit
-// without importing that instability. (DESIGN.md C10)
+// Select strict lints individually; restriction and nursery are not stable aggregate policies.
 #![deny(
     clippy::arithmetic_side_effects,
     clippy::as_conversions,
@@ -51,11 +43,6 @@
     clippy::missing_const_for_fn,
     clippy::use_self
 )]
-// The `cargo_common_metadata` allow that stood here is GONE. It existed because `repository` was
-// missing from Cargo.toml while this repo had no remote — measured, not assumed. A remote exists
-// now, the field is filled in from `git remote -v`, and the allow would otherwise have quietly
-// outlived its reason and started covering the next piece of missing metadata instead.
-
 #[path = "allocate.rs"]
 mod allocate_impl;
 #[path = "arith.rs"]

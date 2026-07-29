@@ -2,53 +2,14 @@
 --
 -- Run through kamu-money-pg/bench/run-bench-sql-yb.sh (`just bench-why-yb`).
 --
--- ============================================================================================
--- THIS FILE EXISTS BECAUSE THE FIRST EXPLANATION WAS WRONG.
---
--- E20 measured `numeric` costing ~360 ns/row more than a `bigint` on YugabyteDB, and the entry
--- attributed it to VARLENA versus FIXED-WIDTH decoding: `numeric` carries a length header,
--- `kmoney` is 18 fixed bytes. That story is generic -- it should hold on stock PostgreSQL too --
--- and it does not explain why the gap WIDENS from ~2.7x on PG18 to >=8.8x on YugabyteDB.
---
--- The operator proposed a different mechanism: YugabyteDB separates storage from compute, and
--- DocDB has its own decimal representation, so a PG `numeric` is TRANSLATED at the boundary on
--- every read while a type DocDB has never heard of can only be handed back as opaque bytes.
---
--- THE TWO STORIES MAKE OPPOSITE PREDICTIONS ABOUT ONE COLUMN. `bytea` is variable-length like
--- `numeric` AND opaque like `kmoney`:
+-- Distinguish two explanations for numeric cost. `bytea` is variable-length like `numeric` and
+-- opaque like `kmoney`, so the predictions differ:
 --
 --     varlena-vs-fixed  =>  bytea ~ numeric  >>  kmoney
 --     numeric-specific  =>  bytea ~ kmoney   <<  numeric
 --
--- Measured 2026-07-26, 100k rows, 9 passes, bracket drift 5.71%:
---
---     bigint  i = i   (fixed 8B)                    -31.0 ns/row   below noise
---     text    t = t   (VARLENA, YB-native)           97.1
---     kmoney  m = m   (fixed 18B, opaque to YB)     109.3
---     bytea   b = b   (VARLENA, opaque to YB)       133.6
---     numeric n = n   (VARLENA, YB-native Decimal)  550.7          noise 42.8, resolved 13x
---
--- `bytea` and `numeric` are both varlenas and differ by 4x. Variable length is NOT the cost.
--- `text` is also a varlena and also cheap, so it is not "YB-native types are dear" either. The
--- cost is SPECIFIC TO NUMERIC, which is what the storage/compute split predicts.
---
--- WHAT THIS SHOWS AND WHAT IT INFERS. It shows the cost is numeric-specific and not explained by
--- variable length. That DocDB's Decimal translation is the mechanism is a strong inference from
--- YugabyteDB's architecture, not something measured here -- reading DocDB's encoder would settle
--- it, and that is outside this repository.
---
--- Only the `numeric` row is solidly resolved. The others sit near the noise floor and are quoted
--- as a BAND rather than as figures: what carries the argument is that one row is 4-5x the others
--- and far outside their spread.
---
--- THE NUMBERS ABOVE PREDATE THIS FILE'S EVIDENCE RETENTION, and are kept as the observation that
--- prompted it rather than as a citable measurement. They were produced before the fixture stored a
--- position, printed its raw samples, asserted serial plans, or checked that all five predicates
--- match every row -- so the transcript they came from held setup, drift and five medians, and
--- nothing that lets anyone recompute them. A 2026-07-26 review named that gap. The conclusion is
--- unaffected: it rests on the ORDERING of the five rows and on the per-row byte counts printed
--- below, both of which the retained output does show. Restate the figures from the next run.
--- ============================================================================================
+-- The fixture establishes ordering and noise from each retained run. DocDB decimal translation
+-- remains an inference; this file measures numeric-specific cost, not DocDB internals.
 \set ON_ERROR_STOP 1
 \pset pager off
 \timing off
@@ -102,19 +63,14 @@ BEGIN
     RETURN whole;
 END $f$ LANGUAGE plpgsql;
 
--- `position` IS RETAINED, NOT JUST `pass`. It is the evidence that rotation happened at all, and
--- it is what a reader needs to check for a position effect this file has not thought of. Omitting
--- it -- as this fixture did until 2026-07-26 -- means the rotation is a claim in a comment.
+-- Retain position so rotation and position effects remain auditable.
 DROP TABLE IF EXISTS s;
 CREATE TABLE s(op text, pass int, position int,
                ms double precision, fb double precision, fa double precision);
 
 \echo
 \echo '=== CORRECTNESS FIRST: all five predicates must match the SAME rows ==='
--- AND IT RAISES. Five `x = x` scans are only comparable if they do the same amount of work, and
--- "the same amount" here means "return every row". A column that went NULL, or a type whose `=`
--- short-circuits, would produce a fast row that looks like a cheap type. Nothing checked this
--- until 2026-07-26, so the fixture's whole argument rested on an unstated assumption.
+-- Five `x = x` scans are comparable only if every predicate returns every row.
 DO $$
 DECLARE q text; got bigint; want bigint;
 BEGIN
@@ -202,9 +158,7 @@ SELECT run(:passes);
 \echo '=== EVERY RAW SAMPLE, in pass/position order. The transcript is the artefact that'
 \echo '=== survives: the container holding this table is deleted when the run ends, so a'
 \echo '=== median table alone cannot be recomputed or checked by anybody afterwards.'
--- The summary at the bottom is DERIVED from these rows. Until 2026-07-26 only the summary was
--- printed, which meant the numbers quoted in specs.md could not be independently recomputed from
--- their own retained evidence -- a fixture asking to be taken at its word.
+-- The summary below is derived from these retained rows.
 SELECT pass, position, op,
        round(ms::numeric, 2) AS ms,
        round(fb::numeric, 2) AS floor_before,

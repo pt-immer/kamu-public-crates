@@ -1,17 +1,10 @@
 name: On Release Published
 
-# Independent per-crate releases. Cut a GitHub Release whose tag is
-# `<crate>-vX.Y.Z`, e.g. `kamu-iso3166-v0.2.0` or `kamu-logging-v0.1.4`. The
-# job below parses the tag, verifies the crate's manifest version matches, then
-# publishes that single crate to crates.io.
 
 on:
   release:
     types: [published]
 
-# Serialize publishes for the same tag so a duplicated / re-fired release event
-# can't race itself into a double publish. Different tags (and different crates)
-# stay independent.
 concurrency:
   group: publish-${{ github.event.release.tag_name }}
   cancel-in-progress: false
@@ -24,6 +17,7 @@ jobs:
   publish:
     name: publish to crates.io
     runs-on: ubuntu-latest
+    environment: crates-io
     permissions:
       contents: read
     steps:
@@ -31,7 +25,9 @@ jobs:
         with:
           submodules: true
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
+        with:
+          toolchain: 1.96.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Parse release tag -> crate + version
@@ -39,27 +35,6 @@ jobs:
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
-          # ONE TAG GRAMMAR, TWO OUTCOMES. `kamu-money-pg` is recognised here so a
-          # release of it is a deliberate, verified event rather than a typo — but
-          # it is NOT publishable, and `publishable` is what every crates.io step
-          # below gates on.
-          #
-          # WHY IT CAN NEVER BE PUBLISHED: it is a cdylib whose resolvable
-          # dependency graph goes through the extension lane's root
-          # [patch.crates-io], which redirects pgrx to a fork carrying the
-          # `yb-pg15` feature. cargo does NOT package a patch. A published .crate
-          # would therefore resolve pgrx from crates.io, where that feature does
-          # not exist, and fail for every consumer — so the lane's Cargo.toml
-          # carries `publish = false` and this workflow stops before the registry
-          # token is ever used.
-          #
-          # WHAT REPLACED THE ROLL COUNTER. The source repository tagged
-          # `v0.1.0-r.{n}.{hash}`, where `-r.{n}` meant "same extension version,
-          # re-certified against a new YugabyteDB image digest". Folding the tags
-          # into `<crate>-vX.Y.Z` did not lose that: the digest is PINNED IN-TREE
-          # and enforced by `just pg yb-pin-check`, so adopting a new one is a
-          # tracked content change that earns an ordinary patch bump. The counter
-          # encoded in the tag what the tree now records directly.
           if [[ "$TAG" =~ ^(kamu-iso3166|kamu-logging|kamu-money-core|kamu-snap-crypto|kamu-snap-crypto-actix|kamu-snap-crypto-axum|kamu-snap-response|kamu-snap-response-actix|kamu-snap-response-axum)-v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.+-]+)?)$ ]]; then
             echo "crate=${BASH_REMATCH[1]}"  >> "$GITHUB_OUTPUT"
             echo "version=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
@@ -79,15 +54,6 @@ jobs:
           VERSION: ${{ steps.parse.outputs.version }}
           PUBLISHABLE: ${{ steps.parse.outputs.publishable }}
         run: |
-          # THE LANE HAS ITS OWN MANIFEST, and the root workspace cannot see it —
-          # that is the point of excluding it. Reading the right one keeps this
-          # check meaningful for a crate that is never published: the tag must
-          # still name the version in the tree, or the release notes describe
-          # something that was not built.
-          #
-          # `--no-deps` is what lets this work without the core path injection: it
-          # emits workspace member manifests without resolving the graph, so it
-          # does not need kamu-money-core to exist anywhere.
           if [[ "$PUBLISHABLE" == "false" ]]; then
             META_ARGS=(--manifest-path extensions/money-pg/Cargo.toml)
           else
@@ -118,11 +84,10 @@ jobs:
           CRATE: ${{ steps.parse.outputs.crate }}
           VERSION: ${{ steps.parse.outputs.version }}
         run: |
-          echo "::notice title=Not a crates.io package::${CRATE} ${VERSION} is a PostgreSQL extension. Its resolvable graph goes through a root [patch.crates-io], which cargo does not package, so a published .crate would resolve pgrx from crates.io where the yb-pg15 feature does not exist. The tag is verified against the manifest and the release stands; nothing is sent to crates.io and the registry token is never used."
-          echo "The deployable artefact for this crate is the YugabyteDB node image, built from source at this version. See extensions/money-pg/DESIGN.md section 6."
+          echo "::notice title=Not a crates.io package::${CRATE} ${VERSION} is a PostgreSQL extension. Its root Cargo patch cannot ship in a .crate, so this workflow verified the tag but will not use the registry token."
+          echo "The deployable artifact is the consumer-owned YugabyteDB node image. See extensions/money-pg/DESIGN.md."
 
       - name: Ensure the version is not already on crates.io
-        # Skipped for a crate that cannot be published; the step above says why.
         if: ${{ steps.parse.outputs.publishable == 'true' }}
         env:
           CRATE: ${{ steps.parse.outputs.crate }}
@@ -130,15 +95,10 @@ jobs:
         run: python3 scripts/crates_io.py ensure-absent "$CRATE" "$VERSION"
 
       - name: Verify in-workspace kamu-snap-* deps are already published
-        # Skipped for a crate that cannot be published; the step above says why.
         if: ${{ steps.parse.outputs.publishable == 'true' }}
         env:
           CRATE: ${{ steps.parse.outputs.crate }}
         run: |
-          # The snap crates inter-depend (crypto <- response/adapters). cargo's
-          # package step refuses to publish a crate whose declared deps — even
-          # optional ones — are not yet on crates.io. Fail fast with a clear
-          # message instead of cargo's opaque "no matching package" error.
           deps="$(cargo metadata --no-deps --format-version 1 \
             | python3 -c "import json,sys,os; m=json.load(sys.stdin); p=next(x for x in m['packages'] if x['name']==os.environ['CRATE']); print('\n'.join(f'{d[\"name\"]}\t{d[\"req\"]}' for d in sorted(p['dependencies'], key=lambda d: d['name']) if d['name'].startswith('kamu-snap-')))")"
           if [ -z "$deps" ]; then echo "no in-workspace kamu-snap-* deps."; exit 0; fi
@@ -150,21 +110,13 @@ jobs:
           done <<< "$deps"
 
       - name: Publish (dry-run, then for real)
-        # Skipped for a crate that cannot be published; the step above says why.
         if: ${{ steps.parse.outputs.publishable == 'true' }}
         env:
           CRATE: ${{ steps.parse.outputs.crate }}
-          # crates.io token is an org-level secret (PT IMMER convention: SECRET_*);
-          # cargo reads it from the CARGO_REGISTRY_TOKEN env var.
           CARGO_REGISTRY_TOKEN: ${{ secrets.SECRET_DEPLOY_CRATEIO }}
-          # Hosted runners intermittently fail crates.io downloads with
-          # "[16] Error in the HTTP2 framing layer"; force HTTP/1.1 to avoid it.
           CARGO_HTTP_MULTIPLEXING: "false"
         run: |
           set -euo pipefail
-          # Retry the dry-run: this is where transient dependency-download flakes
-          # happen. It populates the registry cache, so the real publish below
-          # reuses it (one upload, no re-download — avoids any double-publish risk).
           retry() {
             local n=1 max=3
             until "$@"; do
@@ -180,16 +132,10 @@ jobs:
           cargo publish -p "$CRATE"
 
       - name: Ensure github:pt-immer:rust-devs co-owns the crate
-        # Skipped for a crate that cannot be published; the step above says why.
         if: ${{ steps.parse.outputs.publishable == 'true' }}
         env:
           CRATE: ${{ steps.parse.outputs.crate }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.SECRET_DEPLOY_CRATEIO }}
-        # First publish makes the token's user (Ujang360) the sole owner; the repo
-        # cadence is `Ujang360 + github:pt-immer:rust-devs`. Tolerant on purpose:
-        # already-owner is fine, and a token lacking the `change-owners` scope only
-        # warns (never fails an otherwise-successful publish). Backfill older crates
-        # with the `Add Crate Owner` workflow once the token has the scope.
         run: |
           set -uo pipefail
           if out="$(cargo owner --add github:pt-immer:rust-devs "$CRATE" 2>&1)"; then

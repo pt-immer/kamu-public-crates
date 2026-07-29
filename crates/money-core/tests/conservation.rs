@@ -26,8 +26,7 @@ fn allocate_respects_weights() {
 
 #[test]
 fn allocate_at_the_domain_top_does_not_overflow() {
-    // units * weight here is ~4e45, which OVERFLOWS i128 (max 1.7e38).
-    // If this passes, the I256 path is really being used. (DESIGN.md E11)
+    // units * weight is about 4e45, beyond i128; the wide path must carry it.
     let parts = m(DOMAIN_MAX).allocate(&[u32::MAX, 1]).unwrap();
     let sum: i128 = parts.iter().map(Money::units).sum();
     assert_eq!(sum, DOMAIN_MAX);
@@ -49,14 +48,7 @@ fn split_conserves() {
     assert_eq!(parts.iter().map(Money::units).sum::<i128>(), 10_000_000_000_000_000_000);
 }
 
-/// `split` computes equal weights directly instead of materialising `vec![1u32; n]`, which
-/// let an externally-chosen `n` size three vectors at once. The rewrite must be
-/// **indistinguishable** from what it replaced, not merely conserving — so this pins it
-/// against the very expression it removed, across signs and awkward remainders.
-///
-/// Mutation-check, measured: swapping `div_euclid`/`rem_euclid` for `/` and `%` fails this
-/// on every negative input, because truncation toward zero hands the front parts a unit the
-/// arithmetic never produced.
+/// Lazy equal splitting must match equal-weight allocation across signs and remainders.
 #[test]
 fn split_matches_the_allocation_it_replaced() {
     use core::num::NonZeroU32;
@@ -99,17 +91,15 @@ fn split_collection_paths_preserve_one_distribution() {
     }
 }
 
-/// **The M2 fix, shown on the value that motivated it.**
-///
-/// `NonZeroU32` admits `u32::MAX`; the old eager implementation could reserve about 68.7 GB for
-/// that count. The iterator remains constant-size, reports the exact count, and yields initial
+/// `NonZeroU32` admits `u32::MAX`; an eager implementation could reserve about 68.7 GB for that
+/// count. The iterator remains constant-size, reports the exact count, and yields initial
 /// parts without allocating.
 ///
 /// **It deliberately does not try to make `split_collect` fail.** A real 68.7 GB `try_reserve_exact`
 /// is not a reliable assertion: under Linux overcommit the reservation can succeed and hand back
 /// address space, and the failure then arrives as the OOM killer partway through filling, which
-/// is not a test result — it is a dead test runner. What M2 actually asked for, and what is
-/// testable, is that a caller has a path which never makes the request at all.
+/// is not a test result — it is a dead test runner. Instead, prove that the lazy path never
+/// makes the request.
 #[test]
 fn split_costs_nothing_at_the_part_count_that_motivated_it() {
     use core::num::NonZeroU32;
@@ -118,8 +108,7 @@ fn split_costs_nothing_at_the_part_count_that_motivated_it() {
 
     assert_eq!(parts.len(), all, "exact size, with nothing materialised");
 
-    // `|p| p.units()`, not `Money::units`: this iterator yields by VALUE, and `units` takes
-    // `&self`, so the point-free spelling the `Vec`-based tests use does not apply here.
+    // This iterator yields by value, while `Money::units` takes a reference.
     let head: Vec<i128> = parts.by_ref().take(3).map(|p| p.units()).collect();
     assert_eq!(head.len(), 3);
     assert_eq!(
@@ -136,10 +125,7 @@ fn split_costs_nothing_at_the_part_count_that_motivated_it() {
     }
 }
 
-/// M1 (2026-07-27, round 3): weights arriving from a request body, a config file or a database
-/// row are ordinary service input, so the TYPED path needs a fallible form. Until now the only
-/// fallible allocator was `allocate_units`, which returns raw `i128` -- so a caller either left
-/// the typed API or repeated the conversion by hand, and the typed one panicked.
+/// The typed allocation path reports invalid runtime weights without exposing raw units.
 #[test]
 fn allocate_reports_bad_weights_instead_of_panicking() {
     assert_eq!(
@@ -185,7 +171,7 @@ fn the_runtime_allocator_refuses_bad_weights_without_panicking() {
 
     assert_eq!(allocate_units(1, &[]), Err(AllocationError::InvalidWeights { weights: 0 }));
     assert_eq!(allocate_units(1, &[0, 0]), Err(AllocationError::InvalidWeights { weights: 2 }));
-    // ...and the out-of-domain arm still reports the OTHER error, so the two are distinguishable.
+    // The out-of-domain arm remains distinguishable.
     assert_eq!(
         allocate_units(DOMAIN_MAX + 1, &[1, 1]),
         Err(AllocationError::Amount(AmountError::out_of_domain(DOMAIN_MAX + 1)))
@@ -194,20 +180,17 @@ fn the_runtime_allocator_refuses_bad_weights_without_panicking() {
     assert_eq!(allocate_units(10, &[0, 1, 0]).unwrap(), vec![0, 10, 0]);
 }
 
-/// R2-F1: a zero-weight recipient has no claim, so the truncation remainder must never land on
-/// it. Conservation does NOT catch this — `[1, 0, 0]` sums to `1` exactly as `[0, 1, 0]` does —
-/// so the property is asserted DIRECTLY, over positive and negative amounts, with exact vectors
-/// for the cases the fix changes. (Standing lesson: an invariant test does not pin a
-/// distribution; assert the distribution, not only its sum.)
+/// Zero-weight recipients must receive nothing, including truncation remainders. Conservation
+/// alone cannot distinguish `[1, 0, 0]` from `[0, 1, 0]`, so assert the distribution directly.
 #[test]
 fn the_allocator_never_pays_a_zero_weight_recipient() {
     use kamu_money_core::advanced::arithmetic::allocate_units;
 
-    // The measured defect: the whole odd unit used to land on the leading zero slot.
+    // The odd unit belongs to the first positive-weight slot.
     assert_eq!(allocate_units(1, &[0, 1, 1]).unwrap(), vec![0, 1, 0]);
     assert_eq!(allocate_units(-1, &[0, 1, 1]).unwrap(), vec![0, -1, 0]);
     // Interleaved zeros are skipped too: 7 over weights (3, 3) leaves a 1-unit remainder that
-    // must reach the FIRST POSITIVE slot (index 1), never the zero at index 0.
+    // must reach the first positive slot (index 1), never the zero at index 0.
     assert_eq!(allocate_units(7, &[0, 3, 0, 3, 0]).unwrap(), vec![0, 4, 0, 3, 0]);
 
     // The general property, swept: every zero-weight index gets exactly 0, and the total is
@@ -230,7 +213,7 @@ fn the_allocator_never_pays_a_zero_weight_recipient() {
 }
 
 proptest! {
-    /// The contract, for all inputs: allocation NEVER creates or destroys money.
+    /// Allocation never creates or destroys money.
     #[test]
     fn prop_allocate_always_conserves(
         units in -DOMAIN_MAX..=DOMAIN_MAX,

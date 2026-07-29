@@ -58,33 +58,30 @@ fn main() {
     }
     println!("  ^ catches a currency landing in the wrong field, where types cannot help");
 
-    println!("\n== excess precision is REFUSED, never rounded ==");
+    println!("\n== excess precision is refused ==");
     match serde_json::from_str::<Money<USD>>(r#"{"currency":"USD","amount":"0.0000000000000000005"}"#) {
         Ok(m) => println!("  unexpectedly accepted: {m}"),
         Err(e) => println!("  19 decimal places -> {e}"),
     }
-    println!("  ^ rust_decimal's from_str returned Ok here and rounded silently (DESIGN.md E2)");
+    println!("  ^ excess precision is refused instead of rounded");
 
-    println!("\n== binary: the ISO NUMERIC, never the variant's position ==");
+    println!("\n== binary uses the ISO numeric code ==");
     println!("  postcard(Iso4217::IDR)  = {:?}", postcard::to_allocvec(&Iso4217::IDR).expect("ok"));
     println!(
         "  postcard(360u16)        = {:?}   <- the ISO numeric code",
         postcard::to_allocvec(&360u16).expect("ok")
     );
     println!(
-        "  postcard(1u16)          = {:?}   <- IDR's ORDINAL POSITION in the table",
+        "  postcard(1u16)          = {:?}   <- IDR's table position",
         postcard::to_allocvec(&1u16).expect("ok")
     );
     println!();
-    println!("  A derived impl would emit the position. Insert one currency mid-table and every");
-    println!("  later code shifts: stored IDR decodes as GBP, silently, with #[repr(u16)] and");
-    println!("  IDR = 360 unchanged in BOTH versions. The register is complete at 178 and still");
-    println!("  grows as ISO issues codes; variants are alpha-3 ordered, so a new code lands");
-    println!("  BETWEEN existing ones and shifts every later ordinal.");
+    println!("  A derived impl would emit table position, so inserting a currency could make");
+    println!("  stored bytes decode as another code even when explicit discriminants stay fixed.");
     println!();
-    println!("  A JSON suite CANNOT catch it — human-readable formats emit the NAME.");
+    println!("  Human-readable formats cannot detect that binary-only error.");
 
-    println!("\n== binary tags the currency, so a wrong type is REFUSED (R2-F2) ==");
+    println!("\n== binary tags the currency, so a wrong type is refused ==");
     let money = postcard::to_allocvec(&Money::<USD>::try_from_units(units).unwrap()).expect("ok");
     let bare = postcard::to_allocvec(&units).expect("ok");
     println!("  postcard(Money<USD>) = {} bytes", money.len());

@@ -1,22 +1,13 @@
 #!/usr/bin/env bash
 # Build and test kamu-money-pg against every supported PostgreSQL major, in containers.
 #
-# Nothing touches the host. The expensive `cargo install cargo-pgrx` layer is shared across
-# every image (see the layer-order note in the Dockerfile), so only the apt step and
-# `pgrx init` are repeated per version.
-#
 #   ./kamu-money-pg/test-matrix.sh            # PG15..latest supported
 #   ./kamu-money-pg/test-matrix.sh 17 18      # a subset
 #
-# CONCURRENCY. This daemon is shared across several organisations' runners. An earlier version
-# built `kamu-money-pg:pg18` and then ran `kamu-money-pg:pg18` -- which are two different images if
-# anyone retags in between, so a run could report green for a revision it never executed.
-# Tags are mutable and daemon-global; image IDs are neither. The build therefore captures an
-# image ID and the run uses that ID. The tag is still written, for humans reading
-# `docker images`, and is never the thing tested.
+# Builds capture immutable image IDs because tags are mutable on the shared daemon.
 set -euo pipefail
 
-# PG15 is the floor (operator decision, 2026-07-22). pgrx 0.19.1 supports up to pg19.
+# Tested support spans PostgreSQL 15-18.
 DEFAULT_MAJORS=(15 16 17 18)
 MAJORS=("${@:-${DEFAULT_MAJORS[@]}}")
 
@@ -24,24 +15,12 @@ cd "$(dirname "$0")/.."
 # shellcheck source=scripts/docker-core-context.sh
 source ./scripts/docker-core-context.sh
 
-# A daemon-global run identity. `$$` alone is NOT unique here: separate runner containers
-# sharing one daemon have their own PID namespaces, so two concurrent matrices can draw the
-# same number and then collide on container names and on each other's cleanup.
+# Include random entropy because PID namespaces can repeat on a shared daemon.
 REVISION="$(git rev-parse --short HEAD 2>/dev/null || echo nogit)"
 
-# WHAT WAS BUILT, not what is committed. This script builds from the WORKING TREE, so on a dirty
-# tree "revision X" names something that was never committed -- a green matrix attributed to a
-# commit that was not tested. Measured 2026-07-27: a run mid-refactor printed
-# `matrix green: 18 (revision 185b645)` while wire.rs and typmod.rs were uncommitted.
-#
-# Every other runner here already pairs its sha with this -- the bench scripts print `tree dirty`
-# beside `source sha`. This one printed the sha alone.
-#
-# The DOCKER LABEL deliberately keeps the bare revision: `run-bench-pg.sh` compares it for exact
-# equality against `git rev-parse --short HEAD` and prints its own `tree dirty` line, so a suffix
-# there would make it refuse every image while telling nobody anything new.
+# Keep the image label as the bare revision; record dirty state only in output.
 if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
-    TREE_STATE=", tree DIRTY -- built from uncommitted changes, NOT from ${REVISION}"
+    TREE_STATE=", dirty tree built beyond ${REVISION}"
 else
     TREE_STATE=""
 fi
@@ -50,10 +29,7 @@ RUN_ID="${REVISION}-$$-${ENTROPY}"
 LABEL="kamu-money-pg.run=${RUN_ID}"
 IIDFILE=""
 
-# `docker run --rm` cleans up on the container's own exit, but not if THIS script is killed
-# while one is running -- the --rm is the daemon's promise about the container, not about ours.
-# Cleanup is scoped to THIS run's label rather than to a name prefix or an image, so a
-# concurrent matrix belonging to another org is unreachable from here.
+# Remove only containers carrying this run's label, including on interruption.
 cleanup() {
   local ids
   ids=$(docker ps -aq --filter "label=${LABEL}" 2>/dev/null || true)
@@ -68,8 +44,7 @@ trap cleanup EXIT INT TERM HUP
 
 failed=()
 
-# One major, start to finish. Extracted so the sequential and parallel paths below run exactly the
-# same steps -- a parallel mode that quietly does something else is worse than no parallel mode.
+# One shared implementation for sequential and parallel execution.
 one_major() {
   local pg="$1"
   echo "=============================== PG${pg} ==============================="
@@ -97,24 +72,11 @@ one_major() {
   echo "PG${pg}: OK"
 }
 
-# MATRIX_JOBS>1 overlaps the majors. They are genuinely independent -- separate images, separate
-# containers, names and labels already scoped per run -- and the sequential cost is four full
-# from-source extension builds one after another.
-#
-# NOT the default, and bounded, because this daemon is shared across several organisations'
-# runners: taking every core is a decision an operator makes, not one a test script makes for them.
-#
-# OUTPUT IS REPLAYED IN MAJOR ORDER, never interleaved. This log is release evidence; four builds
-# writing over each other would be unreadable, and unreadable evidence gets skimmed rather than
-# read. The sequential path keeps streaming live so the ordinary case still shows progress.
+# Optional parallelism is bounded by the operator; buffered logs replay in major order.
 MATRIX_JOBS="${MATRIX_JOBS:-1}"
 
-# VALIDATED, because a failed `[` inside an `if` condition is EXEMPT from `set -e`. A non-numeric
-# just-anti-example: the next line quotes the BROKEN call to say what it produces.
-# value here (`MATRIX_JOBS=jobs=4`, which is what `just test-pg "15 16" jobs=4` produces, since just
-# takes arguments positionally) would make the comparison below error "integer expected", return
-# non-zero, and silently select the PARALLEL branch with its throttle disabled. Measured on the
-# 2026-07-25 release-check run, where exactly that happened one level up.
+# Validate before numeric comparison because a failed conditional test bypasses `set -e`.
+# just-anti-example: `just test-pg "15 16" jobs=4` passes a nonnumeric positional value.
 case "$MATRIX_JOBS" in
   ''|*[!0-9]*)
     echo "test-matrix: MATRIX_JOBS must be a positive integer, got '$MATRIX_JOBS'" >&2
@@ -147,8 +109,7 @@ echo
 if [ ${#failed[@]} -eq 0 ]; then
   echo "matrix green: ${MAJORS[*]} (revision ${REVISION}${TREE_STATE})"
 else
-  # Report every failure rather than dying on the first: a version-specific break is exactly
-  # what a matrix exists to find, and stopping early hides the rest of the range.
+  # Report every failed major.
   echo "matrix FAILED: ${failed[*]} (revision ${REVISION}${TREE_STATE})"
   exit 1
 fi

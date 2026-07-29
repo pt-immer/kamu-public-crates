@@ -1,9 +1,7 @@
--- 04-sum: `kmoney_sum`, and the `sum(kmoney)` aggregate restored over a wide transition state.
+-- 04-sum: `kmoney_sum` and the `sum(kmoney)` aggregate over a wide transition state.
 --
--- The aggregate WAS deliberately removed (R2-F4a): its narrow `kmoney` state overflowed on a
--- transient that a different plan would never have produced, making the total a property of the
--- plan. R2-F4b brought it back over `UnitSum` -- 32 bytes of `I256` plus the currency code -- so
--- no reachable partial can leave the domain. The header said "removed" for one commit after that.
+-- `sum(kmoney)` uses `UnitSum` -- 32 bytes of `I256` plus the currency code -- so no reachable
+-- partial sum can leave the transition state's domain.
 --
 -- Ports: kmoney_sum_adds_an_explicit_list_within_one_currency,
 -- kmoney_sum_is_order_independent_across_a_domain_edge_transient, kmoney_sum_of_nothing_is_null,
@@ -27,11 +25,8 @@ CREATE EXTENSION IF NOT EXISTS kmoney;
 SELECT kmoney_sum('USD 10.50', 'USD 0.25', 'USD 0.25')::text;
 
 \echo -- kmoney_sum_is_order_independent_across_a_domain_edge_transient
--- R2-F4 at the SQL boundary. MAX + MAX transiently leaves the domain while the total (MAX) is
--- inside it. The removed `sum` aggregate checked the domain on every partial, so it failed or
--- succeeded depending on the order PostgreSQL combined rows -- and PARALLEL = SAFE made that a
--- plan decision. kmoney_sum receives every argument at once and accumulates in I256, so the
--- result belongs to the multiset rather than to the plan.
+-- MAX + MAX transiently leaves the domain while the final total remains inside it.
+-- Wide accumulation makes the result independent of argument order.
 SELECT kmoney_sum('USD 999999999999999999.999999999999999999',
                   'USD 999999999999999999.999999999999999999',
                   'USD -999999999999999999.999999999999999999')::text || ' | '
@@ -57,8 +52,7 @@ SELECT kmoney_sum('USD 999999999999999999.999999999999999999',
                   'USD 0.000000000000000001')::text;
 
 \echo -- the_sum_aggregate_totals_a_column
--- The aggregate is back, with a WIDE transition state. R2-F4 removed one whose state was a
--- `kmoney`; the narrow state was the defect, not the aggregate.
+-- The aggregate uses a wide transition state.
 CREATE TEMP TABLE ledger (amount kmoney);
 INSERT INTO ledger VALUES ('USD 10.50'), ('USD 0.25'), ('USD 0.25');
 SELECT sum(amount)::text FROM ledger;

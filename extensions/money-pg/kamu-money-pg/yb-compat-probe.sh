@@ -1,36 +1,20 @@
 #!/usr/bin/env bash
-# Reproduce, from scratch, why `kamu-money-pg` cannot run inside YugabyteDB -- and FAIL if it no
-# longer can.
+# Reproduce the blockers for an unadapted `kamu-money-pg` build on the baseline YugabyteDB image.
 #
 #   just yb-probe            (or: ./kamu-money-pg/yb-compat-probe.sh [yb-image] [builder-image])
 #
-# Two independent blockers, each asserted. See kamu-money-core's DESIGN.md E15. Exit status is the result:
+# Two independent blockers are asserted:
 #
-#   0  both blockers reproduced; E15 still describes reality
-#   1  a blocker is gone; E15 must be re-examined, not re-asserted
+#   0  both blockers reproduced
+#   1  a blocker is gone; reassess the unadapted-build assumptions
 #   2  the probe could not run (missing builder image)
 #
-# WHAT "REPRODUCE" MEANS HERE, because an earlier version of this script did not earn the word.
-# It grepped for a missing #include and printed a previously-captured loader error as literal
-# text, then called both of them reproductions. Grepping a header is evidence that a header is
-# missing; it is not evidence that compilation fails. Echoing an error message is not evidence
-# of anything at all. Both blockers below now actually run:
-#
-#   Blocker one: YugabyteDB's own server headers are compiled, by a real compiler, and the
-#                compiler's real error is shown.
-#   Blocker two: a shared object is really built against a modern glibc, really copied into the
-#                running YugabyteDB container, and really LOADed, and the loader's real refusal
-#                is shown.
-#
-# The YugabyteDB image ships NO compiler (measured: no cc, gcc or clang on PATH), so the
-# compile must happen in a builder image against headers extracted from the YugabyteDB one.
-# That is itself part of the finding: this image cannot build an extension in place either.
+# The probe compiles extracted YugabyteDB headers and asks YugabyteDB to load a shared object
+# built against modern glibc. Its baseline image has no compiler, so compilation uses a builder
+# image.
 set -euo pipefail
 
-# E15 is a DATED measurement about one third-party image, which is exactly the case a mutable
-# tag cannot carry (review-3 N9): if the tag is repointed, this stops being evidence about the
-# thing E15 measured. The version differs from E16's on purpose -- E15 measured 2025.2.4.1-b4 --
-# but it is resolved to a digest all the same.
+# Resolve the baseline tag to a digest before testing it.
 YB_IMAGE="${1:-$(./kamu-money-pg/yb/yb-image.sh yugabytedb/yugabyte:2025.2.4.1-b4)}"
 # Reused because it already carries build-essential and a modern glibc. Any Debian-with-gcc
 # image works; this one avoids a pull on a machine that has run the matrix.
@@ -42,18 +26,8 @@ WORK="$(mktemp -d)"
 
 # --- assertion machinery -----------------------------------------------------------------
 #
-# WHY THIS EXISTS. The previous version really did run both blockers -- and then reported
-# success no matter what they said. It wrapped the compiler in `|| true`, read the loader probe
-# through `head` under `set +e`, compared nothing to anything, and closed by printing "Both
-# blockers were executed" before exiting 0. That is a transcript generator, not a probe: the day
-# YugabyteDB ships the missing header or a compatible loader, it would still print the old
-# conclusion and still pass.
-#
-# The direction of the assertion is the unusual part and the reason it is spelled out here.
-# Every check below demands that something FAIL. A blocker that stops reproducing is not good
-# news to be swallowed -- it means kamu-money-core's DESIGN.md E15 is describing a world that no longer exists, and
-# the adapter-only decision it justifies has to be revisited. So "the compile succeeded" exits
-# non-zero, on purpose.
+# The assertion direction is intentionally negative: each operation must fail with its expected
+# signature. A successful operation means this baseline assumption changed.
 BLOCKERS_CONFIRMED=0
 BLOCKERS_LOST=""
 
@@ -126,10 +100,8 @@ echo "--- extracting YugabyteDB's server headers and compiling against them for 
 docker cp "$NAME:/home/yugabyte/postgres/include/server" "$WORK/server" >/dev/null
 printf '#include "postgres.h"\nint probe(void) { return 0; }\n' > "$WORK/probe.c"
 
-# `cc` is the LAST command in the container, so its status becomes the container's status and
-# `docker run`'s. Nothing is piped: a pipeline here would report the last stage's status, which
-# is how the first version of this script printed "exit status: 0" directly underneath a fatal
-# compiler error. Redirect stderr into the captured output, take `$?` on the very next line.
+# `cc` is the container's last command, so its status becomes `docker run`'s status. Avoid a
+# pipeline, merge stderr into the capture, and read `$?` immediately.
 set +e
 CC_OUTPUT="$(docker run --rm --label "kamu-money-pg.probe=${RUN_ID}" \
   -v "$WORK:/probe:ro" --entrypoint sh "$BUILDER_IMAGE" -c \
@@ -161,17 +133,14 @@ docker run --rm --label "kamu-money-pg.probe=${RUN_ID}" \
 
 echo "--- copying it into the running YugabyteDB container and making PG dlopen it ---"
 docker cp "$WORK/needs_new_glibc.so" "$NAME:/tmp/needs_new_glibc.so" >/dev/null
-# NOT `LOAD`: YugabyteDB answers that with "ERROR: LOAD not supported yet", which is a
-# different finding and would leave this blocker untested while looking like a confirmation.
+# Use `CREATE FUNCTION`, not unsupported `LOAD`, to reach the dynamic loader.
 # `CREATE FUNCTION ... LANGUAGE C` is the path an extension actually takes, and it dlopens the
 # library at creation -- before any symbol lookup or magic-block check, so a glibc mismatch
 # surfaces first, which is precisely the ordering this blocker depends on.
 #
 # `-v ON_ERROR_STOP=1` is what makes the status meaningful: without it psql reports success
 # after a failed statement, and the assertion below would rest on the message alone.
-# Streams merged INSIDE the container. The host cannot order `docker exec`'s two multiplexed
-# channels, and this capture is the evidence a blocker assertion is made from -- the loader's
-# refusal must be readable in the order it was produced, not in the order it happened to arrive.
+# Merge streams inside the container because the host cannot order multiplexed docker streams.
 # The SQL goes in as a positional argument so its embedded single quotes never meet the container
 # shell's quoting.
 set +e
@@ -192,9 +161,8 @@ assert_blocker "blocker two: a foreign-built .so is refused by YugabyteDB's load
 
 echo
 echo "--- for the record, what YugabyteDB says to LOAD itself (diagnostic, not asserted) ---"
-# Deliberately NOT a blocker assertion. `LOAD not supported yet` is a different finding, and an
-# earlier version of this probe mistook it for a confirmation of the glibc one -- which left
-# blocker two untested while looking green.
+# This diagnostic is not a blocker assertion; `LOAD not supported yet` is distinct from a glibc
+# loader refusal.
 # `head -3` makes the ordering matter even for a diagnostic: with the streams merged on the host,
 # the three lines kept could be the three that arrived first rather than the three that were
 # printed first, and the interesting one is not guaranteed to be among them.
@@ -213,13 +181,9 @@ if [ -n "$BLOCKERS_LOST" ]; then
   echo "PROBE FAILED: ${BLOCKERS_CONFIRMED} of 2 blockers reproduced."
   echo "These no longer reproduce:${BLOCKERS_LOST}"
   echo
-  echo "This is not a broken script -- it is the finding changing underneath kamu-money-core's DESIGN.md E15."
-  echo "E15 documents why kamu-money-pg cannot run on YugabyteDB and justifies serving it through"
-  echo "the phase-4 text adapters instead. If a blocker is gone, that reasoning needs to be"
-  echo "re-examined rather than re-asserted. Read the transcript above before editing E15."
+  echo "The baseline changed. Reassess the unadapted build path using the transcript above."
   exit 1
 fi
 
 echo "Both blockers CONFIRMED: reproduced and asserted, not merely executed."
-echo "kamu-money-pg is served on YugabyteDB by the phase-4 adapters instead, where money is stored"
-echo "in a type YugabyteDB already has and every arithmetic operation stays in Rust."
+echo "This does not test the adapted native build; use 'just yb-native' and 'just yb-ab' for it."

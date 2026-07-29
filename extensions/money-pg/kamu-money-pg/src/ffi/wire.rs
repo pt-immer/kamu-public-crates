@@ -58,13 +58,8 @@ fn kmoney_mixed_send(value: kmoney_mixed) -> Vec<u8> {
 /// Called only by PostgreSQL through a `RECEIVE` slot, which guarantees `fcinfo` is valid and
 /// argument 0 is a non-null `internal` pointing at a `StringInfo`.
 unsafe fn recv_payload(fcinfo: pg_sys::FunctionCallInfo, context: &str) -> Payload {
-    // A REAL check, not `debug_assert!`. fmgr guarantees `nargs` for a RECEIVE slot, so a
-    // mis-arity here is a registration or catalog mistake rather than user input -- but
-    // `debug_assert!` compiles OUT of the release build, and the release build is the one handling
-    // real money. What follows is a manual index into a flexible array, so the profile that
-    // skipped the check was the profile that turned a catalog mistake into an unchecked read.
-    // This crate has already learned that lesson once, from a residue drop-bomb that panicked in
-    // debug and merely counted in release. One integer compare, and the error is an ereport.
+    // Keep this check in release builds: the next operation indexes PostgreSQL's flexible array.
+    // A bad arity indicates a registration or catalog error, not user input.
     // SAFETY: this function's PostgreSQL contract guarantees `fcinfo` points to valid call data.
     if unsafe { (*fcinfo).nargs } < 1 {
         error!("{context}: RECEIVE called with no argument");
@@ -178,18 +173,14 @@ mod tests {
     /// An unpinned column still takes anything: typmod -1 is "no modifier", not "no currency".
     /// Binary I/O round-trips, and refuses what the text path refuses.
     ///
-    /// `send`/`recv` existed nowhere until an idiomatic review pointed out that a client
-    /// requesting binary result format — which tokio-postgres and sqlx do BY DEFAULT — could
-    /// not read this type at all. Nothing here noticed because every test in this file speaks
-    /// the text protocol.
+    /// Exercises the binary protocol used by clients such as tokio-postgres and sqlx.
     #[pg_test]
     fn the_binary_wire_round_trips_and_is_not_more_trusted_than_text() {
         // NOTE: `recv` cannot be called directly from SQL -- its argument is `internal`, which
         // has no SQL literal, and that is a deliberate PostgreSQL restriction rather than a gap
         // here. So recv is exercised the way a real binary-protocol client reaches it: the
-        // `COPY ... (FORMAT BINARY)` round trip below drives `kmoney_send` on the way out and
-        // `kmoney_recv` on the way back in. An earlier draft used `INSERT ... SELECT`, which
-        // copies internal datums and calls neither, so it proved nothing about the wire (R2-F5).
+        // `COPY ... (FORMAT BINARY)` drives `kmoney_send` and `kmoney_recv`; `INSERT ... SELECT`
+        // only copies internal datums.
 
         Spi::run("CREATE TABLE bin_io (amount kmoney)").expect("table created");
         Spi::run("INSERT INTO bin_io VALUES ('IDR -16000.50'), ('USD 0.000000000000000001')")
@@ -242,8 +233,7 @@ mod tests {
         assert_eq!(copied, 2, "both rows must survive send -> recv");
     }
 
-    /// recv is NOT more trusted than text: a binary payload whose units are out of domain is
-    /// refused, proving recv's validation branch runs on the wire (R2-F5). PostgreSQL writes the
+    /// Binary input applies the same domain validation as text input. PostgreSQL writes the
     /// COPY framing (so the file is well-formed); we corrupt only the 18-byte `kmoney` field in
     /// place -- overwriting the little-endian units and leaving the currency code valid, so it is
     /// the DOMAIN check that fires with a kamu_money_core-owned (version-stable) message.

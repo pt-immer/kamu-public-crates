@@ -128,8 +128,7 @@ pub unsafe extern "C-unwind" fn kmoney_typmod_out(fcinfo: pg_sys::FunctionCallIn
     pg_sys::Datum::from(out)
 }
 
-// The real type. `INTERNALLENGTH = 18` rather than `variable` is the whole point: no varlena
-// header, so 18 bytes on disk instead of 19. `ALIGNMENT = char` because the payload is
+// `INTERNALLENGTH = 18` avoids a varlena header. `ALIGNMENT = char` because the payload is
 // byte-arrays (align_of == 1, asserted in the macro), and `STORAGE = plain` because an 18-byte
 // value must never be considered for TOAST.
 //

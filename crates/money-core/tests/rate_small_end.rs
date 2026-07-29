@@ -1,4 +1,4 @@
-//! The small end of `Rate`, measured. (DESIGN.md C6)
+//! Precision available at the small end of `Rate`.
 //!
 //! At `SCALE = 18` a rate is a count of `1e-18`, so a rate of magnitude `1e-13` has only
 //! `1e5 = 100000` units behind it — five decimal digits of headroom, not the eighteen the
@@ -15,7 +15,7 @@ fn significant_digits(units: i128) -> u32 {
     units.unsigned_abs().checked_ilog10().map_or(0, |d| d + 1)
 }
 
-/// The headroom, per decade. This is the table C6's small-end question asked for.
+/// Significant-digit headroom per decade.
 #[test]
 fn the_significant_digits_available_at_each_magnitude() {
     // (rate magnitude as a power of ten, units behind it, significant digits)

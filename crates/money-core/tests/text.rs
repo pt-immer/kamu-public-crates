@@ -1,9 +1,8 @@
 //! The canonical text form: one trim rule, shared by `Display` and (later) the serde wire.
 //!
 //! Render at 18dp, strip trailing zeros, **stop at the currency's ISO settlement exponent**.
-//! Never round — padding is the only thing it adds, so §0.1's "display pads, never rounds"
-//! holds. Parse is liberal: any exact decimal is accepted, so the round trip is a
-//! **retraction** (`parse(render(v)) == v`) and not a bijection. (DESIGN.md C7)
+//! Never round. Parse is liberal, so `parse(render(v)) == v` is a retraction rather than a
+//! bijection.
 
 use kamu_money_core::Money;
 use kamu_money_core::advanced::domain::{DOMAIN_MAX, POW10_SCALE};
@@ -34,8 +33,8 @@ fn the_minimum_width_is_the_iso_settlement_exponent() {
 
 /// Every significant digit survives, all the way down to one canonical unit.
 ///
-/// This is the half of §0.1 that trimming could have broken: padding up to the settlement
-/// exponent is fine, but nothing may ever be dropped off the right-hand end.
+/// Padding up to the settlement exponent is allowed; dropping a significant fractional digit is
+/// not.
 #[test]
 fn trimming_never_rounds() {
     assert_eq!(usd(10_123_456_789_000_000_000).to_string(), "USD 10.123456789");
@@ -55,8 +54,7 @@ fn zero_and_sign_render_correctly() {
 
 /// Parse is LIBERAL: it accepts any exact decimal, not only the canonical spelling.
 ///
-/// That is a deliberate weakening of C7's original "bijection" claim, and it is why the
-/// property below is `parse(render(v)) == v` rather than a two-way identity.
+/// The property is `parse(render(v)) == v`, not a two-way textual identity.
 #[test]
 fn parse_accepts_non_canonical_spellings_of_the_same_value() {
     let canonical = usd(10_500_000_000_000_000_000);
@@ -97,11 +95,9 @@ fn malformed_input_is_refused_rather_than_guessed() {
     }
 }
 
-/// Excess precision is REFUSED, never silently rounded.
+/// Excess precision is refused, never silently rounded.
 ///
-/// This is the failure that killed `rust_decimal` for this crate (E2): its `from_str`
-/// silently rounded out-of-domain input and returned `Ok`. A money parser that rounds is a
-/// money parser that loses money quietly.
+/// A money parser must not turn a distinct over-precise input into an accepted value.
 #[test]
 fn excess_precision_is_refused_not_rounded() {
     assert!(Money::<USD>::from_str("USD 0.0000000000000000005").is_err());
@@ -109,11 +105,9 @@ fn excess_precision_is_refused_not_rounded() {
 }
 
 proptest! {
-    /// THE round-trip property, stated honestly as a retraction.
-    ///
-    /// `parse(render(v)) == v` for every value in the domain. The converse does NOT hold —
+    /// `parse(render(v)) == v` for every value in the domain. The converse does not hold:
     /// `render(parse(s)) == s` fails for "USD 10.5", which parses fine but renders as
-    /// "USD 10.50" — which is precisely why C7's "bijection" was downgraded.
+    /// "USD 10.50".
     #[test]
     fn prop_parse_of_render_is_the_identity(units in -DOMAIN_MAX..=DOMAIN_MAX) {
         let m = usd(units);
@@ -128,7 +122,7 @@ proptest! {
         prop_assert_eq!(Money::<JPY>::from_str(&m.to_string()).unwrap(), m);
     }
 
-    /// Rendering is CANONICAL: re-rendering a parsed canonical string changes nothing.
+    /// Re-rendering a parsed canonical string changes nothing.
     #[test]
     fn prop_render_is_idempotent_through_a_parse(units in -DOMAIN_MAX..=DOMAIN_MAX) {
         let once = usd(units).to_string();
@@ -142,8 +136,7 @@ proptest! {
 //
 // Format `:4!c//3!a/3!a/15d`, e.g. `:92B::EXCH//GBP/USD/1,619` meaning 1,00 GBP = 1,619 USD.
 // First code is the BASE, second is the QUOTE. One deviation, documented: the decimal
-// separator is a POINT, not SWIFT's comma, because C7's whole reason for using a string is
-// exact decimal transport into JavaScript and `parseFloat("1,619")` is `1`.
+// separator is a point, not SWIFT's comma, for exact decimal transport into JavaScript.
 // ---------------------------------------------------------------------------------------
 
 use kamu_money_core::Rate;
@@ -197,8 +190,7 @@ fn a_rate_refuses_malformed_text() {
 
 proptest! {
     #[test]
-    /// Positive-only since H1 (2026-07-27): a rate is a price. The round trip is the property
-    /// under test, and it is unchanged -- only the set of values a `Rate` can hold moved.
+    /// Rates are strictly positive.
     #[test]
     fn prop_rate_parse_of_render_is_the_identity(units in 1..=DOMAIN_MAX) {
         let r = Rate::<USD, IDR>::try_from_units(units).unwrap();
@@ -210,8 +202,7 @@ proptest! {
 // The runtime-currency codec: `text::render` / `text::parse` / `text::parse_amount`.
 //
 // A PostgreSQL type cannot be generic, so `kamu-money-pg` cannot reach `Money<C>`'s `Display` or
-// `FromStr` and would otherwise reimplement the trim rule (C9 forbids exactly that — an
-// adapter is thin over ONE codec). These entry points exist so the database and the Rust
+// `FromStr` and would otherwise reimplement the trim rule. These entry points ensure the database and the Rust
 // program share an implementation rather than a specification. What follows tests the
 // property that makes the sharing worth anything: the two paths cannot disagree.
 // ---------------------------------------------------------------------------------------
@@ -326,10 +317,8 @@ proptest! {
         prop_assert_eq!(text::render(units, Iso4217::USD).unwrap(), usd(units).to_string());
     }
 
-    /// **Whatever the renderer accepts, the parser must accept back.** Sampled across the
-    /// FULL `i128` range, not just the domain — that is the point. `render` used to take any
-    /// `i128` and emit canonical-looking text for values `parse` refuses, so the pair looked
-    /// total and was not. Now the two agree on their input set by construction.
+    /// Whatever the renderer accepts, the parser must accept back, across the full `i128`
+    /// input range.
     #[test]
     fn prop_render_never_emits_text_its_own_parser_refuses(
         units in i128::MIN..=i128::MAX,

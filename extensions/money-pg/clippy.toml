@@ -1,23 +1,7 @@
 # Clippy configuration for the PostgreSQL extension lane.
-#
-# WHY THIS EXISTS SEPARATELY. clippy walks UP from the crate looking for a
-# `clippy.toml`, so without one here it finds the repository root's and lints this
-# lane against the PUBLISHED crates' MSRV:
-#
-#     warning: the MSRV in `clippy.toml` and `Cargo.toml` differ;
-#              using `1.94.0` from `clippy.toml`
-#
-# That is not merely noise. This lane's floor is 1.96 because pgrx 0.19.1 requires
-# it, and linting at 1.94 would flag a legitimate use of anything newer as an
-# MSRV violation -- an error about a rule this workspace does not hold to.
-#
-# Keep it in step with `rust-version` in extensions/money-pg/Cargo.toml. They are
-# two statements of one fact, and clippy says so out loud when they drift, which is
-# how this was found.
+# Clippy searches parent directories, so this file prevents the lane from
+# inheriting the published workspace's 1.94 MSRV. Keep it aligned with Cargo.toml.
 msrv = "1.96"
 
-# A clippy.toml REPLACES the one above it rather than merging, so the root's list
-# is restated here. Same reasoning as there: these are product and standard names,
-# not code identifiers, and backticking a proper noun claims the reader can type it
-# into a compiler. This crate's documentation names PostgreSQL on nearly every page.
+# A child clippy.toml replaces rather than merges the parent configuration.
 doc-valid-idents = ["IEEE", "ISO", "MurmurHash3", "MurmurHash3's", "PostgreSQL", "PostgreSQL's", ".."]

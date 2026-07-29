@@ -30,8 +30,7 @@ SELECT 'cross_eq=' || ('USD 1.00'::kmoney = 'IDR 1.00'::kmoney)
 SELECT 'IDR 1.00'::kmoney > 'USD 1.00'::kmoney;
 
 \echo -- there_is_no_cast_to_numeric
--- Load-bearing rather than an omission: a bare `numeric` puts every silently-rounding
--- PostgreSQL operator back in scope (E9). The text form is the egress.
+-- A numeric cast would expose PostgreSQL's silently rounding operators. Text is the egress.
 SELECT ('USD 1.00'::kmoney)::numeric::text;
 
 \echo == CASE COMPLETE: 11-compare ==

@@ -9,18 +9,15 @@ use core::marker::PhantomData;
 /// A monetary quantity: `units` counts `10^-18` of a currency unit.
 ///
 /// Scale is **fixed at 18 and structural** — it is not a field, so it cannot drift.
-/// Invariant: `|units| <= DOMAIN_MAX`. The raw `i128` is never publicly reachable;
-/// a caller holding one could reintroduce an unchecked construction path. (DESIGN.md C1)
+/// Invariant: `|units| <= DOMAIN_MAX`. Raw units are read-only; reconstruction
+/// requires a checked constructor.
 pub struct Money<C: StaticCurrency> {
     units: i128,
-    // The currency lives entirely in the type. `C` is a ZST, so this costs nothing and a
-    // `Money<USD>` is exactly an i128. There is no runtime tag because there is no runtime
-    // currency — see `currency.rs` for why that variant was deleted. (DESIGN.md C1, C3)
+    // The currency marker is zero-sized, so Money<C> has the width of i128.
     _c: PhantomData<C>,
 }
 
-// Hand-written, NOT derived: `#[derive(Clone)]` emits `impl<C: CurrencyRepr + Clone>`,
-// bounding C when the bound belongs on C::Tag. (DESIGN.md E11)
+// Hand-written to avoid adding unnecessary trait bounds to the marker type.
 impl<C: StaticCurrency> Clone for Money<C> {
     fn clone(&self) -> Self {
         *self
@@ -28,28 +25,15 @@ impl<C: StaticCurrency> Clone for Money<C> {
 }
 impl<C: StaticCurrency> Copy for Money<C> {}
 impl<C: StaticCurrency> PartialEq for Money<C> {
-    // Only `units`: two `Money<C>` are the same currency BY CONSTRUCTION, so there is nothing
-    // else to compare. "Zero dollars is not zero rupiah" became a type error rather than an
-    // equality result when the runtime-currency variant was deleted.
+    // Two Money<C> values have the same currency by construction.
     fn eq(&self, o: &Self) -> bool {
         self.units == o.units
     }
 }
 impl<C: StaticCurrency> Eq for Money<C> {}
 
-// Ordering and hashing read `units` alone, exactly as `PartialEq` does, so `Hash` agrees with
-// `Eq` and `Ord` agrees with both — the consistency the standard library requires of anything
-// used as a map key or sorted.
-//
-// There is NO cross-currency question here, and that is the whole reason these are safe to
-// provide. `Money<USD>` and `Money<IDR>` are different types, so `a < b` can only ever compare
-// two amounts of the same currency; the comparison is total and means what it looks like.
-// (DESIGN.md F2 leaves ordering open for the SQL type, where a column CAN hold mixed
-// currencies and "which is larger" genuinely has no answer. That question does not reach
-// Rust, and the two must not be conflated.)
-//
-// Hand-written rather than derived for the reason given above `Clone`: a derive would bound
-// `C: Ord`/`C: Hash`, and `C` is a ZST marker that need not be either.
+// Ordering and hashing use units alone. Cross-currency comparison cannot type-check.
+// Manual impls avoid unnecessary Ord/Hash bounds on the marker.
 impl<C: StaticCurrency> PartialOrd for Money<C> {
     fn partial_cmp(&self, o: &Self) -> Option<core::cmp::Ordering> {
         Some(self.cmp(o))
@@ -131,15 +115,7 @@ impl<C: StaticCurrency> Money<C> {
     /// Construct from whole currency units (for example, `10` means
     /// `10.000000000000000000`).
     ///
-    /// Takes `i128` rather than a narrower integer because C10 says accept FROM lower precision
-    /// freely and never narrow a parameter. Callers holding an `i8`/`i16`/`i32`/`i64` widen for
-    /// free with `i128::from(x)`.
-    ///
-    /// At `SCALE = 12` there was a second, sharper reason: the domain permitted ~1e24 major
-    /// units, so an `i64` parameter left the top 5.04 orders unreachable and the `Option` could
-    /// never be `None`. At `SCALE = 18` the major range is ~1e18, which `i64::MAX` covers
-    /// entirely, so that argument no longer applies — a reminder that a bound derived from a
-    /// constant silently stops being true when the constant moves.
+    /// Takes `i128` so callers never narrow before entering the checked domain.
     ///
     /// # Errors
     ///
@@ -170,21 +146,14 @@ mod tests {
         assert!(Money::<USD>::try_from_units(i128::MIN).is_err(), "i128::MIN must not sneak in");
     }
 
-    /// The compile-time currency is FREE: a `Money<USD>` is exactly an `i128`.
-    ///
-    /// DESIGN.md E8 measured `Money<Dyn>` at 32 bytes — double, because `i128`'s 16-byte
-    /// alignment padded a 2-byte tag out to a full 16. That variant is gone, so the 2x is no
-    /// longer a cost anyone pays. This pins the property that outlived it.
+    /// The compile-time currency is zero-sized.
     #[test]
     fn the_compile_time_currency_costs_nothing() {
         assert_eq!(size_of::<Money<USD>>(), 16);
         assert_eq!(size_of::<Money<USD>>(), size_of::<i128>());
     }
 
-    /// 10.5 and 10.500 are literally the same `i128` — normalization is not hard to get right
-    /// here, it does not exist. Demonstrating that requires reaching the value by DIFFERENT
-    /// routes; an earlier version of this test built it twice the same way and asserted
-    /// equality, which any `Eq` impl passes. (DESIGN.md C1)
+    /// Different construction routes produce the same canonical units.
     #[test]
     fn the_same_amount_reached_by_different_routes_is_the_same_value() {
         let direct = Money::<USD>::try_from_units(10_500_000_000_000_000_000).unwrap();
@@ -207,13 +176,7 @@ mod tests {
         assert_eq!(Money::<USD>::ZERO.units(), 0);
     }
 
-    /// Zero dollars is NOT zero rupiah — and that is now a TYPE error, not an assertion.
-    ///
-    /// This used to compare two `Money<Dyn>` and check that equality included the currency.
-    /// With the runtime variant gone, `Money::<USD>::ZERO == Money::<IDR>::ZERO` does not
-    /// compile at all, which is the stronger form of the same claim and is pinned by
-    /// `tests/ui/cross_currency_add`. What is left to test here is the currency-blind
-    /// question, which still has its own answer.
+    /// `is_zero` inspects magnitude; the generic type retains currency identity.
     #[test]
     fn is_zero_asks_only_about_magnitude() {
         assert!(Money::<USD>::ZERO.is_zero());
@@ -225,7 +188,7 @@ mod tests {
     /// overflow.
     #[test]
     fn from_major_spans_the_domain_and_rejects_beyond_it() {
-        // DERIVED from the constants, never a literal, precisely so it survives a scale change.
+        // Derived from the domain constants so the test follows a scale change.
         const MAX_MAJOR: i128 = DOMAIN_MAX / crate::domain_impl::POW10_SCALE; // 10^18 - 1 at SCALE 18
 
         assert!(Money::<USD>::try_from_major(MAX_MAJOR).is_ok(), "top of the domain");

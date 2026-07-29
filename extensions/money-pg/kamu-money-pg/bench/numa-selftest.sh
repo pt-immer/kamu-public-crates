@@ -3,11 +3,7 @@
 #
 #   kamu-money-pg/bench/numa-selftest.sh
 #
-# WHY THIS EXISTS. `numa_verify` is the only thing standing between "this run was pinned" and a
-# transcript that says so without it being true -- and until 2026-07-26 it READ the CPU mask and
-# then compared only the memory one, so a container whose memory landed on the requested node and
-# whose CPUs did not printed `verified` under documentation claiming both. A verifier that reports
-# success for a half-applied pin is worse than no verifier: the number it blesses looks controlled.
+# Controls prove that `numa_verify` requires both CPU and memory masks.
 #
 # The comparison is a pure function precisely so these controls need neither a two-socket machine
 # nor a container that fails in the right way. Nothing here reads /sys, /proc or docker.
@@ -55,20 +51,17 @@ else
     bad "equivalent masks were reported as a mismatch (rc=$rc)"
 fi
 
-# CPU-ONLY MISMATCH. The exact case the old verifier passed: memory on the requested node, CPUs
-# somewhere else. cgroup v2 produces it by intersecting a child cpuset with its parent slice's
-# effective set and falling back to the parent when the intersection is empty.
+# CPU-only mismatch.
 rc=0; numa_masks_agree "0-3" "1" "8-11" "1" || rc=$?
 if [ "$rc" -eq 1 ]; then
     ok "CPUs on the wrong node are refused even when the memory node is right"
 elif [ "$rc" -eq 0 ]; then
-    bad "a CPU-only mismatch was reported as a verified pin -- this is the 2026-07-26 defect"
+    bad "a CPU-only mismatch was reported as a verified pin"
 else
     bad "a CPU-only mismatch was reported as a MEMORY mismatch (rc=$rc), so the message would lie"
 fi
 
-# MEMORY-ONLY MISMATCH, which the old verifier did catch. Kept so that fixing the CPU half cannot
-# quietly cost the memory half.
+# Memory-only mismatch.
 rc=0; numa_masks_agree "0-3" "1" "0-3" "0" || rc=$?
 if [ "$rc" -eq 2 ]; then
     ok "memory on the wrong node is refused even when the CPU set is right"
@@ -76,7 +69,7 @@ else
     bad "a memory-only mismatch returned $rc, expected 2"
 fi
 
-# BOTH WRONG must still refuse, and must not depend on which check runs first.
+# Both masks wrong.
 rc=0; numa_masks_agree "0-3" "1" "8-11" "0" || rc=$?
 if [ "$rc" -ne 0 ]; then
     ok "both masks wrong is refused"
@@ -84,7 +77,7 @@ else
     bad "a container pinned to neither the requested CPUs nor its memory was verified"
 fi
 
-# A SUBSET IS NOT THE NODE. Half the node's CPUs is a different measurement, not a partial success.
+# A subset is not the requested node.
 rc=0; numa_masks_agree "0-3" "1" "0-1" "1" || rc=$?
 if [ "$rc" -eq 1 ]; then
     ok "a subset of the node's CPUs is refused, not accepted as close enough"

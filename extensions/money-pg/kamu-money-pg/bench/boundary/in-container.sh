@@ -20,9 +20,7 @@ gcc -O2 -fPIC -shared \
     -I"$("$BIN/pg_config" --includedir-server)" \
     -o /tmp/c_noop.so /tmp/c_noop.c
 
-# `--release`, for the reason spelled out at length in ../in-container.sh: `cargo pgrx install`
-# defaults to DEBUG, and E20's entire boundary table was once an unoptimised build reported as
-# the type's cost. 45x.
+# `cargo pgrx install` defaults to debug, which is invalid for a performance comparison.
 #
 # `boundary-probe` is what puts rs_noop and rs_noop_kmoney into the extension. probe.sql refuses
 # to print a table if they are missing, so forgetting this flag fails loudly rather than

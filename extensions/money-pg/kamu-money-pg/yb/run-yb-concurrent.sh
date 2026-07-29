@@ -3,22 +3,14 @@
 #
 #   kamu-money-pg/yb/run-yb-concurrent.sh [yb-image] [artifact-dir] [workers] [transfers-each]
 #
-# P0.3 of the readiness plan (gap G4). Nothing in this repository had ever run two sessions at
-# once, on any engine. That matters more on YugabyteDB than on PostgreSQL: the transaction layer
-# is DocDB, not PostgreSQL's, so snapshot semantics, conflict detection and the retry contract are
-# a different implementation from the one the in-backend tests exercise -- and they are the layer a
-# double-entry ledger's correctness rests on.
+# YugabyteDB's DocDB transaction layer owns snapshot semantics, conflict detection, and retry
+# behavior, so in-backend PostgreSQL tests cannot establish this contract.
 #
-# THE CENTRAL ASSERTION IS CONSERVATION. N workers move money between accounts concurrently; each
-# transfer debits one row and credits another inside one BEGIN..COMMIT. Afterwards the sum over
-# every account must equal the seeded total EXACTLY -- computed with kmoney_sum, which accumulates
-# in I256 and so cannot lose a unit to its own arithmetic. A torn 18-byte payload, a lost update,
-# or a half-applied distributed transaction all show up as a total that moved.
+# N workers transfer money between accounts. The exact final sum must equal the seed; a torn
+# payload, lost update, or half-applied transaction changes that total.
 #
-# AND A POSITIVE CONTROL FOR THE RETRY PATH. YugabyteDB surfaces retryable errors PostgreSQL does
-# not, and a run that happened to hit zero conflicts would report green while proving nothing
-# about them. So one probe DELIBERATELY forces a serialization failure and fails if it does not
-# get one -- the same reason assert-battery-selftest.sh exists.
+# A positive control forces a serialization failure so a conflict-free run cannot leave retry
+# handling untested.
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
@@ -71,8 +63,7 @@ yb_sql 0 -c "CREATE TABLE ledger (seq bigserial PRIMARY KEY, account_id int NOT 
 
 # The ROW AGGREGATE, not `kmoney_sum(VARIADIC array_agg(...))`. This is the path an application
 # actually writes to total a ledger column, so it is the path that should be under concurrent load
-# here. The array_agg form materialises every row first and was only ever a stand-in for the
-# aggregate R2-F4 removed; R2-F4b brought the aggregate back with a wide transition state.
+# here. The array_agg form materialises every row first.
 #
 # The ledger-leg check further down deliberately KEEPS the variadic form, so conservation is
 # cross-checked by two different entry points rather than by one function agreeing with itself.

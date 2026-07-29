@@ -1,67 +1,15 @@
-//! A hash of the canonical payload whose value is fixed forever, not by a toolchain.
+//! Stable hash of the canonical money payload.
 //!
-//! # Why this exists at all
+//! Version 1 applies 64-bit FNV-1a, then MurmurHash3 `fmix64`, to little-endian fields in this
+//! order: ISO numeric `code`, then canonical `units`. This differs from `kamu-money-pg` storage
+//! order (`units`, then `code`). Field order, byte order, constants, and finalizer are durable:
+//! persisted shard or cache keys require a version bump and re-hash if any changes.
 //!
-//! `kamu-money-pg` exposes `kmoney_hash` -- a stable hash of the canonical payload. There is no hash
-//! index over `kmoney` anymore (the OLTP reframe removed the opclass), but the value stays a
-//! durable contract: the sharpest byte-exactness signal in the ABI battery, and anything that
-//! *persists* it (a shard key, a durable cache key, a future hash index) keeps the value
-//! computed when a row was written. If the function ever returns a different number for the
-//! same money, every stored bucket points somewhere the lookup no longer looks — and the
-//! symptom is not an error at startup or during migration. It is a query quietly returning
-//! fewer rows than exist.
-//!
-//! Both support functions previously used `std::collections::hash_map::DefaultHasher`, whose
-//! own documentation says:
-//!
-//! > The internal algorithm is not specified, and so it and its hashes should not be relied
-//! > upon over releases.
-//!
-//! That is not a latent risk that might one day bite. It is the standard library stating in
-//! advance that it may change, under a database feature whose correctness depends on it not
-//! changing.
-//!
-//! # Why swapping the hasher is only half of it
-//!
-//! Feeding a stable algorithm through the `Hash` trait leaves the bug in place.
-//! `Hasher::write_i128` and its siblings emit **native-endian** bytes, so an identical
-//! algorithm still produces different hashes on a big-endian machine: a streaming replica or a
-//! dump restored on another architecture would disagree with the index it inherited.
-//!
-//! So this function takes the fields directly and serialises them itself, little-endian, stated.
-//! Each field is encoded exactly as `kamu-money-pg` encodes it on disk, which is what makes the
-//! hash a function of the *stored value* rather than of the machine reading it.
-//!
-//! **The ORDER is this hash's own, and it is NOT the storage layout.** Version 1 hashes `code`
-//! and then `units`; the 18-byte on-disk payload is `units` and then `code`. Both are
-//! little-endian and both are exact, so the two agree about every field and differ only in
-//! sequence. A second implementation that hashes the storage payload verbatim will **not**
-//! reproduce version 1 — hash the two fields in the order stated here. This paragraph exists
-//! because the module previously called them "the same bytes", which they are not.
-//!
-//! # The algorithm, so it can be reimplemented without this crate
-//!
-//! FNV-1a (64-bit) over the payload bytes, then MurmurHash3's `fmix64` finaliser.
-//!
-//! FNV-1a alone diffuses its last-written bytes poorly, which matters more here than it looks:
-//! money at scale 18 clusters hard. Every amount a 2-decimal currency can express is a multiple
-//! of 10^16, so a real column holds values whose low fourteen digits are always zero and whose
-//! neighbours differ in very few bytes. `fmix64` is three
-//! xor-shift-multiply rounds with published constants and gives full avalanche, so those
-//! neighbours land in unrelated buckets. Both algorithms are public, constant, and short enough
-//! to reimplement from this comment — which is the test of whether a format is really specified.
-//!
-//! Field order is part of the contract: **currency code first, then units.** That matches the
-//! order equality compares them in -- the agreement any two consistent hashers of the same
-//! value must share.
+//! `DefaultHasher` and integer [`core::hash::Hash`] encoding are unsuitable because their
+//! algorithm or native-endian input is not a stable storage contract.
 
-/// Version of the hash contract. Bump ONLY alongside a re-hash of every store that persisted the
-/// old values.
-///
-/// Not decoration. If the function below ever returns different values, every store that
-/// persisted the old ones is silently wrong, so the change has to arrive with an
-/// explicit operator instruction rather than as a routine refactor. This constant exists so
-/// that a diff touching this file cannot be reviewed as cosmetic.
+/// Hash contract version. Changing hash output requires a version bump and re-hash of persisted
+/// values.
 pub const STABLE_HASH_VERSION: u32 = 1;
 
 /// FNV-1a 64-bit offset basis, per the FNV specification.
@@ -71,9 +19,7 @@ const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
 /// Hash the canonical payload of a money value: ISO numeric code, then canonical units.
 ///
-/// Stable across toolchains, releases, architectures and endiannesses — by construction rather
-/// than by observation. See the module docs for the algorithm and for why it is spelled out
-/// here instead of delegated to `Hash`.
+/// Stable across toolchains, releases, architectures, and endiannesses.
 ///
 /// Takes the two fields rather than a [`crate::Money`] because the caller that needs it is
 /// `kamu-money-pg`, whose type is not generic and learns its currency at run time. Same reasoning as
@@ -83,14 +29,9 @@ const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 pub fn stable_hash(code: u16, units: i128) -> u64 {
     let mut h = FNV_OFFSET_BASIS;
 
-    // Explicit little-endian, NOT `to_ne_bytes`: the hash must be a function of the stored value
-    // rather than of the machine reading it. Each field is encoded as kamu-money-pg encodes it —
-    // but the ORDER here (code, then units) is this hash's own, and is NOT the on-disk layout,
-    // which is units then code. See the module docs.
+    // Hash order is code then units; storage order is units then code.
     for byte in code.to_le_bytes().into_iter().chain(units.to_le_bytes()) {
-        // `wrapping_mul` because FNV is DEFINED modulo 2^64 — this is the algorithm, not a
-        // concession to `clippy::arithmetic_side_effects`. A plain `*` would panic in debug on
-        // the first byte that overflows, which is nearly all of them.
+        // FNV multiplication is defined modulo 2^64.
         h ^= u64::from(byte);
         h = h.wrapping_mul(FNV_PRIME);
     }
@@ -110,14 +51,8 @@ const fn fmix64(mut h: u64) -> u64 {
 
 /// Fold a 64-bit hash into the `int4` a PostgreSQL hash support function must return.
 ///
-/// XOR of the two halves, so every input bit still reaches the result. Truncating instead would
-/// discard exactly the bits `fmix64` just worked to spread.
-///
-/// The byte-array route rather than `as`: it avoids the banned cast, and it is endian-neutral
-/// for a reason worth stating — which half of `to_ne_bytes` is the high one differs by
-/// architecture, but XOR is commutative, so `hi ^ lo` is the same number either way. The final
-/// `from_ne_bytes` reinterprets `u32` as `i32` on one machine, which round-trips whatever order
-/// it used.
+/// XORs both halves so every input bit contributes. XOR commutativity makes the native-byte
+/// implementation endian-neutral.
 #[must_use]
 pub const fn fold_to_i32(hash: u64) -> i32 {
     let b = hash.to_ne_bytes();
@@ -132,16 +67,7 @@ mod tests {
     use crate::domain_impl::DOMAIN_MAX;
     use std::collections::BTreeSet;
 
-    /// Golden vectors. The whole point of the module.
-    ///
-    /// PROVENANCE, because it decides what this test is worth: these numbers were computed by a
-    /// SEPARATE Python implementation written from the module docs above, then confirmed
-    /// against this code — not read out of this code and pinned. So they check two things at
-    /// once: that the value never changes, and that the algorithm really is the FNV-1a+fmix64
-    /// the docs claim, since an independent reimplementation reproduced it.
-    ///
-    /// That second property is the one a self-blessed golden vector cannot give. If this file
-    /// silently stopped being FNV-1a, a vector captured from its own output would follow it.
+    /// Golden vectors computed independently from the documented algorithm.
     #[test]
     fn the_hash_of_a_known_payload_never_changes() {
         let vectors: &[(u16, i128, u64)] = &[
@@ -175,13 +101,7 @@ mod tests {
         assert_ne!(stable_hash(840, 42), stable_hash(840, 43));
     }
 
-    /// Money clusters. Every amount a 2-decimal currency can actually express is a multiple of
-    /// 10^16 at this scale, so real columns hold values whose low fourteen digits are always
-    /// zero. Without the finaliser those neighbours would share most of their bits and crowd
-    /// into adjacent buckets — a hash index that degrades toward a scan.
-    ///
-    /// Both figures below are MEASURED against the Python oracle, not predicted: 64 consecutive
-    /// cent values produce 64 distinct folded hashes covering all 16 low-bit buckets.
+    /// Consecutive cent values remain distinct and cover every four-bit bucket.
     #[test]
     fn neighbouring_amounts_do_not_land_in_neighbouring_buckets() {
         let folded: Vec<i32> =
@@ -206,23 +126,11 @@ mod tests {
     fn folding_keeps_both_halves() {
         assert_eq!(fold_to_i32(0x0000_0000_0000_0001), 1);
         assert_eq!(fold_to_i32(0x0000_0001_0000_0000), 1);
-        // Two values differing ONLY in the high half must not fold to the same number.
+        // A high-half difference must affect the result.
         assert_ne!(fold_to_i32(0x0000_0000_dead_beef), fold_to_i32(0xffff_ffff_dead_beef));
     }
 
-    /// The regression that started this: nothing in the tree may reach for the unstable hasher
-    /// again. A comment saying "do not use `DefaultHasher`" is not enforcement.
-    ///
-    /// ROOT DISCOVERY WALKS ANCESTORS, and that is not incidental. This crate used to sit at a
-    /// repository root, where its manifest's immediate parent WAS the workspace root. Under
-    /// `crates/money-core/` that parent is `crates/`, which has no `Justfile` — so the original
-    /// `.parent()` plus marker check returned early and the test passed while inspecting
-    /// nothing. Walking until the marker is found survives the next relocation too.
-    ///
-    /// THE CRATE LIST IS READ FROM THE LAYOUT, not named. It used to enumerate
-    /// `kamu-money-{core,pg,iso}`, none of which are directory names here, so even a repaired
-    /// root discovery would have scanned three paths that do not exist. Reading `crates/`
-    /// covers whatever the workspace actually contains, including members added later.
+    /// Scan every crate under the discovered repository root for unstable hashers.
     #[test]
     fn no_source_file_reaches_for_the_unstable_hasher() {
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -239,10 +147,7 @@ mod tests {
             };
             for entry in entries.flatten() {
                 let path = entry.path();
-                // Split so the needle cannot be spelled in this file: written whole, the
-                // literal below matches THIS source and the guard reports itself as an
-                // offender. `concat!` joins at compile time, leaving no contiguous copy in
-                // the bytes on disk.
+                // Split the needle so the guard does not report its own source.
                 let needle = concat!("DefaultHasher", "::new");
                 if path.extension().is_some_and(|e| e == "rs")
                     && let Ok(text) = std::fs::read_to_string(&path)
@@ -255,9 +160,7 @@ mod tests {
             }
         }
 
-        // POSITIVE CONTROL. Without it the only difference between "nothing offends" and
-        // "nothing was looked at" is which of them is true, and this guard has already been
-        // silently green once for exactly that reason.
+        // Positive control for repository discovery.
         assert!(
             scanned > 0,
             "the hasher guard read no source files at all — root discovery or the crates/ \

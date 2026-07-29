@@ -1,141 +1,181 @@
-# kamu-money-pg — Extension Lane Contract
+# kamu-money-pg — extension lane contract
 
-**Status:** `kmoney` as a native PostgreSQL type (C8), green on PostgreSQL 15–18, native and
-byte-exact on YugabyteDB (E16). Open items in §6.
-**Toolchain:** edition 2024, Rust 1.96 — pgrx 0.19.1's minimum and the
-continuously tested floor.
+`extensions/money-pg` is an excluded Cargo workspace containing the `kmoney`
+pgrx extension and its database validation harness. It implements the
+PostgreSQL side of
+[`kamu-money-core` C8](../../crates/money-core/DESIGN.md#c8--postgresql-boundary).
 
-> **Scope.** The workspace layout (§3), the test contract (§4) and the open items (§6). The
-> classification, evidence base, contracts and rejected alternatives describe the money scalar and
-> live with it, in [`crates/money-core/DESIGN.md`](../../crates/money-core/DESIGN.md).
->
-> Section numbers are preserved on both sides so every `C` and `E` citation keeps resolving. `E21`
-> is defined here — it is a property of the extension's build. Every other `E` and `C` this lane
-> cites (`E9`, `E12`–`E18`, `E20`, `C8`–`C10`) is defined in that document. Checked per identifier.
->
-> §5 travelled with the scalar. §7 was a phasing plan whose every phase is done, and a completed
-> plan is not a contract; it is not carried.
+Current support:
 
----
+- PostgreSQL 15, 16, 17, and 18;
+- YugabyteDB at the digest recorded in
+  [`YB-PINNED.txt`](kamu-money-pg/yb/YB-PINNED.txt);
+- Edition 2024 and Rust 1.96;
+- pgrx 0.19.1 through the `pt-immer/pgrx-yugabytedb` fork.
 
-## 3. Workspace
-
-pgrx requires a `cdylib`, which cannot be a library crate — so the extension is its own package,
-and this lane is its own Cargo workspace:
+## Workspace boundary
 
 ```text
 extensions/money-pg/
-  kamu-money-pg/    pgrx extension -> kmoney   (cdylib)
-  hygiene/          repository guards + safe payload harness; no pgrx
+├── Cargo.toml             nested workspace, patch, profiles, MSRV
+├── Cargo.lock             lane-only dependency graph
+├── deny.toml              lane-only advisory and license policy
+├── hygiene/               pgrx-free structural guards and payload tests
+└── kamu-money-pg/         pgrx cdylib, SQL cases, Docker and YB harness
 ```
 
-`kamu-money-core` is **not** a member. It is a published crate in the main workspace at
-`crates/money-core`, and this lane depends on it by version. Host recipes inject its checkout path
-on the command line. Container recipes pass Cargo's normalized package as a small named context,
-keeping this lane as the primary context. The lane is separate because `[patch.crates-io]` is
-root-only, `panic = "unwind"` is honoured only at a workspace root, and pgrx needs a higher MSRV
-than the published crates.
+The lane is excluded from the repository root because Cargo honors
+`[patch.crates-io]` and profiles only at a workspace root. Adding the pgrx fork
+to the public workspace would also put git dependencies and PostgreSQL backend
+features into the lockfile and audit surface of nine unrelated crates.
 
-**The Cargo name and the SQL name are chosen independently, and both are deliberate.**
+`kamu-money-core` remains a version dependency, never a manifest path.
+Developer and ordinary container tests inject the local normalized package.
+`gate-pg-release` disables that patch and proves registry resolution.
 
-| name | spelling | why |
-|---|---|---|
-| Cargo package, directory | `kamu-money-pg` | the published identity, under the `kamu-` prefix with its siblings |
-| `kmoney.control`, extension | `kmoney` | `cargo-pgrx` derives `extname` from the control file's **stem**, never from the package name (`command/get.rs:88-106`, read from the 0.19.1 source). The SQL name is therefore free, and is chosen to need no double-quoting |
-| `[lib] name`, `kmoney.so`, `module_pathname` | `kmoney` | set explicitly rather than inherited, so all three SQL-side artefacts carry one name |
+The lane is `publish = false`. `kamu-money-pg` is a package and release
+identity, but not a crates.io artifact: Cargo packages do not carry the root
+pgrx patch needed by its `yb-pg15` feature.
 
-**A type name is the one part of an extension that cannot be revised after deployment** without a
-dump and restore. `rmoney_t` became `rmoney` became `kmoney` while nothing was deployed; that
-freedom is spent.
+## Names
 
----
+| Surface | Name | Reason |
+| --- | --- | --- |
+| Cargo package and directory | `kamu-money-pg` | Repository and release identity |
+| Control file and SQL extension | `kmoney` | Unquoted PostgreSQL identifier |
+| Library, shared object, `module_pathname` | `kmoney` | One SQL-side artifact name |
+| Strict SQL type | `kmoney('USD')` | Currency pinned through typmod |
+| Heterogeneous SQL type | `kmoney_mixed` | Currency carried per value; no arithmetic |
 
-## 4. Test Contract
+The control-file stem determines the extension name. Treat SQL type names and
+the 18-byte storage layout as migration-sensitive public interfaces.
 
-Each test pins a claim. A claim without a test is a rumour. The rows below are this lane's; the
-scalar's own contract and the tests pinning it are documented with `kamu-money-core`.
+## Layering
 
-| Test | Pins |
-|---|---|
-| `proptest` vs real PostgreSQL (testcontainers): `decode(encode(m)) == m` | C8, C9 |
-| `proptest` vs real PostgreSQL: `pg_sum(rows) == rust_sum(rows)`, bit-exact | E9's exactness claim |
-| Every portable `#[pg_test]` assertion runs against live YugabyteDB as a SQL case, byte-identical to a hand-authored golden; exceptions are named and justified in `tests/pg_regress/COVERAGE.md` | E17 — the YB evidence surface is the whole contract, not one script |
-| The planner really **splits** `sum(kmoney)` into `Partial`/`Finalize`, and the two plans agree over domain-edge rows | R2-F4b — a `CREATE AGGREGATE` that silently forbids partial aggregation passes every hand-driven test |
-| Every `#[pg_test]` has a row in `tests/pg_regress/COVERAGE.md`, or an explicit `NOT-PORTABLE: <reason>` | E17 — a skipped test counted as a pass is worse than an absent one; checked offline, in `gate-offline` |
-| The case-suite oracle rejects 14 realistic corruptions, each **for its own reason** — including a client that died with perfect bytes, and a case with no golden | E17 — an oracle nothing checks certifies whatever the code currently does |
-| The stock-PG15 reference runs the **same cases against the same goldens** | E17 — makes a YB failure a divergence rather than a question about the port's fidelity |
-| `CREATE EXTENSION` on **one** node of a 3-node cluster; the type usable, and the pinned hashes identical, from **every** node | E18 — the DDL propagates; the shared library does not |
-| A node with `kmoney.so` removed fails **loudly** rather than diverging | E18 — the negative control without which every cross-node probe is vacuous |
-| A value written on one node reads back byte-identically on the others, and survives a forced **tablet split** | E18 — asserted as ordered-text md5 + hash fold + row count, because a count or a sum survives one corrupted payload |
-| Concurrent balanced double-entry transfers across 3 nodes **conserve the total exactly**, and the ledger's legs cancel to zero | E18 — the invariant this type exists for, on a transaction layer that is DocDB rather than PostgreSQL's |
-| Deliberate `SERIALIZABLE` contention **must** produce a retryable error | E18 — the positive control; otherwise "conservation under concurrency" never exercised the conflict path |
-| The three shimmed ABI symbols still have the expected shape in this image's headers, checked **before** patching | E19 — converts a YugabyteDB upgrade from a production incident into a build failure |
-| The YugabyteDB tag still resolves to the digest the fork was validated against | E19 — a new image is adopted deliberately, never by a `docker pull` |
-| `kmoney` data survives a node restart, a node failure with writes continuing, and a rejoin | E19 — G5, minus the rolling version upgrade, which is named as not covered |
-| `gate-pg-release` composes every native YugabyteDB proof | E19 — dropping one for wall-clock would make the gate's claim untrue |
+```text
+PostgreSQL / pgrx ABI
+        |
+        v
+src/ffi/       raw datum access, memory contexts, C-visible symbols
+        |
+        v
+src/safe/      payload, validation, typmod, rendering, operations
+        |
+        v
+kamu-money-core exact arithmetic and canonical text
+```
 
-### Unsafe boundary and proof limits
+All unsafe syntax is confined to `src/ffi/` and enforced by a Syn-based hygiene
+test. `src/safe/` owns semantics and accepts ordinary values or fixed byte
+arrays, not unproved raw pointers.
 
-`src/safe/` owns payload encoding, validation, rendering, arithmetic, typmod policy, and tests.
-`src/ffi/` owns PostgreSQL datum allocation, raw `fcinfo` access, C-visible symbols, and pgrx ABI
-traits. A `syn`-based hygiene guard rejects unsafe syntax anywhere else and includes a mutation
-test proving the guard can fail.
+## Payload and unsafe warranty
 
-The shared ABI contract is:
+Both SQL types use the same fixed payload:
 
-- both SQL types have `typlen = 18`, `typbyval = false`, byte alignment, and plain storage;
-- a non-null datum for either registered OID exposes at least 18 readable bytes;
-- array elements use the same by-reference representation;
-- pgrx invokes the trait implementations only for the registered types;
-- PostgreSQL errors may escape through pgrx's panic machinery, so critical cleanup does not rely
-  on destructors after an error.
+```text
+bytes  0..16   signed i128 canonical units, little-endian
+bytes 16..18   ISO 4217 numeric code, little-endian
+```
 
-Compile-time size/alignment assertions protect the Rust layout. Live catalog tests assert the
-four PostgreSQL representation fields for both types; scalar, array, binary-width, binary
-round-trip, and corrupt-input tests exercise the remaining edges across PostgreSQL 15–18 and
-YugabyteDB.
+The Rust payload is byte-backed and has alignment 1. It does not create an
+`&i128` from PostgreSQL memory, whose alignment is weaker than Rust requires for
+`i128`.
 
-Miri runs the exact `safe/payload.rs` module through the pgrx-free hygiene crate. It checks layout,
-little-endian conversion, exact-length parsing, assigned/expected currency handling, and both
-domain edges. It does **not** prove datum provenance, OIDs, memory contexts, PostgreSQL longjmp
-behavior, or pgrx array layout; the live tests above remain authoritative for those promises.
+Before semantic use, one validator checks:
 
-### E21 — pgrx's generated SQL is not reproducible (measured 2026-07-27)
+- exact payload width;
+- assigned ISO numeric code;
+- expected typmod currency where one exists;
+- canonical money domain.
 
-Measured with `cargo-pgrx 0.19.1` against PostgreSQL 18 via `cargo pgrx schema pg18 --out …`. Two
-runs over **byte-identical source** were compared as a control, alongside a run with one
-`#[pg_extern]` moved into a plain child module:
+The ABI warranty is intentionally narrow:
 
-| generation | raw `sha256` | normalized `sha256` |
-|---|---|---|
-| baseline | `c52b666a33b2dece` | `ac5817b996d8aa6b` |
-| rerun, unchanged source | `ed87c428951f7d97` | `ac5817b996d8aa6b` |
-| `kmoney_div` in `mod division` | `2e73d4860e53e807` | `ac5817b996d8aa6b` |
+- catalog entries for both SQL types report `typlen = 18`, pass-by-reference,
+  byte alignment, and plain storage;
+- pgrx calls the conversion traits only for their registered OIDs;
+- non-null scalar and array datums expose the registered fixed width;
+- FFI allocation uses the active PostgreSQL memory context;
+- cleanup that must survive a PostgreSQL error does not depend on Rust
+  destructors running after pgrx translates the error.
 
-**All three raw hashes differ. All three normalized hashes are identical**, over the same 32
-objects. Three consequences:
+Miri proves only the safe payload module. Live catalog, scalar, array, binary,
+corruption, PostgreSQL-major, and YugabyteDB tests cover the foreign ABI that
+Miri cannot model.
 
-- **pgrx's raw SQL is nondeterministic.** The order entities are emitted in varies between runs of
-  the same source — a 437-line `diff` in which two functions swap places, neither having moved.
-  Rebuilding proves nothing, which is why the release gate extracts artefacts from the built image
-  rather than regenerating them.
-- **A byte diff of generated SQL is a useless oracle.** `just pg schema-hash` strips pgrx's
-  embedded `-- …/lib.rs:<line>` provenance comments — they encode source position, so any refactor
-  changes them by construction — then sorts the objects and hashes that.
-- **A plain child module is free.** No module path reaches a SQL name and the emitted object set is
-  unchanged. The trap is `#[pg_schema]`, a different attribute that *does* create a SQL schema.
+## SQL semantics
 
-This establishes the mechanism for one representative item, and that a normalized hash is a
-trustworthy oracle for checking the rest.
+- `kmoney('USD')` checks its currency at input/coercion and again in each
+  operation, because PostgreSQL does not pass typmod to operators.
+- `kmoney_mixed` supports equality and checked conversion to a named currency.
+  It has no ordering, arithmetic, or `sum`, so unsupported computation fails at
+  planning rather than after reading rows.
+- `sum(kmoney)` uses a 256-bit transition state and checks the money domain only
+  when finalizing. Partial aggregation therefore remains order-independent.
+- Division returns quotient and residue together.
+- Allocation borrows the pgrx array, checks its length before iterating, and
+  caps the number of parts before materializing weights.
+- Text input/output, arithmetic, allocation, and stable hashing delegate to
+  `kamu-money-core`.
+- Binary send/receive use exactly the validated 18-byte payload.
 
----
+There is deliberately no cast to PostgreSQL `numeric`.
 
-## 6. Open Items
+## Verification ladder
 
-| Item | Status |
-|---|---|
-| Self-maintained pgrx / YugabyteDB fork | **OPEN by decision.** `pt-immer/pgrx-yugabytedb` is ours to maintain. Every YugabyteDB digest or PostgreSQL-major change repeats `just pg gate-pg-release`. |
-| Two-version rolling upgrade | **UNREHEARSED.** Restore is proven same-version. `kamu-money-pg/yb/RUNBOOK.md` §2 is the procedure; the cross-version step needs a second image digest *and* a second from-source build against that image's headers. |
-| Container-backed suites | **RUNNABLE before publication.** `scripts/docker-core-context.sh` packages `kamu-money-core` and supplies only that normalized package as a named context. `gate-pg-release` disables the local patch and remains a registry-resolution proof. |
-| RPO/RTO, backup scheduling, rollback authority, incident response | **NOT THIS REPOSITORY'S.** They belong to the platform consuming the artefact. |
-| Registry publication of the node image | **STRUCK, not deferred.** The node image is a **test fixture**, not a deliverable: consumers build from source at a version and own their own artefact identity. Publishing it would create a distribution channel nobody consumes and an implicit support claim for bytes nobody is meant to run. Recorded rather than deleted, because three reviews raised it in good faith and a fourth would too. |
+| Layer | Command or suite | Claim |
+| --- | --- | --- |
+| Formatting, Clippy, docs, deny | `just pg gate-offline` | Rust and repository policy without a database |
+| Safe payload | hygiene tests and Miri | Width, byte order, code, currency, domain |
+| PostgreSQL majors | `just pg test-pg-all` | Catalog, SQL semantics, binary I/O on PG15–18 |
+| Portable driver path | `just pg test-pg-driver` | postgres-types and sqlx against native columns |
+| YB image controls | `just pg yb-image-selftest` | Unknown and moved tags fail closed |
+| Stock/YB equivalence | `just pg yb-ab` | Same SQL cases and golden output |
+| Cluster behavior | release gate suites | Every node, tablet split, concurrency, replica, restore |
+| Developer lane gate | `just gate-pg` | Offline checks, PG15–18, and portable database adapters |
+| Repository pre-push gate | `just gate-all` | Public workspace plus developer lane gate |
+| Native YB release proof | `just pg gate-pg-release` | From-source native build and all cluster suites |
+
+[`kamu-money-pg/tests/pg_regress/COVERAGE.md`](kamu-money-pg/tests/pg_regress/COVERAGE.md)
+maps every `#[pg_test]` to a portable SQL case or a reasoned
+`NOT-PORTABLE` entry. Hygiene tests check both directions, required files,
+golden labels, and orphan cases.
+
+The release gate resolves one immutable YugabyteDB base image, builds one node
+image, extracts the artifact from that image, and passes the same identities to
+every suite. It also checks shipped bytes for benchmark-only probe symbols.
+
+pgrx's raw generated SQL is not byte-reproducible because object order and
+source-position comments can change. `schema-hash` strips provenance comments,
+sorts objects, and compares the normalized schema. Release proof extracts the
+SQL from the built image instead of regenerating a lookalike.
+
+## Supported build and release model
+
+The pgrx fork is pinned by tag and lockfile. Its `yb-pg15` changes are
+feature-gated; stock PostgreSQL builds use the same dependency without that
+feature. A YugabyteDB image change must pass the header probe and full release
+gate before its digest is recorded.
+
+The node-image target is a validation fixture and a source pattern for
+consumers. This repository does not publish a production container image.
+Deploying organizations build and own their artifact identity.
+
+A GitHub release may use `kamu-money-pg-vX.Y.Z`. The release workflow verifies
+the manifest and stops before crates.io.
+
+## Known limits
+
+- The `pt-immer/pgrx-yugabytedb` fork is maintained by this project.
+- One pinned YugabyteDB image is supported at a time.
+- Same-version dump/restore is gated. A two-version rolling YugabyteDB upgrade
+  has not been rehearsed.
+- Managed platforms that reject third-party native extensions require the
+  canonical-text adapter instead.
+- RPO, RTO, backup cadence, rollout authority, and incident response belong to
+  the consuming platform.
+- Benchmarks are comparative signals, not machine-independent pass/fail
+  thresholds.
+
+See the [YugabyteDB runbook](kamu-money-pg/yb/RUNBOOK.md) for adoption,
+diagnosis, deployment order, and rollback cutoffs.

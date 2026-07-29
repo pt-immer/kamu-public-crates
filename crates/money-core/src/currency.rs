@@ -1,16 +1,7 @@
 //! How a Money knows what currency it is: from its type, and only from its type.
 //!
-//! `Money<USD>` carries no currency data at all — the marker is a ZST, the value is 16 bytes,
-//! and a mismatch is a compile error. There is deliberately no runtime-currency variant.
-//!
-//! **An earlier revision had one** (`Money<Dyn>`, with `CurrencyRepr` selecting a `Tag` of
-//! either `()` or `Iso4217`). It was deleted, and the reason is worth keeping: it offered
-//! `try_add`/`try_sub`, so it *looked* like money and invited callers to compute in the
-//! unchecked mode. C4 removed `Add` from it to discourage exactly that, which is the design
-//! admitting the type was a hazard while keeping it. A boundary is a place you pass through,
-//! not a place you work, and the schema is what decides where that boundary falls: a column is
-//! declared single-currency or mixed in its DDL, so the decode target follows from the type of
-//! the column rather than from a Rust-side guess. See C3, and C8's two-type split.
+//! `Money<USD>` carries a zero-sized currency marker, and a mismatch is a compile error. Runtime
+//! currency values belong at parsing and database boundaries, not in arithmetic.
 
 use crate::iso::Iso4217;
 
@@ -18,12 +9,8 @@ use crate::iso::Iso4217;
 /// never by hand — and enforced, not requested: the crate-private sealing
 /// supertrait is unnameable downstream.
 ///
-/// **`CODE` is the only fact.** Everything else about a currency is derived from it, at compile
-/// time: `C::CODE.exponent()`, `C::CODE.alpha3()`, `C::CODE.name()` are all `const fn`. An
-/// earlier revision also carried `const EXP: Option<u8>`, duplicating what `Iso4217` already
-/// knows — and then needed a generated test across every currency to prove the two copies
-/// hadn't diverged. Deleting the duplication makes drift unrepresentable instead of merely
-/// tested. Do not reintroduce a derived fact as an associated const.
+/// `CODE` is the only stored fact. Exponent, alpha-3 code, and name derive from it at compile
+/// time.
 ///
 /// Without the seal, a downstream crate could claim `CODE = Iso4217::USD` and
 /// impersonate genuine USD anywhere a `Money<C>` is accepted. That counterfeit

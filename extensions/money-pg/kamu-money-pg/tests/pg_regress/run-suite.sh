@@ -71,15 +71,10 @@ fi
 
 mkdir -p "$OUTDIR"
 
-# TWO normalizations, and NOTHING else. Both remove something that describes the HARNESS rather
-# than the type; every character of every refusal message is compared verbatim.
+# Normalize only harness-specific output; refusal messages remain byte-exact.
 #
-# 1. The error-location prefix -- `psql:<stdin>:12:` / `ysqlsh:/tmp/x.sql:12:`. Deleted rather than
-#    replaced with a placeholder, because psql emits it INCONSISTENTLY: reading a script with `-f`
-#    it prints `psql:<file>:<line>: ERROR: ...`, and reading the identical script on stdin it
-#    prints a bare `ERROR: ...`. Measured on YugabyteDB 2025.2.5.1 -- the first run of this suite
-#    failed 9 of 11 cases on exactly that, byte-identical message text underneath. Deleting it lets
-#    one golden serve a stdin run here, an `-f` run in the PG15 reference, and anything later.
+# 1. Delete the error-location prefix (`psql:<stdin>:12:` or `ysqlsh:/tmp/x.sql:12:`), which
+#    differs between stdin and `-f` execution.
 #
 # 2. A trailing ` at character N`. Under VERBOSITY terse psql still appends the cursor POSITION for
 #    errors that carry one -- and N is a byte offset into the statement text, so re-indenting a

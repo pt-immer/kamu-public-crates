@@ -5,6 +5,7 @@ per-crate changelogs for details:
 
 - [`kamu-iso3166`](crates/iso3166/CHANGELOG.md)
 - [`kamu-logging`](crates/logging/CHANGELOG.md)
+- [`kamu-money-core`](crates/money-core/CHANGELOG.md)
 - [`kamu-snap-crypto`](crates/snap-crypto/CHANGELOG.md)
 - [`kamu-snap-response`](crates/snap-response/CHANGELOG.md)
 - [`kamu-snap-crypto-actix`](crates/snap-crypto-actix/CHANGELOG.md)

@@ -39,7 +39,7 @@
 # host that names it differently sets BENCH_NUMA_CGROUP_PARENT, and `numa_verify` is what decides
 # whether the choice worked.
 #
-# PINNING HELPS A PROCESS, AND CAN HURT A DATABASE. Measured 2026-07-26, both directions:
+# Pinning helps a serial process and can hurt a distributed database:
 #
 #   - The boundary probe -- one backend, one serial query, no storage layer -- is exactly what a
 #     pin is for. Confining it removes interconnect traffic and neighbour noise.
@@ -137,11 +137,7 @@ numa_masks_agree() {
 # THE PIN IS A CLAIM UNTIL THIS RUNS. Reads the EFFECTIVE masks of the running container and
 # refuses if they are not the requested node. Returns 0 when unpinned by request.
 #
-# BOTH MASKS, WHICH IT DID NOT ALWAYS CHECK. Until 2026-07-26 this read `Cpus_allowed_list` and
-# then compared only `Mems_allowed_list`, printing `verified -- memory node N` under documentation
-# claiming CPUs and memory were both pinned. A container whose memory landed on the requested node
-# and whose CPUs did not was labelled NUMA-pinned -- and CPU placement is most of what a pin is
-# for, since it is what keeps the measurement off whatever else the host is doing.
+# Verify both CPU and memory masks. A half-applied pin is not a controlled measurement.
 numa_verify() {
     local name="$1" node="${BENCH_NUMA_NODE:-}"
     [ -n "$node" ] || return 0

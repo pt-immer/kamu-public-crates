@@ -1,15 +1,15 @@
 # kamu-money-core
 
-[![Crates.io][badge-crates]][link-crates]
-[![docs.rs][badge-docs]][link-docs]
 [![CI][badge-ci]][link-ci]
-
 [![License][badge-license]][link-license]
 [![MSRV][badge-msrv]][link-msrv]
 
 Exact monetary arithmetic: `i128` at a fixed scale of 18, with compile-time
 currency identity. Division withholds its quotient until the caller explicitly
 takes or discards the residue.
+
+> Version `0.1.0` is present in the repository; its first crates.io release is
+> pending.
 
 The crate is intentionally ISO 4217-only. `StaticCurrency` is sealed so wire,
 database, and arithmetic identity all use the same generated register.
@@ -128,9 +128,9 @@ Credit, provenance and the redistribution position are in
 
 ## Design
 
-[`DESIGN.md`](DESIGN.md) carries the contract this crate implements and the
-measurements behind it — including why `rust_decimal` is absent, why there is no
-`Money<Dyn>`, and why `Sum` is deliberately not implemented.
+[`DESIGN.md`](DESIGN.md) carries the current C1–C10 contract and points each
+invariant to executable evidence. It also records the alternatives deliberately
+excluded from the API.
 
 ## Licence
 
@@ -140,14 +140,10 @@ your option.
 `vendor/list-one.xml` is **not** covered by that licence. It is third-party data,
 redistributed unmodified with credit to SIX Group AG; see [`NOTICE`](NOTICE).
 
-[badge-crates]: https://img.shields.io/crates/v/kamu-money-core?style=flat-square&logo=rust
-[badge-docs]: https://img.shields.io/docsrs/kamu-money-core?style=flat-square&logo=docs.rs&label=docs.rs
 [badge-ci]: https://img.shields.io/github/actions/workflow/status/pt-immer/kamu-public-crates/on-pr-synced.yml?branch=main&style=flat-square&label=CI
-[badge-license]: https://img.shields.io/crates/l/kamu-money-core?style=flat-square
+[badge-license]: https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue?style=flat-square
 [badge-msrv]: https://img.shields.io/badge/MSRV-1.94-blue?style=flat-square&logo=rust
 
-[link-crates]: https://crates.io/crates/kamu-money-core
-[link-docs]: https://docs.rs/kamu-money-core
 [link-ci]: https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-pr-synced.yml
 [link-license]: https://github.com/pt-immer/kamu-public-crates/blob/main/crates/money-core
 [link-msrv]: https://github.com/pt-immer/kamu-public-crates/blob/main/Cargo.toml

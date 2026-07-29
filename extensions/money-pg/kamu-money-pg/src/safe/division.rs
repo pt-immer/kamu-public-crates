@@ -13,12 +13,12 @@ use pgrx::prelude::*;
 ///
 /// In Rust this operation is guarded by a typestate: `div_int` returns a `Division<C>` that
 /// will not surrender its quotient until the caller has named an exit — `take_residue()` or
-/// `discard_deliberately()` — and a `Residue` dropped in silence detonates.
+/// `discard_deliberately()`. A returned `Residue<C>` is `#[must_use]` but does not panic on drop.
 ///
 /// **SQL cannot express that.** There is no way to write a PostgreSQL function whose result is
-/// unusable until a second value has been dealt with; any column of a composite can simply not
-/// be selected, and no amount of API design changes that. So the residue is returned *beside*
-/// the quotient, where ignoring it takes an explicit act that shows up in the query text:
+/// unusable until a second value has been dealt with; any column of a composite can be omitted.
+/// The residue is therefore returned *beside* the quotient, where ignoring it is visible in the
+/// query:
 ///
 /// ```sql
 /// SELECT * FROM kmoney_div('USD 10.00', 3, 'toward_zero');
@@ -32,7 +32,7 @@ use pgrx::prelude::*;
 /// Note the quotient keeps **all eighteen digits**. Nothing here rounds to a currency's minor
 /// unit: `USD 10.00 / 3` is not `USD 3.33`, and a function that returned `3.33` would have
 /// silently moved the other `0.003333…` somewhere. Presenting a payable figure is a separate
-/// act, performed once, at the point of payment — §0.1's *display pads, never rounds*.
+/// act performed at the point of payment; canonical display pads but never rounds.
 ///
 /// `quotient * n + residue = amount` holds exactly, for every rounding mode. If you need the
 /// residue *enforced* rather than merely returned, do the division in Rust — that is the

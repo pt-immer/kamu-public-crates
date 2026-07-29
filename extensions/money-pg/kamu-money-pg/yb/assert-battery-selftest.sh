@@ -1,37 +1,23 @@
 #!/usr/bin/env bash
-# Negative control for the battery oracle (review F4; rewritten for review-3 N1).
+# Negative controls for the battery oracle.
 #
-# `assert-battery.sh` is what makes `yb-ab`'s equality meaningful. An oracle that has rotted into
-# always-passing is worse than none: it reports green over exactly the coverage it was meant to
-# protect. So every assertion must be shown to still REJECT something.
+# `assert-battery.sh` makes `yb-ab`'s equality meaningful, so every assertion must reject a
+# corresponding mutation.
 #
-# WHY THIS IS DERIVED RATHER THAN HAND-WRITTEN. The previous version hard-coded seven mutations,
-# which happened to cover 6 of the oracle's 10 assertions, and then printed "every assertion
-# still bites". Review-3 N1 demonstrated the gap by rotting an uncovered assertion into a
-# match-anything grep -- the selftest still reported green. A hand-maintained control list drifts
-# from the thing it controls the moment either changes. This one reads `assert-battery.sh
-# --list` and generates one mutation PER TABLE ROW, so an assertion added there is controlled
-# here automatically, by construction rather than by remembering.
+# This test reads `assert-battery.sh --list` and derives one mutation per table row. Adding an
+# assertion therefore adds its control automatically.
 #
-# The mutation is generic: delete every line the assertion matches, and require the oracle to
-# reject the result FOR THAT ASSERTION'S OWN REASON. Demanding the right reason is what catches
-# a rotted pattern: if a pattern is weakened to match anything, its mutation deletes the whole
-# file and the oracle fails with "missing or empty" instead of that assertion's description --
-# which this reports as a broken control, not as a pass.
+# Each mutation deletes every matching line. The oracle must reject it for that assertion's own
+# reason; a broad pattern that deletes the whole file therefore fails this control.
 #
-# Cheap (pure grep), so `yb-ab` runs it on every gate run rather than trusting it once.
+# The control is pure grep and runs in every `yb-ab`.
 #
 # Usage: assert-battery-selftest.sh [known-good-output]
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
-# ONE WRITER AT A TIME, TAKEN BEFORE ANYTHING SHARED IS TOUCHED. This script reads and writes under
-# ${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}, which with that variable unset is the single tree
-# every other suite also uses; a 2026-07-26 review found several entry points reaching those paths
-# before -- or entirely without -- taking the lock, so a stray run could overwrite the artefact
-# triplet a release was in the middle of hashing. Setting KMONEY_RUN_ROOT gives a run its own tree,
-# which removes the contention rather than serialising it; the lock stays for the shared default.
-# Re-entrant: a suite started by `release-check` inherits the descriptor and proceeds.
+# Lock before touching the shared default run root. A distinct `KMONEY_RUN_ROOT` isolates a run;
+# descendants of the release gate inherit the descriptor and re-enter.
 # shellcheck source=kamu-money-pg/yb/workspace-lock.sh
 source ./kamu-money-pg/yb/workspace-lock.sh
 workspace_lock "$(basename "$0")" || exit 1
@@ -85,7 +71,7 @@ expect_fail truncated  "$WORK/trunc.txt" 0 "BATTERY COMPLETE"
 cat "$SRC" "$SRC" > "$WORK/dup.txt"
 expect_fail duplicated "$WORK/dup.txt"   0 "found 2"
 
-# The client-status parameter is REQUIRED (review-3 N8). Prove the requirement is real, or a
+# The client-status parameter is required. Prove the requirement is real, or a
 # later "convenience" default would silently reinstate the assumption that nothing broke.
 if $ASSERT "$SRC" nostatus >/dev/null 2>&1; then
     echo "  BAD: [no-status] the oracle accepted a MISSING client status"; fails=$((fails + 1))
@@ -110,8 +96,7 @@ while IFS= read -r row; do
     expect_fail "ctl-$controlled" "$WORK/m.txt" 0 "$desc"
 done < <($ASSERT --list)
 
-# Deriving the controls proves every assertion PRESENT still bites; it cannot notice one that was
-# DELETED, because a shorter table simply yields fewer controls. A floor makes removal loud.
+# Derived controls cover each present assertion; the floor also detects removal.
 # Lowering this number is a deliberate act that should be argued for in the diff.
 MIN_ASSERTIONS=20
 if [ "$controlled" -lt "$MIN_ASSERTIONS" ]; then

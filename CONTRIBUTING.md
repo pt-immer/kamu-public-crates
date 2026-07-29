@@ -1,96 +1,143 @@
 # Contributing to kamu-public-crates
 
-Thanks for contributing! This is a Cargo workspace; each crate under `crates/`
-is published independently to crates.io.
+Thank you for contributing. The root Cargo workspace contains nine public
+libraries that version and release independently. The PostgreSQL extension under
+`extensions/money-pg` is a separate, excluded workspace.
 
 ## Setup
 
 ```sh
 git clone --recurse-submodules https://github.com/pt-immer/kamu-public-crates.git
-# or after a plain clone:
-git submodule update --init --recursive
+cd kamu-public-crates
+python3 scripts/dev_environment.py setup
+export PATH="$PWD/.tools/bin:$PATH"
+just doctor
 ```
 
-`kamu-iso3166` reads its vendored ISO 3166 CSVs (a git submodule) at build time,
-so the submodule must be initialized before building it.
+The recursive clone matters: `kamu-iso3166` generates lookup tables from its
+vendored Git submodule. The bootstrap command works before `just` exists,
+installs the versions in `.config/dev-tools.json`, and uses `npm ci`. Exporting
+the local tool directory makes those pinned binaries available in the current
+shell. ShellCheck 0.11.0 remains an operating-system package.
 
-## Before opening a PR
-
-Run the same checks CI does:
+## Development loop
 
 ```sh
-just gate        # published-crate local barrier; CI adds Docker/package checks
-just ci          # Docker-free gate + metadata-derived publish dry-runs
+just check-all  # fast format, Clippy, and test signal
+just gate       # complete barrier for the nine public crates
+just ci         # gate plus publish dry-runs
 ```
 
-`just check-all` is the fast inner-loop check (fmt + clippy + test only) — handy
-while iterating, but run `just gate` before you push.
+Run `just gate` before pushing a public-workspace change. It covers formatting,
+Clippy, tests and feature permutations, exact MSRV 1.94.0, documentation,
+cross-target builds, dependency policy, spelling, repository hygiene, and
+enforced coverage.
 
-or the raw commands — see the [`Justfile`](Justfile). The PR pipeline
-(`on-pr-synced.yml`) runs rustfmt, clippy (`-D warnings -D clippy::all`
-workspace-wide, plus `-D clippy::pedantic` for `kamu-iso3166`), tests on
-`stable` and the `1.94` MSRV, a `no_std` cross-compile, docs, `cargo-deny`,
-per-crate `publish --dry-run`, a `wasm32` build, Markdown/TOML/spelling lint,
-and coverage (`kamu-iso3166` ≥ 98% lines, `kamu-logging` ≥ 88%,
-`kamu-money-core` ≥ 80%, `kamu-snap-crypto` ≥ 70%,
-`kamu-snap-response` ≥ 85%).
+`just check-all` is intentionally smaller. It is useful while editing, but is
+not a release or pre-push barrier.
 
-> Do not use `--all-features` across the whole workspace: `kamu-logging`'s
-> `systemd` and `wasm32` features are mutually exclusive. Select features
-> per crate.
+### Extension changes
 
-Tests run under [cargo-nextest](https://nexte.st/) — locally, in `just gate`, in
-coverage, and in CI — configured in `.config/nextest.toml`. `just setup`
-installs it. nextest runs each test in its own process, and it does **not** run
-doctests, so every recipe pairs a nextest run with an explicit
-`cargo test --doc`; keep that pair when adding one.
+Enter the excluded lane through the root passthrough:
+
+```sh
+just pg             # list lane recipes
+just pg gate-offline
+just gate-all       # root gate plus the developer lane gate
+just pg gate-pg-release  # native YugabyteDB release proof
+```
+
+`just gate-all` needs Docker and can take hours. Run it before pushing a change
+under `extensions/money-pg`. Run `just pg gate-pg-release` before an extension
+release; it includes the from-source native YugabyteDB build and cluster suites
+that the ordinary development gate omits.
+
+### Test conventions
+
+Ordinary tests run with
+[cargo-nextest](https://nexte.st/), configured in
+`.config/nextest.toml`. Nextest does not run doctests, so every test recipe also
+runs `cargo test --doc`. Preserve that pair when adding a recipe.
+
+Do not use workspace-wide `--all-features`. `kamu-logging` has mutually
+exclusive native and wasm features, and pgrx features select one PostgreSQL
+major. The Justfiles hold the supported matrices.
+
+Current line-coverage floors are:
+
+| Crate | Floor |
+| --- | ---: |
+| `kamu-iso3166` | 98% |
+| `kamu-logging` | 88% |
+| `kamu-money-core` | 80% |
+| `kamu-snap-crypto` | 70% |
+| `kamu-snap-response` | 85% |
+
+The four thin Actix/axum adapters are behavior- and compile-tested without a
+percentage floor.
 
 ## Commits
 
-Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`,
-`fix:`, `chore:`, `docs:`, `refactor:`, `test:`, optionally scoped, e.g.
-`feat(iso3166): add Alpha2::iter()`.
+Use an imperative, lowercase
+[Conventional Commit](https://www.conventionalcommits.org/) subject, optionally
+scoped:
 
-Work is tracked in JIRA under the `kec-` prefix. Name branches
-`<type>/kec-<n>-<slug>`, and end every commit message with the lowercase ticket
-on its own line — above any `Co-Authored-By:` trailer, which git only reads
-from the final paragraph:
+```text
+feat(iso3166): add Alpha2::iter()
+```
+
+Work uses lowercase `kec-` JIRA tickets. Name branches
+`<type>/kec-<n>-<slug>`. Every commit must be GPG-signed and place its ticket in
+a standalone paragraph before any trailer block:
 
 ```text
 chore(deps): refresh workspace dependencies
 
-Bump every workspace requirement to the latest version the MSRV-1.94
-resolver allows.
+Update requirements within the Rust 1.94 compatibility range.
 
 kec-1
 ```
 
 ## Releasing a crate
 
-Releases are **per crate**, with independent versions.
+Public crates release independently:
 
-1. Bump the crate's `version` in its `Cargo.toml` and update its `CHANGELOG.md`.
-2. Merge to `main`.
-3. Create a GitHub Release with tag `<crate>-vX.Y.Z`
-   (e.g. `kamu-iso3166-v0.2.0` or `kamu-logging-v0.1.5`).
-4. `on-release-published.yml` verifies the manifest version matches the tag and
-   runs `cargo publish -p <crate>`.
+1. Update the crate's version in `Cargo.toml`.
+2. Update that crate's `CHANGELOG.md`.
+3. Merge the change to `main`.
+4. Create a GitHub Release named `<crate>-vX.Y.Z` from `main`.
 
-The `kamu-snap-*` crates inter-depend, so release them in dependency order —
-`kamu-snap-crypto` → `kamu-snap-response` → the four
-`kamu-snap-{crypto,response}-{actix,axum}` adapters — waiting for the crates.io
-index between tiers (cargo cannot package a crate whose deps, even optional ones,
-are not yet published; the release workflow fails fast if you skip ahead). The
-first publish of a brand-new crate also needs
-`cargo owner --add github:pt-immer:rust-devs <crate>`.
+`on-release-published.yml` verifies the tag, manifest version, main ancestry,
+dependency availability, and crates.io state before the protected `crates-io`
+environment approves publishing exactly one crate. A lockfile-only refresh does
+not require a version bump; a crate source or manifest change does.
 
-## Updating the vendored ISO 3166 data
+The SNAP family must publish in dependency order:
 
-See [`crates/iso3166/VENDORED.md`](crates/iso3166/VENDORED.md). Remember to
-update the pinned cardinalities in `crates/iso3166/tests/codegen_invariants.rs`
-if the dataset changes.
+1. `kamu-snap-crypto`
+2. `kamu-snap-response`
+3. `kamu-snap-{crypto,response}-{actix,axum}`
+
+Wait for the crates.io index between tiers. Cargo cannot package a crate while
+an in-workspace dependency—even an optional one—is unavailable from the
+registry.
+
+The excluded `kamu-money-pg` lane may have a versioned GitHub Release, but its
+workflow stops before crates.io. It is a native extension, not a publishable Rust
+library.
+
+## Updating standards data
+
+- ISO 3166: follow
+  [`crates/iso3166/VENDORED.md`](crates/iso3166/VENDORED.md), then update
+  cardinality assertions if the consumed CSV rows changed.
+- ISO 4217: follow
+  [`crates/money-core/VENDORED.md`](crates/money-core/VENDORED.md). The build
+  validates the vendored register and generates the Rust table.
+
+Never edit generated `OUT_DIR` tables directly.
 
 ## License
 
-By contributing you agree that your contributions are dual-licensed under
-`MIT OR Apache-2.0`.
+Contributions are accepted under `MIT OR Apache-2.0`. Vendored standards data
+retains the terms and attribution documented by its owning crate.

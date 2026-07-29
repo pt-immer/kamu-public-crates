@@ -1,25 +1,16 @@
-//! `sqlx` adapters for PostgreSQL: the same canonical text form as
-//! `adapters::postgres`. (DESIGN.md C9)
+//! `sqlx` PostgreSQL adapters for the canonical text form.
 //!
-//! Deliberately a thin restatement of the same three moves — render on the way out, parse on
-//! the way in, refuse anything that is not a text column. There is no second codec here, and
-//! the tests assert that a value written by `sqlx` reads back through `postgres-types` and
-//! vice versa, which is the only way "one codec" stays true rather than becoming a comment.
+//! Values render on output, parse on input, and reject non-text columns. Cross-driver tests
+//! verify that `sqlx` and `postgres-types` share the same representation.
 //!
 //! # Why this is a feature and not a `money-sqlx` crate
 //!
-//! C9 asked for a separate crate. `impl Type<Postgres> for Money<C>` from an external crate is
-//! **E0117** — foreign trait, foreign type — verified with a throwaway compile, not recalled.
-//! The only workaround is a newtype the caller spells at every boundary. Feature-gating in the
-//! crate that owns the type is what `serde` already does here, and what `chrono` and `uuid` do
-//! generally.
+//! Rust's orphan rule requires the adapter impls to live in the crate that owns `Money<C>`.
 //!
 //! # Why `sqlx`'s own `NUMERIC` support is not used
 //!
-//! It decodes to `Decimal`, which reintroduces the E5 ceiling on the wire — the exact reason
-//! `rust_decimal` was removed as a dependency. And `numeric` cannot be written to safely at
-//! all: E13 measured PostgreSQL silently rounding over-precise input on the way *in*, where no
-//! `CHECK` or `DOMAIN` can reach it.
+//! PostgreSQL `numeric` rounds over-precise input before constraints can inspect it. Its sqlx
+//! representation also has a narrower decimal range than this crate.
 
 use super::codec::{decode, encode};
 use crate::{Money, Rate, StaticCurrency};
@@ -57,8 +48,6 @@ impl<C: StaticCurrency> PgHasArrayType for Money<C> {
 
 impl<C: StaticCurrency> Encode<'_, Postgres> for Money<C> {
     fn encode_by_ref(&self, buf: &mut PgArgumentBuffer) -> Result<IsNull, BoxDynError> {
-        // `to_string` is `Display`, which IS the canonical form. Going through it rather than
-        // re-rendering here is what makes the one-codec claim structural instead of aspirational.
         <&str as Encode<Postgres>>::encode(encode(self).as_str(), buf)
     }
 }
@@ -66,8 +55,6 @@ impl<C: StaticCurrency> Encode<'_, Postgres> for Money<C> {
 impl<C: StaticCurrency> Decode<'_, Postgres> for Money<C> {
     fn decode(value: PgValueRef<'_>) -> Result<Self, BoxDynError> {
         let text = <&str as Decode<Postgres>>::decode(value)?;
-        // `FromStr` checks the currency against `C` as well as the digits, so a row written as
-        // IDR cannot be read into a `Money<USD>`.
         Ok(decode(text)?)
     }
 }
@@ -97,7 +84,6 @@ impl<Base: StaticCurrency, Quote: StaticCurrency> Encode<'_, Postgres> for Rate<
 impl<Base: StaticCurrency, Quote: StaticCurrency> Decode<'_, Postgres> for Rate<Base, Quote> {
     fn decode(value: PgValueRef<'_>) -> Result<Self, BoxDynError> {
         let text = <&str as Decode<Postgres>>::decode(value)?;
-        // Checks BOTH ends of the pair — accepting a reversed one would invert the price.
         Ok(decode(text)?)
     }
 }

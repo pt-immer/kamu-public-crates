@@ -1,4 +1,4 @@
-# HOST BUILDS NEED `cargo pgrx init` FIRST.
+# Host builds require `cargo pgrx init`; container recipes need no host pgrx state.
 # pgrx-pg-sys's build script reads ~/.pgrx/config.toml to find pg_config; without it the build
 # fails with "failed to run custom build command for pgrx-pg-sys". The supported path is the
 # container (`./kamu-money-pg/test-matrix.sh`), which carries its own config and touches nothing on
@@ -8,26 +8,14 @@
 name = "kamu-money-pg"
 version = "0.1.0"
 description = "PostgreSQL extension providing kmoney: money as a native fixed-size type, 18 bytes."
-# Inherited from the lane's workspace root, which is where the relicence to
-# MIT OR Apache-2.0 and the `publish = false` both live. This crate carried
-# `license = "MIT"` and a repository pointing at the experimental repo it came
-# from; both are the transplant's to correct, not the reader's to notice.
+# Package identity and `publish = false` are inherited from the lane root.
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-# These exist because `clippy::cargo` is denied. They were missing in the source
-# and nobody saw it: kamu-money-core's crate root carried an
-# `allow(clippy::cargo_common_metadata)` — added because IT had no `repository`
-# while that repo had no remote — and a crate-level allow for one package
-# silences `clippy::cargo` for EVERY package in the workspace.
-#
-# `readme` is deliberately absent: the source pointed it at `../README.md`, which
-# from here would be `extensions/money-pg/README.md`, a file that does not exist
-# yet. A key naming a missing file is worse than no key, so it returns when the
-# lane's own docs land.
+# No `readme`: the lane has no package README.
 keywords = ["postgres", "postgresql", "pgrx", "money", "extension"]
 categories = ["database", "finance"]
 
@@ -36,61 +24,29 @@ name = "kmoney"         # the SQL-side artifacts are all `kmoney`: kmoney.contro
 crate-type = ["cdylib"]
 
 [features]
-# PG15 is the floor (operator decision, 2026-07-22); pg13/pg14 are deliberately NOT offered.
-#
-# PG19 IS NOT OFFERED EITHER, THOUGH pgrx 0.19.1 SUPPORTS IT. A `pg19` feature stood here until
-# 2026-07-26 with nothing behind it: the contracted matrix is 15-18, every gate stops at 18, and
-# no image in this repository has a PG19 in it. A public feature that no gate exercises is a
-# support claim backed by a compile that has never been attempted -- and the first person to try
-# it would be the one finding out. Add it here when a `test-pg 19` leg exists to go with it.
+# The tested support matrix is PostgreSQL 15-18. Add another feature only with a matching
+# `test-pg` gate leg.
 default = ["pg18"]
 pg15 = ["pgrx/pg15", "pgrx-tests/pg15"]
 pg16 = ["pgrx/pg16", "pgrx-tests/pg16"]
 pg17 = ["pgrx/pg17", "pgrx-tests/pg17"]
 pg18 = ["pgrx/pg18", "pgrx-tests/pg18"]
 pg_test = ["dep:tempfile"]
-# THE BOUNDARY PROBE, and it is NOT in `default` on purpose. It adds two no-op `#[pg_extern]`s
-# whose only reason to exist is to be measured: `rs_noop` has the same signature as a five-line
-# C function so the difference between them is pgrx's per-call wrapper, and `rs_noop_kmoney`
-# takes the 18-byte type and ignores it so the type's conversion separates from any function
-# body. Adding a no-op to the SHIPPED SQL surface to support a benchmark is a trade this
-# workspace has not made -- behind a feature it is not in the shipped surface at all.
-#
-# Enabled by kamu-money-pg/bench/run-bench-boundary.sh (`just bench-boundary`). Before
-# 2026-07-26 these functions were appended to lib.rs inside a container at measurement time and
-# never committed, which is why E20's YugabyteDB boundary figures could not be reproduced from
-# any revision of this repository.
+# Adds benchmark-only no-op functions; excluded from the shipped SQL surface.
 boundary-probe = []
 pg_bench = ["dep:pgrx-bench"]
-# YugabyteDB's PG15 fork. ORTHOGONAL to the pg1x majors above -- combine it with one of them
-# (`--features pg15,yb-pg15`), never instead of one.
-#
-# Forwards to the identically-named feature of the pgrx fork this workspace patches in (see the
-# root Cargo.toml). It replaces `RUSTFLAGS="--cfg yb"`, which was global, leaked into every crate
-# in the build, and left nothing in any manifest saying the build targeted YugabyteDB.
-#
-# NAMED FOR THE BASE MAJOR, and the redundancy in `--features pg15,yb-pg15` is deliberate. YB
-# 2025.2.x is PostgreSQL 15; when it rebases, `yb-pg16` gets its own adaptations and sits BESIDE
-# this one, instead of a bare `yb` silently changing meaning under everything that enabled it.
-# The name matches the fork's exactly, so there is no mapping to hold in your head.
+# YugabyteDB 2025.2.x is based on PostgreSQL 15. Combine this with `pg15`; a
+# future rebase receives a separate, base-major-specific feature.
 yb-pg15 = ["pgrx/yb-pg15"]
 
 [dependencies]
 pgrx = "=0.19.1"
-# C9: the adapter is thin over ONE codec. Every currency lookup and every digit of the text
+# The adapter is thin over one codec. Every currency lookup and every digit of the text
 # form comes from here, so the database and the Rust program cannot disagree about what a
 # stored value means.
 #
-# A PLAIN VERSION REQUIREMENT, WITH NO PATH. The path is injected on the command
-# line by the lane's recipes (`--config patch.crates-io.kamu-money-core.path=...`),
-# never written into this manifest. That is the apply-yb-shim.sh lesson from this
-# code's own history: a build-time text substitution returns the subject UNCHANGED
-# when it matches nothing, so a rewrite that silently did nothing once produced a
-# successful build of an unshimmed extension. Nothing here rewrites a manifest.
-#
-# Until kamu-money-core 0.1.0 is on crates.io, that injected patch is not a
-# convenience but the only way this lane resolves at all — a bare `cargo` command
-# here will fail to find the crate, and that is the intended, loud behaviour.
+# Recipes inject a local path patch without rewriting this plain registry
+# requirement. Until 0.1.0 is published, bare Cargo resolution fails explicitly.
 kamu-money-core = "0.1"
 tempfile = { version = "3", optional = true }
 

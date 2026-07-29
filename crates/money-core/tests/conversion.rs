@@ -1,22 +1,10 @@
-//! C6 conversion, as properties over the domain rather than chosen examples.
+//! FX conversion properties over the domain.
 //!
 //! Every test here iterates **all** rounding modes rather than sampling one, so a mode-specific
 //! defect cannot hide behind a lucky seed.
 //!
-//! ## Why the ranges are what they are — measured, and it was a defect
-//!
-//! The first version of this file sampled both the amount and the rate uniformly over
-//! `-DOMAIN_MAX..=DOMAIN_MAX` — the obvious "test the whole domain" strategy. Instrumented
-//! over 2000 cases it reached the `Ok` path **0 times**: with both operands near `1e36` the
-//! quotient is around `1e54`, roughly eighteen orders outside the domain, so *every* case
-//! overflowed. The tests matched on `(Err(_), Err(_)) => {}` and passed while comparing
-//! nothing at all. A mutant that made the runtime path ignore the caller's rounding mode
-//! survived the very test written to catch it.
-//!
-//! So the rule this file follows: a test that asserts something about a **successful**
-//! conversion constrains its inputs so success is structural, and then `unwrap`s rather than
-//! matching. If the range is ever wrong, the `unwrap` fails loudly instead of the test quietly
-//! testing the other branch. The overflow path gets its own test, which asserts `Err`.
+//! Successful-path properties constrain inputs so success is structural and then unwrap.
+//! Overflow behavior has separate properties that assert `Err`.
 
 use kamu_money_core::Money;
 use kamu_money_core::Rate;
@@ -40,15 +28,10 @@ fn usd(units: i128) -> Money<USD> {
 proptest! {
     /// Conversion never panics and never wraps, anywhere in the domain, under any mode.
     ///
-    /// This one deliberately DOES sample the full domain, and is honest about what that
-    /// buys: measured, ~100% of these cases take the `Err` branch. It is a totality and
-    /// no-panic test, **not** coverage of the conversion arithmetic. The tests below cover
-    /// that, and they constrain their inputs so they can say so.
+    /// Full-domain sampling primarily exercises totality and overflow refusal. Constrained
+    /// properties below cover successful arithmetic.
     ///
-    /// "The whole domain" is asymmetric between the two operands as of 2026-07-27, and that
-    /// asymmetry IS the H1 fix rather than a gap in this test: money spans both signs, a rate
-    /// is a price and starts at 1. Sampling the old `-DOMAIN_MAX..` range here would only
-    /// re-discover that the constructor now refuses it.
+    /// Money spans both signs; rates start at one because they are strictly positive.
     #[test]
     fn prop_convert_never_panics_anywhere_in_the_domain(
         units in -DOMAIN_MAX..=DOMAIN_MAX,
@@ -70,7 +53,7 @@ proptest! {
         }
     }
 
-    /// An amount and rate large enough to leave the domain must be REFUSED, not wrapped.
+    /// An amount and rate large enough to leave the domain must be refused, not wrapped.
     ///
     /// The `Err` branch, asserted deliberately rather than reached by accident.
     #[test]
@@ -95,7 +78,7 @@ proptest! {
     ///
     /// This pins the scale handling on its own. An off-by-one-order divisor — dividing by
     /// `10^17` or `10^19` — still produces plausible money for most inputs and would survive
-    /// an example test; here it fails on the first sample. Mutation-checked: it does.
+    /// an example test; this property rejects either error immediately.
     #[test]
     fn prop_a_unit_rate_moves_the_currency_and_nothing_else(
         units in -DOMAIN_MAX..=DOMAIN_MAX,
@@ -108,13 +91,10 @@ proptest! {
         }
     }
 
-    /// A whole-number rate is EXACT, and every mode must agree — checked against an
+    /// A whole-number rate is exact, and every mode must agree — checked against an
     /// independently computed expectation rather than against another code path.
     ///
-    /// This replaces the dynamic-vs-typed agreement proptests, which died with the runtime
-    /// currency variant. Those compared two implementations of the same arithmetic; this
-    /// compares one implementation against plain `i128` multiplication, which is a stronger
-    /// check — two paths can agree by sharing a bug.
+    /// The oracle is plain `i128` multiplication, independent of the conversion path.
     #[test]
     fn prop_a_whole_number_rate_is_exact_under_every_mode(
         units in -IN_DOMAIN_OPERAND..=IN_DOMAIN_OPERAND,

@@ -4,29 +4,16 @@
 //! `list-one.xml` at compile time. There is no table here to edit, and no generated file to
 //! keep in step: the XML in `vendor/` is the only place a currency fact exists.
 //!
-//! What that deletes, concretely. A committed table needs a generator, a verifier, and a rule
-//! that nobody hand-edits it -- three things that can each be skipped. Reading the register
-//! during expansion collapses all of it: the register IS the table, its invariants are checked
-//! as it is read, and a violation fails the build of everything downstream rather than a test
-//! someone can `--skip`.
+//! The build validates the register before emitting the enum and lookup tables.
 //!
 //! Credit and provenance -- source, publication date, capture date, checksum -- are in
 //! `VENDORED.md`.
 
 // `include!` rather than a `mod`: the generated code names `crate::StaticCurrency`
 // and `crate::sealed::Sealed` relative to the crate root, so it has to expand at
-// this path. No `use` here on purpose — an import would be dead, and a reader who deleted it
-// as unused would previously have broken the build, because the emitted code depended on it
-// silently.
+// this path.
 mod generated {
-    // GENERATED CODE, LINTED AS IF HAND-WRITTEN. This is a cost of generating from a build
-    // script rather than a proc macro: expanded macro output is largely exempt from clippy,
-    // while an `include!`d file is ordinary source and every pedantic lint applies to it.
-    //
-    // Both of these are artefacts of a 178-arm generated table, not defects. Currencies that
-    // share a minor-unit exponent produce identical match arms, and merging them would mean
-    // emitting range patterns over a set whose membership is data. `use_self` fires where the
-    // emitter names the enum it is defining.
+    // Generated tables naturally repeat exponent arms and name the enum being emitted.
     #![allow(clippy::match_same_arms, clippy::use_self)]
 
     include!(concat!(env!("OUT_DIR"), "/iso4217.rs"));
@@ -51,8 +38,7 @@ mod tests {
         assert_eq!(Iso4217::USD.exponent(), Some(2));
         assert_eq!(Iso4217::JPY.exponent(), Some(0));
         assert_eq!(Iso4217::KWD.exponent(), Some(3), "Kuwaiti dinar has 3 minor digits");
-        // IDR is 2 per ISO 4217 even though sen are extinct in practice. Display dp
-        // (0) lives in LocalePolicy and is NOT this number. (DESIGN.md C2)
+        // IDR is 2 per ISO 4217 even though locale display commonly uses no fraction.
         assert_eq!(Iso4217::IDR.exponent(), Some(2));
     }
 
@@ -89,7 +75,7 @@ mod tests {
     /// The register is generated, so what needs pinning is not the individual rows but the
     /// properties a regeneration could quietly break.
     ///
-    /// The COUNT is a snapshot of a published edition, not an invariant — ISO adds and
+    /// The count is a snapshot of a published edition, not an invariant — ISO adds and
     /// withdraws codes. It is asserted anyway so that regenerating from a newer list is a
     /// deliberate act with a visible diff, rather than a silent change to what this crate
     /// considers money.
@@ -101,14 +87,10 @@ mod tests {
             "ISO 4217 as published 2026-01-01 has 178 codes. If a regeneration changed this, \
              follow the ordered steps in VENDORED.md — and check what moved."
         );
-        // NOT redundant with build.rs's edition gate, which counts what the PARSER found.
-        // This counts what was EMITTED, so it also covers the expansion in between: a macro
-        // that dropped or duplicated a variant would satisfy the gate and fail here.
+        // The build gate counts parsed rows; this counts emitted variants.
     }
 
-    /// Two currencies sharing a numeric code would make `from_numeric` lossy, and the binary
-    /// serde form encodes exactly that number (C7). Verified at capture against the source;
-    /// verified here against what actually compiled.
+    /// Numeric and alpha-3 identities must be unique.
     #[test]
     fn no_two_currencies_share_an_identity() {
         let mut numerics: Vec<u16> = Iso4217::EVERY.iter().map(|c| c.numeric()).collect();
@@ -151,9 +133,7 @@ mod tests {
         assert_eq!(Iso4217::CLF.exponent(), Some(4), "Unidad de Fomento");
         assert_eq!(Iso4217::XAU.exponent(), None, "gold is not divided into cents");
 
-        // ALL is the Albanian lek. Named here on purpose: it collided with the associated
-        // const that used to be `Iso4217::ALL`, and a future edit reintroducing that name
-        // would break `EVERY` in a way whose error message names neither.
+        // ALL is the Albanian lek; keep it distinct from the `EVERY` collection.
         assert_eq!(Iso4217::ALL.numeric(), 8);
         assert_eq!(Iso4217::ALL.name(), "Lek");
     }

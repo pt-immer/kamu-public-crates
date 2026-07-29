@@ -1,45 +1,18 @@
 [workspace]
 # `hygiene` is the pgrx-free crate holding repository guards and the safe payload harness.
-# It is separate from kamu-money-pg because an integration test there would drag in the pgrx
-# build -- see hygiene/Cargo.toml for the measurement.
+# Keeping it separate avoids compiling pgrx for policy tests.
 members = ["kamu-money-pg", "hygiene"]
-# A locally checked-out pgrx is its OWN workspace. Without this, cargo resolves
-# ITS members' inherited fields against THIS root and dies in `cargo metadata`
-# before compiling anything. See the escape hatch at the end of the patch note.
+# A local pgrx checkout is its own workspace.
 exclude = ["vendor"]
 resolver = "3"
 
-# pgrx comes from our fork on EVERY build, not only the YugabyteDB one.
-#
-# WHY IT IS UNCONDITIONAL. `kamu-money-pg` declares `yb-pg15 = ["pgrx/yb-pg15"]`,
-# and cargo validates that reference while resolving the graph -- whether or not
-# the feature is enabled. A build resolving pgrx from crates.io, where no such
-# feature exists, fails outright. The patch is therefore committed rather than
-# injected at build time by a script.
-#
-# HTTPS, NOT SSH. This manifest is committed to a public repository; an `ssh://`
-# or `git@` form would break every CI runner and every clone without a key. The
-# fork is public, so HTTPS costs nothing.
-#
-# THE FORK IS UPSTREAM v0.19.1 PLUS 33 cfg-GATED LINES, every one inside
-# `#[cfg(feature = "yb-pg15")]`, so without that feature the crates compile
-# byte-identical to the release they are based on -- which is what the
-# PostgreSQL 15-18 matrix exists to keep proving.
-#
-# It also RETIRES the shim's worst property. The predecessor vendored pgrx and
-# rewrote it textually at build time, and `re.sub`/`str.replace` return the
-# subject UNCHANGED when nothing matches: a YugabyteDB release that moved a
-# symbol produced a SUCCESSFUL build of an UNSHIMMED extension. There is no text
-# to patch any more, so that failure class is gone.
-#
-# The crate names and version stay `pgrx`/`pgrx-pg-sys` at 0.19.1 on purpose:
-# `[patch.crates-io]` matches on crate NAME, and `cargo-pgrx` refuses to build an
-# extension whose pgrx version differs from the CLI's own. Releases are
-# distinguished by TAG; `Cargo.lock` pins the exact commit.
+# The committed patch is unconditional because Cargo validates `pgrx/yb-pg15`
+# during resolution even when disabled. The public HTTPS fork is upstream 0.19.1
+# plus feature-gated YugabyteDB adaptations. Package names and version stay
+# compatible with cargo-pgrx; the tag and lockfile select the revision.
 #
 # To try an unpushed fork revision, check it out at `vendor/pgrx-yugabytedb` and
-# switch these two lines to `path = "vendor/pgrx-yugabytedb/pgrx"` -- that is
-# what `exclude = ["vendor"]` above exists for.
+# temporarily use path patches below.
 [patch.crates-io]
 pgrx = { git = "https://github.com/pt-immer/pgrx-yugabytedb", tag = "v0.19.1-yb.1" }
 pgrx-pg-sys = { git = "https://github.com/pt-immer/pgrx-yugabytedb", tag = "v0.19.1-yb.1" }
@@ -51,25 +24,14 @@ authors = [
 ]
 edition = "2024"
 license = "MIT OR Apache-2.0"
-# This lane is NOT publishable and the manifest says so rather than leaving it to
-# a workflow guard. `kamu-money-pg` is a `cdylib` whose dependency graph resolves
-# through the `[patch.crates-io]` above, and cargo does not package a patch: a
-# published crate would silently resolve pgrx from crates.io, where `yb-pg15`
-# does not exist. There is no version of this crate that `cargo publish` can
-# produce correctly, so the answer is `false` at the root, not a reviewer's memory.
+# Cargo packages do not carry `[patch]`; publishing would resolve an incompatible
+# crates.io pgrx. This lane is therefore never publishable.
 publish = false
 repository = "https://github.com/pt-immer/kamu-public-crates"
-# Higher than the main workspace's 1.94 because pgrx 0.19.1 requires 1.96.
-# `rust-toolchain.toml`, CI, and every container pin that measured dependency
-# floor, so the declared MSRV is exercised rather than merely documented.
+# pgrx 0.19.1 requires Rust 1.96.
 rust-version = "1.96"
 
-# pgrx REQUIRES unwinding: it maps PostgreSQL's ereport/longjmp error handling
-# onto Rust panics, so `panic = "abort"` would turn a recoverable SQL error into
-# a process abort that takes the whole backend down. These live at the workspace
-# root because cargo IGNORES profiles declared in non-root members -- it warns,
-# and the result would otherwise be a silent revert to the default. This is one
-# of the four reasons the lane cannot be a member of the main workspace.
+# pgrx maps PostgreSQL errors through unwinding; abort would kill the backend.
 [profile.dev]
 panic = "unwind"
 

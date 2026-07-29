@@ -1,18 +1,17 @@
 # Case-suite coverage of the `#[pg_test]` contract
 
 This manifest maps every `#[pg_test]` in `kamu-money-pg` to the portable SQL case that restates it.
-`hygiene/tests/repo_hygiene.rs` recursively scans `kamu-money-pg/src/`, checks both directions of
+`hygiene/tests/pg_cases.rs` recursively scans `kamu-money-pg/src/`, checks both directions of
 the mapping, verifies every referenced SQL/golden pair, and requires a reason for each
 `NOT-PORTABLE` row. Its test output derives the total, portable count, exception count, and source
 locations from the current tree; none is a maintained constant.
 
 ## Why the port exists
 
-`cargo pgrx test` manages its own PostgreSQL and cannot be aimed at YugabyteDB. Until this suite,
-everything known about `kmoney` on YugabyteDB came from one ~112-line script
-(`kamu-money-pg/yb/abi_battery.sql`), while the in-backend contract tests had only run on PGDG
-PostgreSQL. Restating them as `sql/` + `expected/` pairs makes them run
-against any live server: a single YB node, any node of a YB cluster, or the stock-PG15 reference.
+`cargo pgrx test` manages its own PostgreSQL and cannot target YugabyteDB.
+Restating the contract as `sql/` + `expected/` pairs makes the same cases run
+against a single YB node, every node of a YB cluster, and the stock-PG15
+reference.
 
 ## What is deliberately different from the Rust originals
 
@@ -25,14 +24,12 @@ against any live server: a single YB node, any node of a YB cluster, or the stoc
   top), exactly as the Rust test does. The measured values 7 and 23 are not pinned, because
   `numeric`'s encoding is PostgreSQL's business and pinning it here would turn a change in someone
   else's type into a `kmoney` divergence.
-- **Crafted `recv` payloads.** The Rust tests build the malformed BINARY COPY files inside the
-  backend with `std::fs`. `sql/09-wire.setup.sh` writes them on the server from pinned constants
-  instead. That is stronger provenance, not weaker: the payload is fixed in the repository rather
-  than produced by the code under test — and `09-wire.sql` asserts that a live `kmoney_send` still
-  emits exactly those bytes, so the two cannot drift apart.
+- **Crafted `recv` payloads.** The Rust tests build malformed BINARY COPY
+  fixtures inside the backend. `sql/09-wire.setup.sh` writes equivalent pinned
+  fixtures on the server; `09-wire.sql` also checks live `kmoney_send` bytes.
 
-**Nothing is unported.** If a test ever cannot be expressed here, its row must read
-`NOT-PORTABLE: <reason>` and the guard accepts it — but it has to say so out loud.
+If a test cannot be expressed here, its row must read
+`NOT-PORTABLE: <reason>`. Silent omission fails the hygiene guard.
 
 ## The map
 

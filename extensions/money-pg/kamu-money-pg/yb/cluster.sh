@@ -81,13 +81,8 @@ yb_sql() {
 
 # A client wrapper for node <index>, for run-suite.sh's --client. Echoes the wrapper's PATH.
 #
-# A generated file rather than a `docker exec ...` string, for two reasons that both bite:
-#
-#  1. ysqlsh's stderr is merged into its stdout INSIDE the container. `docker exec` carries the two
-#     as separately multiplexed streams, so a host-side `2>&1` cannot order them -- measured, this
-#     put expected-error lines one `\echo` section late, intermittently.
-#  2. run-suite.sh word-splits --client to append its flags, so a quoted `bash -c` script cannot
-#     survive being embedded in that string. A file has no quoting problem.
+# A generated wrapper merges ysqlsh streams inside the container and survives run-suite.sh
+# appending client flags.
 yb_client_for() {
     local i="$1"
     local w="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}/client-${YB_RUN_ID}-n$i.sh"
@@ -258,17 +253,8 @@ yb_read_replica_up() {
         return 1
     fi
 
-    # ORDER MATTERS, AND IT IS THE REVERSE OF THE OBVIOUS ONE. The read-replica nodes are started
-    # FIRST and the cluster is configured AFTERWARDS, because `configure_read_replica new`
-    # DISCOVERS the replica tservers in order to assign them a placement uuid. Configuring first
-    # crashes it outright:
-    #
-    #   File "/home/yugabyte/bin/yugabyted", line 3167, in configure_read_replica_new
-    #     placement_uuid = [uuid for uuid in list(all_tserver_info.keys()) ...
-    #   IndexError: list index out of range
-    #
-    # -- an empty list comprehension over tservers that do not exist yet. Measured against
-    # 2025.2.5.1-b1; the traceback is recorded here because the message itself explains nothing.
+    # Start replica nodes before configuration: `configure_read_replica new` discovers their
+    # tservers to assign the placement UUID and fails when that set is empty.
     local i name h
     for i in $(seq 0 $((n - 1))); do
         name="$YB_RUN_ID-rr$i"

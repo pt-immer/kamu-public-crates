@@ -1,22 +1,16 @@
-//! `LocalePolicy`: the display form, and the proof it cannot become a second number.
-//! (DESIGN.md C2, §0.1)
+//! `LocalePolicy` display invariants.
 //!
 //! # What this file is really testing
 //!
-//! `Display` is **frozen**. It backs five consumers — itself, the serde wire (C7),
-//! `kmoney`'s in/out (C8), the `postgres`/`sqlx` stored form (C9), and the phase-4/phase-5
-//! differential that asserts they all agree. So a locale-aware renderer cannot be a change
-//! to `Display`; it has to be a separate entry point that leaves every existing text
-//! assertion in this repo standing untouched.
+//! `Display` is the canonical wire and database form. Locale rendering is a separate path.
 //!
 //! That makes two properties worth more than the formatting itself:
 //!
 //! 1. **The canonical form does not move.** A policy existing, or being applied, changes
 //!    nothing about what `to_string()` produces.
-//! 2. **A policy pads, never rounds** (§0.1). IDR is the case the spec names: it *settles*
+//! 2. **A policy pads, never rounds.** IDR *settles*
 //!    at 2dp and *displays* at 0dp, so a naive "display exponent" implementation would drop
-//!    real digits off `16000.50` and print a number that is not the stored one. §0.1 calls
-//!    that a second number claiming to be the money, and rejects it.
+//!    real digits off `16000.50` and print a number that is not the stored one.
 
 use kamu_money_core::advanced::domain::{DOMAIN_MAX, POW10_SCALE};
 use kamu_money_core::errors::LocaleError;
@@ -25,26 +19,12 @@ use kamu_money_core::locale::{DE_EUR, EN_USD, FractionDigits, ID_IDR, JA_JPY, Lo
 use kamu_money_core::{Iso4217, Money, text};
 use proptest::prelude::*;
 
-/// 16 000.50 IDR — the amount the spec's own C2 example turns on.
+/// 16 000.50 IDR.
 fn idr_16000_50() -> Money<IDR> {
     Money::<IDR>::try_from_units(16_000 * POW10_SCALE + POW10_SCALE / 2).expect("in domain")
 }
 
-/// **This test did not compile before 2026-07-27, and that is the whole assertion.**
-///
-/// The module docs instruct an application to build a policy from whatever CLDR/ICU source it
-/// already carries. That instruction was unfollowable while every field was `&'static`: locale
-/// data read from a file or a row at startup could reach a `LocalePolicy` only by being leaked,
-/// cached in an unrelated global, or pasted back into source. The `'static` bought `const`
-/// constructors — a compile-time convenience that had grown past the invariant it protected and
-/// broken the documented runtime path.
-///
-/// A lifetime relaxation cannot be tested by asserting a value, because the old code produced
-/// the same string for the same input; it can only be tested by *compiling* against data the
-/// borrow checker knows is not `'static`. Every string below is heap-allocated at run time, so
-/// `&symbol` is a `&'local str` and nothing here can be promoted.
-///
-/// Mutation-check: put `&'static` back on `LocalePolicy`'s fields and this file stops building.
+/// Heap-owned inputs prove that policies accept non-`'static` locale data.
 #[test]
 fn a_policy_can_be_built_from_data_loaded_at_run_time() {
     // Stand-ins for a CLDR/ICU table read at startup. `String`, not `&'static str`.
@@ -84,7 +64,7 @@ fn the_canonical_form_is_untouched_by_any_policy() {
     assert_eq!(EN_USD.render(usd).unwrap(), "$1,234.50");
 }
 
-/// C2's motivating case, stated as the spec states it: IDR renders 0dp, settles 2dp.
+/// IDR renders with a zero-digit minimum but settles at two decimal places.
 #[test]
 fn rupiah_displays_at_zero_dp_but_settles_at_two() {
     assert_eq!(Iso4217::IDR.exponent(), Some(2), "ISO settlement exponent is 2");
@@ -93,15 +73,10 @@ fn rupiah_displays_at_zero_dp_but_settles_at_two() {
     assert_eq!(ID_IDR.render(whole).unwrap(), "Rp 16.000", "displays at 0");
 }
 
-/// **§0.1, mechanised.** A display minimum BELOW the value's own significant digits must
+/// A display minimum below the value's significant digits must
 /// pad nothing and drop nothing. `16000.50` at a 0dp policy is `16.000,5`, never `16.000`.
 ///
-/// Mutation-check, **measured** rather than asserted: adding
-/// `fraction.truncate(min_fraction_digits)` to the renderer fails 7 of this file's 13 tests,
-/// both property tests among them. An earlier version of this comment predicted that only
-/// this test would catch it — which was a guess, and wrong. Worth recording as written,
-/// because the blast radius is the actual result: "display pads, never rounds" is not one
-/// assertion here, it is load-bearing under most of the file.
+/// Truncating the rendered fraction must make this test fail.
 #[test]
 fn a_policy_pads_but_never_rounds() {
     assert_eq!(ID_IDR.min_fraction_digits(), FractionDigits::ZERO);
@@ -145,7 +120,7 @@ fn the_symbol_may_follow_the_amount() {
 }
 
 /// A currency with a settlement exponent of zero needs no special case: the default
-/// minimum is the ISO exponent, so JPY simply arrives at 0.
+/// minimum is the ISO exponent, so JPY arrives at 0.
 #[test]
 fn a_zero_exponent_currency_needs_no_special_case() {
     let m = Money::<JPY>::try_from_major(1_234).unwrap();

@@ -1,27 +1,15 @@
-//! Money through **YugabyteDB**, over the same canonical text form. (DESIGN.md C9, E15)
+//! Money through YugabyteDB using the canonical text form.
 //!
 //! # What this file covers, and what it does NOT
 //!
 //! This is the **text-adapter** route to YugabyteDB, not the whole of YugabyteDB support.
 //!
-//! E15 measured that the *naive* build cannot host `kamu-money-pg`: YugabyteDB's shipped `elog.h`
-//! includes `yb/yql/pggate/util/ybc_util.h`, which the image does not distribute, so nothing
-//! that includes `postgres.h` compiles against it — and separately, a `.so` built elsewhere
-//! fails on its older glibc. An earlier revision of this comment concluded from that the
-//! extension route was closed *permanently*. **E16 supersedes that conclusion:** built FROM the
-//! YB image with a three-symbol pgrx shim, `kamu-money-pg` loads natively on YugabyteDB and is
-//! byte-exact against stock PostgreSQL 15 (`just yb-ab`).
-//!
-//! So there are two routes, and this file is one of them. It needs nothing from the database —
-//! a `text` column, the wire protocol, and all arithmetic in Rust — which is what makes it the
-//! portability path for managed PostgreSQL that will not load an extension at all. By §0.1's
-//! own axiom it is also the *safer* half: no SQL-side arithmetic means no second implementation
-//! that could disagree with the first.
+//! This covers the portable text-adapter route. Native `kmoney` support has its own extension
+//! gate. The text route needs only a text column and keeps arithmetic in Rust.
 //!
 //! # No `testcontainers-modules` image for YugabyteDB
 //!
-//! There isn't one, so this drives a `GenericImage` directly. Two things that cost time to
-//! learn and are cheap to write down:
+//! There is no module-specific image wrapper, so this drives a `GenericImage` directly:
 //!
 //! - `yugabyted` binds YSQL to the node's **advertised address**, never to loopback. Inside the
 //!   container that is `hostname -i`; from the host it is the mapped port, which is what this
@@ -47,15 +35,8 @@ use testcontainers::{GenericImage, ImageExt};
 
 /// The YugabyteDB image this runs against, **supplied by the caller and recorded by it**.
 ///
-/// This used to be a pair of constants naming `yugabytedb/yugabyte:2025.2.4.1-b4`: a MUTABLE tag,
-/// one release behind the digest the native extension path is pinned to. `release-check` runs this
-/// test through `check-all`, so the run exercised two YugabyteDB identities while reading as one —
-/// and a retag could change what `check-all` tested with nothing in the tree moving.
-///
-/// `just test-yb` resolves the identity through `yb/yb-image.sh` — the same pin file, the same
-/// refusal when a tag has drifted off its validated digest — and hands it here. Absent, this
-/// REFUSES rather than falling back to a hard-coded tag, because a fallback is exactly how the
-/// stale one survived being noticed.
+/// `just test-yb` resolves the pinned identity through `yb/yb-image.sh`. Absence is an error;
+/// this test has no mutable-tag fallback.
 fn yb_image() -> (String, String) {
     let reference = std::env::var("KMONEY_YB_IMAGE").unwrap_or_else(|_| {
         panic!(

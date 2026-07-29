@@ -2,8 +2,7 @@
 // total can leave the domain while the real total stays inside it -- which made the result
 // depend on iteration order (and, in PostgreSQL, on the query plan). The crate removed the
 // impl on purpose; the replacement is the fallible `Money::try_sum`, which accumulates wide
-// and checks the domain once. This pins the removal so it cannot be reintroduced by reflex.
-// (DESIGN.md R2-F4)
+// and checks the domain once. This pins the removal.
 
 use kamu_money_core::iso::USD;
 use kamu_money_core::Money;

@@ -41,15 +41,13 @@ const MAX_ALLOCATE_PARTS: usize = 1 << 16;
 ///
 /// Division is the operation that can round, and in Rust it is guarded by a typestate:
 /// `div_int` returns a `Division<C>` that will not surrender its quotient until the caller has
-/// said what happens to the `Residue` — `take_residue()` or `discard_deliberately()` — and
-/// dropping the residue in silence panics.
+/// chosen `take_residue()` or `discard_deliberately()`. A returned `Residue<C>` is `#[must_use]`
+/// but does not panic on drop.
 ///
 /// **SQL cannot express that.** There is no way to write a PostgreSQL function whose result is
-/// unusable until a second value has been dealt with; every column of a composite can simply
-/// not be selected. So rather than ship a weaker `/` that *looks* like the Rust one and
-/// quietly loses the guarantee, this crate ships the operation that has no residue to lose:
-/// allocation conserves by construction, so `kmoney_sum(VARIADIC kmoney_allocate(x, w)) = x`
-/// for every input.
+/// unusable until a second value has been dealt with; any composite column may be omitted. This
+/// crate therefore exposes allocation, which has no residue to lose:
+/// `kmoney_sum(VARIADIC kmoney_allocate(x, w)) = x` for every input.
 ///
 /// If you need a quotient and a remainder, do it in Rust, where the typestate is real. That is
 /// the honest boundary — see the `kamu_money_core` docs on `Division`.
@@ -64,21 +62,9 @@ const MAX_ALLOCATE_PARTS: usize = 1 << 16;
 /// The split is at the **canonical scale**, not at the currency's minor unit: these are not
 /// three payable amounts, they are three exact thirds. Conservation is the guarantee on offer,
 /// and it is the one that matters when the shares go back into a ledger.
-/// `Array<'_, i32>`, NOT `Vec<Option<i32>>` — and the difference is the whole cap.
-///
-/// pgrx converts each argument to its Rust type *before* the function body runs, and
-/// `impl FromDatum for Vec<Option<T>>` is `Array::from_polymorphic_datum(..).map(|a|
-/// a.iter().collect::<Vec<_>>())`. With the old signature a hostile `ARRAY[…]` was therefore
-/// walked and copied into a Rust allocation before `weights.len() > MAX_ALLOCATE_PARTS` could
-/// look at it, and the body then allocated a second bounded vector beside it. The check
-/// announced a resource guarantee it could not give: the tests at 65 536 and 65 537 pinned the
-/// *semantic* threshold and would have passed identically with no early refusal at all.
-///
-/// `Array` borrows the detoasted varlena instead, and `len()` reads the array header — O(1),
-/// nothing walked. So the cap is now enforced on a number, before any per-element work exists to
-/// be done. This is a backend-stability property, not a money-correctness one; it is here because
-/// an extension that can be made to allocate unboundedly from one SQL call is a liability on the
-/// process that holds the money, whatever the arithmetic does.
+/// `Array<'_, i32>` borrows the detoasted varlena, and its O(1) `len()` lets the function reject
+/// an oversized request before walking or copying elements. A `Vec<Option<i32>>` argument would
+/// allocate during pgrx conversion before the body could enforce the cap.
 // `Array` by value, not by reference, for the same reason `kmoney_sum` takes `VariadicArray` by
 // value: pgrx's `#[pg_extern]` ABI takes the owned argument type to build the SQL wrapper, so
 // clippy::needless_pass_by_value cannot be honoured here. The value is a BORROW of the detoasted
@@ -164,11 +150,10 @@ mod tests {
         assert_eq!(shares, "USD 3.333333333333333334 | USD 3.333333333333333333 | USD 3.333333333333333333");
     }
 
-    /// R2-F1, at the SQL boundary: a zero-weight recipient receives exactly nothing, including
-    /// none of the truncation remainder. One canonical unit across weights `[0, 1, 1]` leaves a
+    /// A zero-weight recipient receives nothing, including truncation remainder. One canonical
+    /// unit across weights `[0, 1, 1]` leaves a
     /// 1-unit remainder that must reach the first POSITIVE slot (index 1), never the zero at
-    /// index 0 — money conserved *and* paid to a party with a claim. Shares `kamu-money-core`'s
-    /// `allocate_units` kernel, so this is the same fix the Rust guard checks, seen through SQL.
+    /// index 0. This delegates to `kamu-money-core`'s `allocate_units` kernel.
     #[pg_test]
     fn allocation_never_pays_a_zero_weight_recipient() {
         let shares = Spi::get_one::<String>(

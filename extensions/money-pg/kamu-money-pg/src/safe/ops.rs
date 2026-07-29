@@ -118,9 +118,8 @@ fn kmoney_ge(a: kmoney, b: kmoney) -> bool {
 /// [`kamu_money_core::advanced::stable_hash`]
 /// specifies the algorithm (FNV-1a over the canonical little-endian payload, then `fmix64`),
 /// pins it with golden vectors checked against an independent implementation, and carries the
-/// version constant a change would have to bump. Going through `kamu-money-core` rather than
-/// restating it here is C9's rule: the database and the Rust program cannot disagree about a
-/// stored value if only one of them defines what it means.
+/// version constant a change would have to bump. Delegating to `kamu-money-core` keeps the
+/// database and Rust definitions identical.
 #[pg_extern(immutable, parallel_safe, requires = ["kmoney_concrete"])]
 fn kmoney_hash(value: kmoney) -> i32 {
     let amount = validated_or_error(value.payload(), "kmoney");
@@ -171,17 +170,9 @@ fn kmoney_sub(a: kmoney, b: kmoney) -> kmoney {
 /// `kmoney_sum(VARIADIC array_agg(col))`, which materialises every row into one array before any
 /// arithmetic happens and is linear in the number of rows.
 ///
-/// This once stood in for a `sum(kmoney)` aggregate whose transition state was `kmoney` itself.
-/// That aggregate inherited the `+` operator's cross-currency refusal, which was correct, but it
-/// also inherited its narrow state: each partial sum had to stay in the domain, so a running
-/// total that transiently left the domain and returned -- `[MAX, MAX, -MAX]` -- failed on the
-/// transient. Because PostgreSQL may scan rows and combine parallel partials in any order, the
-/// same multiset could sum or fail depending on the plan (R2-F4). The aggregate is back with a
-/// WIDE state; this function is not what makes column totals possible any more, and it stays
-/// because summing explicit values is its own operation. A variadic function has no transition
-/// state and no parallel partials: it receives every argument in one call and sums them wide in
-/// `kamu_money_core::arith::sum_units` (I256, one domain check at the end), so it is a function of
-/// the values alone.
+/// This function sums explicit values. Column totals use `sum(kmoney)`, whose wide transition
+/// state supports parallel partials. The variadic form receives every value in one call and
+/// accumulates through `UnitSum`, so transient domain excursions do not depend on argument order.
 ///
 /// Currency is checked at run time here -- the fastest check, a `u16` compare against the first
 /// operand's code -- because unlike Rust the currency is only known at run time. `+` keeps its
@@ -196,15 +187,10 @@ fn kmoney_sub(a: kmoney, b: kmoney) -> kmoney {
 #[pg_extern(immutable, parallel_safe, requires = ["kmoney_concrete"])]
 fn kmoney_sum(values: VariadicArray<kmoney>) -> Option<kmoney> {
     let mut reference: Option<u16> = None;
-    // STREAMS through `UnitSum` rather than collecting into a `Vec<i128>` and handing that to
-    // `sum_units`. The array is already materialised by PostgreSQL -- that part is inherent to
-    // `VARIADIC` -- but the second copy was not, and this function is the one somebody reaches for
-    // with `array_agg` over a big table despite the doc comment above telling them not to.
-    // `sum_units` is itself a fold over this accumulator, so the arithmetic, the per-term domain
-    // check and the single check on the total are identical; only the intermediate `Vec` is gone.
+    // Stream through the shared accumulator without a second Vec allocation.
     let mut acc = UnitSum::ZERO;
 
-    // `flatten()` drops SQL NULL elements, matching the old aggregate's NULL-skipping.
+    // SQL aggregate semantics ignore NULL elements.
     for value in values.iter().flatten() {
         let amount = validated_or_error(value.payload(), "kmoney_sum");
         match reference {
@@ -292,12 +278,8 @@ mod tests {
         assert_eq!(total, "USD 11.00");
     }
 
-    /// The R2-F4 property, at the SQL boundary. `MAX + MAX` transiently leaves the domain while
-    /// the total (`MAX`) is inside it. The removed `sum` aggregate, whose transition state was a
-    /// plain `kmoney`, checked the domain on every partial, so it failed or succeeded depending
-    /// on the order PostgreSQL combined rows — and `PARALLEL = SAFE` made that a plan decision.
-    /// `kmoney_sum` receives every argument at once and accumulates in `I256`, so the result is
-    /// the multiset's, not the plan's.
+    /// `MAX + MAX` transiently leaves the domain while the final total remains inside it.
+    /// Wide accumulation makes the result independent of argument order.
     #[pg_test]
     fn kmoney_sum_is_order_independent_across_a_domain_edge_transient() {
         let max = "USD 999999999999999999.999999999999999999";
@@ -369,8 +351,8 @@ mod tests {
             .expect("row");
         assert!(equal);
 
-        // `=` is TOTAL, so it filters the mixed column without raising: two rows equal USD 1.00,
-        // and the IDR row simply does not match.
+        // `=` is total, so it filters the mixed column without raising: two rows equal USD 1.00,
+        // and the IDR row does not match.
         let usd_ones = Spi::get_one::<i64>("SELECT count(*) FROM cmp WHERE amount = 'USD 1.00'::kmoney")
             .expect("query ran")
             .expect("row");

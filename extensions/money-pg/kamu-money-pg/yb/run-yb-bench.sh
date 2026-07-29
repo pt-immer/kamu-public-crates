@@ -3,34 +3,23 @@
 #
 #   kamu-money-pg/yb/run-yb-bench.sh [yb-image] [artifact-dir] [rows]
 #
-# P2.1 of the readiness plan (gap G7): there was no performance data for the YugabyteDB path at
-# all. `kmoney` is an 18-byte pass-by-reference type, so every function result is a palloc, and
-# that cost was described as "plausibly fine and entirely unmeasured". This measures it.
-#
-# NO PASS/FAIL THRESHOLD, DELIBERATELY. A first measurement has nothing to regress against, and a
-# number invented today to be a limit tomorrow is worse than no limit: it would either be so loose
-# it never fires or so tight it fires on an unrelated machine. What this produces is a recorded
-# baseline. A threshold belongs in a second run, against these numbers, on comparable hardware.
+# `kmoney` is an 18-byte pass-by-reference type, so each function result allocates. This benchmark
+# records a baseline without a pass/fail threshold; comparisons require equivalent hardware.
 #
 # WHAT IT COMPARES. The three realistic ways to store an amount:
 #   kmoney            -- 18 bytes, currency included, arithmetic in the backend
-#   text              -- the canonical form, what the phase-4 driver adapters use
+#   text              -- the canonical form used by the portable driver adapters
 #   numeric(36,18)    -- what a schema does today, and it needs a currency column beside it
 # The numeric column is measured WITH its companion currency column, because comparing an 18-byte
 # self-describing value against a bare numeric flatters kmoney by pricing only half the schema.
 #
-# READ THE NUMBERS AS RATIOS, NOT ABSOLUTES. This runs a 3-node cluster inside one docker daemon on
+# Read the results as ratios, not absolutes. This runs a three-node cluster in one Docker daemon on
 # one machine; the absolute throughput says more about that than about YugabyteDB.
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
-# ONE WRITER AT A TIME, TAKEN BEFORE ANYTHING SHARED IS TOUCHED. This script reads and writes under
-# ${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}, which with that variable unset is the single tree
-# every other suite also uses; a 2026-07-26 review found several entry points reaching those paths
-# before -- or entirely without -- taking the lock, so a stray run could overwrite the artefact
-# triplet a release was in the middle of hashing. Setting KMONEY_RUN_ROOT gives a run its own tree,
-# which removes the contention rather than serialising it; the lock stays for the shared default.
-# Re-entrant: a suite started by `release-check` inherits the descriptor and proceeds.
+# Lock before touching the shared default run root. A distinct `KMONEY_RUN_ROOT` isolates a run;
+# descendants of the release gate inherit the descriptor and re-enter.
 # shellcheck source=kamu-money-pg/yb/workspace-lock.sh
 source ./kamu-money-pg/yb/workspace-lock.sh
 workspace_lock "$(basename "$0")" || exit 1
@@ -54,15 +43,11 @@ REPORT="$OUT/report.txt"
 
 say() { printf '%s\n' "$*" | tee -a "$REPORT"; }
 
-# Milliseconds for one SQL statement, from psql's own `\timing` rather than the shell's clock: the
-# shell would be timing docker exec, ysqlsh startup and the network as well, which on a 20k-row
-# insert is noise but on a scalar SELECT would be most of the measurement.
+# Measure each SQL statement with psql's `\timing`; a shell clock would include `docker exec`,
+# ysqlsh startup, and network latency.
 #
-# Fed on STDIN, not through `-c`. `psql -c` takes SQL, and a backslash meta-command mixed into the
-# same string does not reliably run -- measured: the first version of this script produced no
-# timing at all, and `set -o pipefail` then turned the empty grep into a bare exit 1 with no
-# message. Hence also the `|| true` and the explicit empty check: a benchmark that cannot measure
-# something must say so in its own report, not die halfway through it.
+# Feed `\timing` and SQL on stdin because `-c` accepts SQL, not a mixed psql meta-command stream.
+# The explicit empty check reports a missing measurement instead of exiting through the grep.
 timed() {
     local node="$1" sql="$2" out
     out=$(printf '\\timing on\n%s\n' "$sql" \
@@ -121,12 +106,10 @@ say "aggregate over the whole table (ms)"
 # palloc per result across $ROWS values -- the cost the readiness plan flagged as unmeasured. The
 # numeric side is PostgreSQL's own sum() and is the fastest thing on offer; that is the point of
 # putting it here.
-a_k=$(timed 0 "SELECT kmoney_sum(VARIADIC array_agg(amount))::text FROM b_kmoney;")
+a_k=$(timed 0 "SELECT sum(amount)::text FROM b_kmoney;")
 a_n=$(timed 0 "SELECT sum(amount) FROM b_numeric;")
-say "  kmoney_sum over array_agg   ${a_k}"
+say "  kmoney sum() aggregate      ${a_k}"
 say "  numeric sum() aggregate     ${a_n}"
-say "  (kmoney has NO sum aggregate by design -- R2-F4 -- so this is not the same operation:"
-say "   the numeric side streams, the kmoney side materialises an array first.)"
 say ""
 
 say "in-backend arithmetic, $ROWS additions (ms)"

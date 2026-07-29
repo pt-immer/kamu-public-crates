@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fail-closed oracle for the ABI battery (review F4, widened by review-3 N1/N2/N8).
+# Fail-closed oracle for the ABI battery.
 #
 # `yb-ab` diffs the YugabyteDB output against the stock-PG15 output. That proves the two engines
 # produced the SAME bytes. It cannot prove they produced the RIGHT bytes, or that either one ran
@@ -19,7 +19,7 @@ set -euo pipefail
 # THE ASSERTION TABLE.
 #
 # One list, consumed BOTH by the checker below and by assert-battery-selftest.sh through
-# `--list`. That coupling is deliberate and is the fix for review-3 N1: the previous selftest
+# `--list`. That coupling keeps the self-test synchronized with the production oracle.
 # hard-coded its own mutations, covered 6 of 10 assertions, and still printed "every assertion
 # still bites". Driving the control from this table means an assertion added here is negatively
 # controlled automatically, by construction rather than by remembering.
@@ -31,7 +31,7 @@ set -euo pipefail
 #      (psql renders `header`, `-----`, `value`). For one-column results whose value alone
 #      ("t", "2") is far too generic to pin on its own.
 #
-# VALUES, not shapes. review-3 N2 demonstrated six realistic regressions passing the old oracle
+# Values, not shapes. Each assertion names the exact semantic value it protects.
 # because it asserted `18 |` (a width) rather than the payload, and never asserted the arithmetic
 # results at all.
 # ---------------------------------------------------------------------------------------------
@@ -43,7 +43,7 @@ E%%%^ +3 \| t *$%%%%%%s2b COPY BINARY round trip: rows_recv = 3, roundtrip_exact
 F%%%USD 10.75 | USD 10.25%%%%%%s3 same-currency + and - results
 F%%%USD 11.00%%%%%%s4 kmoney_sum result
 E%%%^ *USD 3\.333333333333333334 \| USD 3\.333333333333333333 \| USD 3\.333333333333333333 *$%%%%%%s5 allocate even split, odd unit on the first share
-E%%%^ *USD 0\.00 \| USD 0\.000000000000000001 \| USD 0\.00 *$%%%%%%s5 allocate zero-weight guard (R2-F1)
+E%%%^ *USD 0\.00 \| USD 0\.000000000000000001 \| USD 0\.00 *$%%%%%%s5 allocate zero-weight guard
 H%%%conserves%%%IDR 16000.01%%%s5 allocation conserves the total exactly
 E%%%^ t  \| t  \| f *$%%%%%%s6 comparison predicates: lt, ge, cross-currency eq is false
 H%%%usd_ones%%%2%%%s6 equality predicate selectivity over a mixed column
@@ -53,7 +53,7 @@ H%%%mixed_cross_eq_false%%%f%%%s8 kmoney_mixed cross-currency equality is false,
 F%%%kmoney: cannot compute USD + IDR: different currencies%%%%%%refusal: cross-currency addition
 F%%%kmoney: cannot sum USD and IDR: different currencies%%%%%%refusal: cross-currency variadic sum
 F%%%kmoney: cannot compute IDR > USD: different currencies%%%%%%refusal: cross-currency ordering
-H%%%agg_across_a_domain_edge%%%USD 999999999999999999.999999999999999999%%%s8 sum(kmoney) totals a column across a partial sum that left the domain (R2-F4b)
+H%%%agg_across_a_domain_edge%%%USD 999999999999999999.999999999999999999%%%s8 sum(kmoney) totals a column across a partial sum outside the stored-value domain
 F%%%function sum(kmoney_mixed) does not exist%%%%%%refusal: no sum(kmoney_mixed) aggregate
 F%%%canonical units is outside the supported range%%%%%%refusal: one past the domain top
 F%%%fractional digits exceeds the supported scale of 18%%%%%%refusal: excess precision, refused not rounded
@@ -67,7 +67,7 @@ fi
 
 OUT="${1:?usage: assert-battery.sh <output-file> <label> <client-exit-status>}"
 LABEL="${2:?usage: assert-battery.sh <output-file> <label> <client-exit-status>}"
-# NO DEFAULT (review-3 N8). This parameter is the fail-closed evidence that the client did not
+# No default. This parameter proves that the client did not
 # die; defaulting it to 0 would mean a caller who forgot to pass it silently asserts "nothing
 # broke" -- the exact assumption the whole script exists to stop making.
 STATUS="${3:?client exit status is required -- pass the captured status, never assume 0}"

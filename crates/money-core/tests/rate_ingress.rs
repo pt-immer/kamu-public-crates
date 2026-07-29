@@ -1,4 +1,4 @@
-//! Every public way to build a `Rate`, shown to refuse a non-positive one. (H1; DESIGN.md C6)
+//! Every public `Rate` ingress rejects non-positive values.
 //!
 //! # Why a whole file, when one constructor owns the rule
 //!
@@ -9,13 +9,6 @@
 //! an adapter that quietly grew its own parse would enforce a weaker rule and nothing else in
 //! the tree would notice. The claim being tested is therefore not "the constructor refuses zero"
 //! (`rate.rs` pins that) but **"no ingress is weaker than the constructor"**.
-//!
-//! That distinction earned its own file on 2026-07-27. Until then `Rate` accepted the full signed
-//! domain deliberately — C6 bounds magnitude and is silent on sign — on the reasoning that sign
-//! is a quote feed's responsibility. The decision recorded one condition for revisiting itself:
-//! *"if a feed is ever ingested without validation."* Four of the five surfaces below **are** feed
-//! ingress, shipped in this repository, decoding untrusted bytes with no positivity check of their
-//! own. The condition was met by this crate's own code, which is why the decision was re-taken.
 //!
 //! # What a zero or negative rate does if it gets through
 //!
@@ -142,8 +135,8 @@ mod wire {
         );
     }
 
-    /// Binary does NOT reuse the text parser — it decodes `(ISO numeric, ISO numeric, i128)`
-    /// straight to units (R2-F2) — so it is the ingress most likely to drift from the rule. The
+    /// Binary does not reuse the text parser; it decodes `(ISO numeric, ISO numeric, i128)`
+    /// straight to units, so it has a separate regression. The
     /// bytes are built the same way `wire.rs`'s own tests build them: by encoding the tuple the
     /// codec is specified as, rather than by copying a literal nobody can re-derive.
     #[test]

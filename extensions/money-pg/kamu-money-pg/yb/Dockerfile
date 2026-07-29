@@ -61,18 +61,14 @@ RUN cargo pgrx init --pg15 /home/yugabyte/postgres/bin/pg_config \
 #
 # The compiler cannot replace this probe, even now that the adaptations live in a pgrx fork rather
 # than in textual patches. A patch that no longer APPLIES is a build failure by construction; a
-# patch that still applies while no longer being the RIGHT one is not. Three arguments too many,
-# or an alias shadowing a global that came back, both compile. The probe reads the headers and
-# checks the assumed shape before anything is built -- P1.1 in the readiness plan.
+# A patch may still compile after the underlying header contract changes. The probe checks the
+# assumed header shape before building.
 RUN chmod +x kamu-money-pg/yb/probe-yb-abi.sh && ./kamu-money-pg/yb/probe-yb-abi.sh
 
 # Package kamu-money-pg (PG15) against YB's own pg_config.
 #
-# NO VENDORING AND NO TEXTUAL PATCHING HAPPENS HERE ANY MORE. The three adaptations live in the
-# pgrx fork the workspace root patches in, behind its `yb-pg15` feature; this just selects it.
-# What that deletes is the shim's worst property -- `re.sub`/`str.replace` return the subject
-# UNCHANGED when nothing matches, so a YugabyteDB release that moved a symbol used to produce a
-# SUCCESSFUL build of an UNSHIMMED extension.
+# The three adaptations live behind `yb-pg15` in the pgrx fork patched by the workspace root.
+# This build selects that feature; it does not vendor or text-patch generated bindings.
 #
 # `--features pg15,yb-pg15`, not RUSTFLAGS="--cfg yb": a cfg set through RUSTFLAGS is global,
 # leaks into every crate in the build, and leaves nothing in any manifest saying this build
@@ -135,7 +131,7 @@ COPY --from=build /out/ /
 # survives is ordinary PostgreSQL extension discipline -- roll the image everywhere first (the new
 # library must still serve the CURRENT catalog version), then update the catalog once, then recycle
 # connections, because `module_pathname = 'kmoney'` means live backends keep the old library
-# loaded. See yb/RUNBOOK.md §5.
+# loaded. See RUNBOOK.md, "Extension version changes".
 #
 #   just pg yb-node-image
 FROM ${YB_IMAGE} AS node
@@ -164,9 +160,8 @@ RUN set -eux; \
 # WHY IT NEEDS ITS OWN TARGET. The probe compares a null `#[pg_extern]` against a null C function
 # of the same signature, and the subtraction only means anything if BOTH were compiled against
 # the same server headers and load into the same backend. On YugabyteDB that means YB's own
-# PG15 headers and YB's glibc -- the same argument that makes the extension itself build FROM
-# the YB image rather than beside it. A `c_noop.so` compiled anywhere else measures a different
-# ABI, or does not load at all (E15).
+# PG15 headers and YB's glibc. A `c_noop.so` compiled elsewhere measures a different ABI or may
+# not load.
 #
 # The runtime image has no compiler, so the .so is built in the `build` stage, which does.
 #

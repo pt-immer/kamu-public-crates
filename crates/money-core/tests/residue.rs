@@ -38,11 +38,8 @@ fn dropping_a_residue_never_panics() {
     drop(Residue::<USD>::try_from_units(1).unwrap());
 }
 
-/// `div_int` hands back ONE value, not a tuple, and there is no way to reach the quotient
+/// `div_int` returns one value, and there is no way to reach the quotient
 /// without saying what happens to the residue.
-///
-/// The tuple was the defect: two values can be separated. One value cannot be,
-/// so the obligation travels with the quotient until the caller chooses an exit.
 #[test]
 fn a_division_cannot_yield_its_quotient_without_a_decision() {
     let ten = || Money::<USD>::try_from_units(10_000_000_000_000_000_000).unwrap();
@@ -77,14 +74,12 @@ fn untagged_division_exposes_the_same_two_decisions_for_adapters() {
     assert_eq!(quotient, 3);
 }
 
-/// Dropping an undecided `Division` is SAFE, and that is the whole point.
+/// Dropping an undecided `Division` is safe.
 ///
-/// No panic, because no money was handed out — the quotient never escaped, so nothing left
-/// the ledger. Compare the old tuple API, where the caller already held the quotient and the
-/// runtime bomb was the only thing standing behind `let (share, _) = ...`.
+/// No money was handed out because the quotient never escaped.
 #[test]
 fn dropping_an_undecided_division_is_silent_because_nothing_escaped() {
     let m = Money::<USD>::try_from_units(10_000_000_000_000_000_000).unwrap();
     let _ = m.div_int(NonZeroU32::new(3).unwrap(), Rounding::TowardZero);
-    // reaching here without a panic IS the assertion
+    // Reaching here without a panic is the assertion.
 }

@@ -52,8 +52,7 @@ fn main() {
     let paid = salary.convert(usd_idr, Rounding::HalfEven).expect("well inside the domain");
     println!("  {}  at USD/IDR 16000  ->  {}", salary, paid);
 
-    // ------------------------------------------------------------------------------------
-    // WILL NOT COMPILE — the pair is checked at compile time, on BOTH ends:
+    // Does not compile: both ends of the pair are checked statically.
     //
     //     let eur_idr: Rate<EUR, IDR> = rate_of(17_000);
     //     let _ = salary.convert(eur_idr, Rounding::HalfEven);
@@ -63,8 +62,7 @@ fn main() {
     //     //                                    ^^^^^^^ expected `Rate<USD, EUR>`,
     //     //                                            found `Rate<USD, IDR>`
     //
-    // Pinned by tests/ui/wrong_rate_pair.
-    // ------------------------------------------------------------------------------------
+    // Pinned by tests/ui/wrong_rate_pair.rs.
 
     println!("\n== a runtime quote table that still hands out typed rates ==");
 
@@ -82,7 +80,7 @@ fn main() {
     let missing: Option<Rate<IDR, EUR>> = quotes.get();
     println!("  looked up IDR/EUR  ->  {missing:?}");
 
-    println!("\n== convert_via rounds ONCE, and it is a ledger rule, not a precision tweak ==");
+    println!("\n== convert_via rounds once ==");
 
     // One canonical unit, routed USD -> EUR -> IDR at 0.5 then 2.0. Sequentially the
     // intermediate is half a unit, which the ledger cannot express, so it quantises to zero
@@ -101,9 +99,9 @@ fn main() {
     println!("  convert_via  {}   <- one rounding, at the end", via);
     println!("  (there is no moment where a party appears to hold EUR they never held)");
 
-    println!("\n== overflow is a CONDITION, not a bug — which is why there is no `impl Mul` ==");
+    println!("\n== conversion can leave the domain ==");
 
-    // A conversion that leaves the domain is refused by name. It reports the PAIR rather
+    // A conversion that leaves the domain is refused by name. It reports the pair rather
     // than the attempted value, because the attempted value does not fit an i128 — a
     // saturated number would be a lie about what was computed.
     let vast = Money::<USD>::try_from_units(DOMAIN_MAX).expect("the domain top");
@@ -113,8 +111,8 @@ fn main() {
         Err(e) => println!("  refused: {e}"),
     }
 
-    // And the dangerous near-miss: a quotient of exactly 2^128 truncates to ZERO. A
-    // narrowing that used `as` would return Ok($0.00) here, with the money simply gone.
+    // A quotient of exactly 2^128 is the dangerous near-miss: narrowing with `as` would return
+    // `Ok($0.00)` and lose the amount.
     let tricky = Money::<USD>::try_from_units(18_446_744_073_709_551_616_000_000_000).expect("ok");
     let same: Rate<USD, IDR> = Rate::try_from_units(18_446_744_073_709_551_616_000_000_000).expect("ok");
     println!("  2^128 case:  {:?}", tricky.convert(same, Rounding::HalfEven));

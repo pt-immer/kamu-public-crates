@@ -1,32 +1,16 @@
-//! `kmoney` — money as a native PostgreSQL type. (kamu-money-core's DESIGN.md C8)
+//! `kmoney`: money as a native PostgreSQL type.
 //!
-//! The storage claim this crate makes good on: a **fixed-size payload, no varlena decode, no
-//! limb codec**, so reading a value is a header read and a cast.
+//! The value is an 18-byte, fixed-width, byte-aligned payload with no varlena header. It carries
+//! canonical units and an ISO 4217 numeric code. `numeric(36,18)` is often smaller, but can round
+//! excess precision before constraints inspect it.
 //!
-//! **18 bytes on disk and in memory**, fixed width, no varlena header — the same shape `uuid`
-//! has (`typlen = 16, typbyval = f, typalign = c, typstorage = p`), two bytes wider.
-//!
-//! That number took three measurements to settle, and every one of them corrected a claim this
-//! document had already made. E12 predicted 19 by reading pgrx's source; the first
-//! `pg_column_size` returned **36**, because `i128`'s 16-byte alignment padded the struct to 32
-//! and — worse — made the reference pgrx hands out unsound. Byte-array fields brought it to the
-//! predicted 19, but only on disk: as an expression it was 22, since a varlena carries a 4-byte
-//! header in memory. Leaving varlena behind removed the header from both. See E14.
-//!
-//! It is **not** a space win over `numeric(36,18)`, which is variable-width and smaller for
-//! every amount short of the domain top. What it buys is a value that cannot be stored without
-//! its currency, a width that does not move with the data, and a refusal of the precision
-//! `numeric` silently rounds away (E13).
-//!
-//! Every digit of the text form and every currency lookup comes from `kamu_money_core::text`. C9
-//! requires the adapters to be thin over one codec, and this crate holds no table of its own:
-//! a currency that `kamu_money_core` does not know is an error here rather than a second opinion.
+//! Text parsing, rendering, currency lookup, and arithmetic delegate to `kamu_money_core`.
 
 // kamu-money-core's lint posture, mirrored here. Both crates cherry-pick from `clippy::restriction`
 // and `clippy::nursery` BY NAME rather than enabling either group, for the reason kamu-money-core
 // records: `restriction` is self-contradictory by design and `nursery` is under development, so
 // denying a whole group lets a toolchain upgrade break the build for reasons unrelated to this
-// code. (kamu-money-core's DESIGN.md C10)
+// code.
 //
 // This is the C ABI crate, so casts are load-bearing rather than incidental — which is exactly
 // why the lints are ON. Every `as` that survives is a deliberate reinterpret, and each one takes
@@ -148,15 +132,15 @@ CREATE TYPE kmoney_mixed;
 fixed_length_money_type! {
     /// Money, on disk: 18 bytes, fixed width, currency carried in the value.
     ///
-    /// The currency lives in the **value**, not the type, and C8 measured why that is forced
-    /// rather than chosen: PostgreSQL does not pass typmod to operators, so `kmoney(USD) +
+    /// The currency lives in the value because PostgreSQL does not pass typmod to operators:
+    /// `kmoney(USD) +
     /// kmoney(IDR)` reaches the operator as `kmoney + kmoney` and the only thing that can
     /// tell them apart is the value itself.
     ///
     /// # Why this type is `snake_case`
     ///
-    /// The SQL name is the permanent public interface of a database extension and kamu-money-core's DESIGN.md C8
-    /// fixes it as `kmoney`, so the Rust name is what gives way — nothing imports this crate
+    /// The SQL name is the permanent public interface, so the Rust name matches `kmoney`.
+    /// Nothing imports this crate
     /// as a Rust library, it is a `cdylib`. Keeping the two identical also means
     /// `rust_regtypein::<Self>()`, which resolves the OID from the Rust type's last path
     /// segment, finds the right type without a mapping table.
@@ -170,11 +154,7 @@ fn kmoney_in(input: &core::ffi::CStr) -> kmoney {
         Ok(t) => t,
         Err(e) => error!("kmoney: input is not valid UTF-8: {e}"),
     };
-    // **Refuses excess precision rather than rounding.** E13 measured PostgreSQL's own
-    // numeric(36,18) cast silently storing '0.0000000000000000004' as ZERO, with no error, and
-    // no CHECK or DOMAIN able to catch it because constraints run AFTER the cast. A type input
-    // function runs BEFORE any coercion, which is exactly why kmoney can refuse where
-    // numeric cannot.
+    // The type input function refuses excess precision before PostgreSQL coercion can round it.
     match text::parse(text) {
         Ok((currency, units)) => kmoney::new(units, currency.numeric()),
         Err(e) => error!("kmoney: {e}, in {text:?}"),
@@ -211,7 +191,7 @@ fn kmoney_out(value: kmoney) -> alloc::ffi::CString {
 // The typmod VALUE is the ISO 4217 numeric code. PostgreSQL reserves -1 for "no modifier" and
 // every assigned code is 1..=999, so the two never collide and no encoding is needed.
 //
-// **This does not make cross-currency arithmetic fail**, and C8 measured why: PostgreSQL does
+// This does not make cross-currency arithmetic fail: PostgreSQL does
 // not pass typmod to operators, so `kmoney(USD) + kmoney(IDR)` still arrives as
 // `kmoney + kmoney`. Typmod is a column-level INSERT/coercion check and nothing more; the
 // value-carried code remains the only thing standing between two currencies in an expression.
@@ -220,17 +200,14 @@ fn kmoney_out(value: kmoney) -> alloc::ffi::CString {
 // =========================================================================================
 // Arithmetic — defined for `kmoney` and, deliberately, for NOTHING ELSE.
 //
-// C8's second invariant: `kmoney_mixed` below has no `+`, no `-`, and no sum of any kind. That
+// `kmoney_mixed` below has no `+`, no `-`, and no sum of any kind. That
 // is stronger than a runtime check, because `SELECT sum(amount)` on a mixed column fails at
 // PLAN time — before a row is read — rather than on row 4,000,000 of a nightly batch. It is
 // the SQL analogue of `Add` existing only on `Money<C>`: the unproven form cannot be added
 // because the impl is not there.
 //
-// `kmoney` itself has `+`, `-`, the variadic `kmoney_sum`, AND a `sum` aggregate whose
-// transition state is wide. R2-F4 removed an aggregate whose state was a plain `kmoney`: it
-// checked the domain on every partial total, so a running sum that transiently left the domain
-// and returned failed or succeeded by plan order. The state was the defect, not the aggregate —
-// see `kmoney_sum_accum` for the widened one that replaces it.
+// `kmoney` has `+`, `-`, variadic `kmoney_sum`, and a `sum` aggregate with a wide transition
+// state. Partial totals therefore cannot fail solely because of row or combine order.
 // =========================================================================================
 
 fixed_length_money_type! {
@@ -254,32 +231,9 @@ fixed_length_money_type! {
     kmoney_mixed
 }
 
-// =========================================================================================
-// THERE IS NO PATH TO `numeric`. Deliberately, and this is the second time it was removed.
-//
-// A `kmoney -> numeric` cast was written here and deleted the same day (operator ruling,
-// 2026-07-22: "NEVER use NUMERIC"). The reasoning, recorded so it is not rediscovered:
-//
-//   - The cast itself is exact. That is not the problem.
-//   - Its RESULT is an unconstrained `numeric`, and every PostgreSQL numeric operator is then
-//     in scope -- including `*`, `/` and `avg()`, which E9 measured as silently rounding at a
-//     PG-chosen, value-dependent scale. C8's claim is that the boundary rule DISAPPEARS
-//     rather than being policed; a cast to numeric puts it back, invisibly.
-//   - `sum(x::numeric)` is exact (E9) and `avg(x::numeric)` is not. Those are indistinguishable
-//     in a BI tool's generated SQL, which makes the hazard undetectable at the call site.
-//
-// The whole point of this type is that the i128 never becomes a numeric: storage is the
-// little-endian i128, `+`/`-` are `kamu_money_core::arith::add_units`/`sub_units` (the very kernel
-// `Money::checked_add`/`checked_sub` run), and `kmoney_sum` accumulates in I256 before a single
-// domain check. The compute path contains no base-10000 limbs at any point.
-//
-// Egress is the TEXT form -- `amount::text` gives `'USD 10.50'`: exact, carrying its currency,
-// and arithmetically inert. `kamu_money_core::text::parse` reads it back with no loss.
-//
-// `numeric` survives in exactly two places, both of them EVIDENCE rather than code path: the
-// tests below that demonstrate what `numeric(36,18)` does to over-precise input (E13) and what
-// it costs per row (E14).
-// =========================================================================================
+// There is no `kmoney -> numeric` cast. Such a cast would expose PostgreSQL's unconstrained
+// numeric operators and their value-dependent rounding. Egress uses the exact, currency-tagged
+// text form instead. Tests may still compare storage and ingress behavior with `numeric`.
 
 // =========================================================================================
 // THE BOUNDARY PROBE --- what a pgrx call costs, and nothing else.
@@ -288,14 +242,7 @@ fixed_length_money_type! {
 // no-op to the extension to support a benchmark is a trade this workspace has not made; adding
 // one that is not compiled unless a benchmark asks for it is a different trade.
 //
-// WHY IT IS HERE RATHER THAN IN A CONTAINER. These functions used to be APPENDED to this file
-// inside a container at measurement time, from a `git archive` of the commit under test, and
-// never committed. That is why E20's YugabyteDB boundary figures --- the ones that say the pgrx
-// wrapper costs ~4 ns, which is the number the "why pgrx" argument rests on --- could not be
-// reproduced from any revision of this repository. A figure that steers architecture has to be
-// re-derivable by someone who was not there.
-//
-// THE MEASUREMENT ONLY WORKS IF THE SIGNATURES MATCH. `c_noop` in
+// `c_noop` in
 // `kamu-money-pg/bench/boundary/c_noop.c` is `bigint -> bigint` returning its argument, and so
 // is `rs_noop`. Everything the pgrx one costs above the C one is the wrapper: fmgr dispatch is
 // common to both. `rs_noop_kmoney` then adds exactly one thing --- `FromDatum` for the 18-byte
@@ -322,24 +269,8 @@ fn rs_noop_kmoney(m: kmoney) -> i64 {
 mod tests {
     use pgrx::prelude::*;
 
-    /// **18 bytes, on disk and in memory alike — there is no header.**
-    ///
-    /// This number moved three times, and each move was a measurement correcting a claim:
-    ///
-    /// | layout | stored | in-memory datum |
-    /// |---|---:|---:|
-    /// | `#[repr(C)] { i128, u16 }`, varlena | 36 | 36 |
-    /// | byte arrays, varlena | 19 | 22 |
-    /// | byte arrays, `INTERNALLENGTH = 18` | **18** | **18** |
-    ///
-    /// E12 predicted 19 from source. The first `pg_column_size` said 36 — `i128`'s 16-byte
-    /// alignment had padded the struct to 32. With byte-array fields it became the predicted
-    /// 19 on disk, but 22 as an expression, because a varlena carries a 4-byte header in memory
-    /// and PostgreSQL only repacks it to the 1-byte short form during tuple formation.
-    ///
-    /// Dropping varlena entirely removes the header from both. `INTERNALLENGTH = 18` is the
-    /// same shape `uuid` uses (`typlen = 16, typbyval = f, typalign = c, typstorage = p`), and
-    /// it makes the two numbers equal — which is the real tell that nothing is being wrapped.
+    /// The payload is 18 bytes both in a tuple and as an expression, proving there is no
+    /// varlena header.
     #[pg_test]
     fn kmoney_is_eighteen_bytes_with_no_header() {
         Spi::run("CREATE TABLE sized (v kmoney)").expect("table created");
@@ -391,11 +322,7 @@ mod tests {
     /// `kmoney`, since a real schema needs a currency column beside the `numeric` and this
     /// type carries its own in those 18 bytes.
     ///
-    /// An earlier version of this test compared *only* at the domain top, where `kmoney`
-    /// wins, and passed. A test that measures the one favourable point is not evidence. What
-    /// C8 actually buys is in the other tests here: a value that cannot be stored without its
-    /// currency, a width that does not move with the data, and a refusal of the precision
-    /// `numeric` silently swallows (E13). Space is not on the list.
+    /// The type optimizes representation stability and exact ingress, not typical-value size.
     #[pg_test]
     fn the_size_tradeoff_against_numeric_is_measured_not_assumed() {
         Spi::run("CREATE TABLE compared (r kmoney, n numeric(36,18))").expect("table created");
@@ -425,8 +352,7 @@ mod tests {
         assert!(
             typical_n < typical_r,
             "numeric is expected to WIN on a typical amount: numeric {typical_n} vs kmoney \
-             {typical_r}. If this ever reverses, the size argument in C8 needs remeasuring, \
-             not restating."
+             {typical_r}. If this reverses, remeasure and update the documented tradeoff."
         );
         assert!(
             top_n > top_r,
@@ -455,8 +381,8 @@ mod tests {
         assert_eq!(distinct, 1, "every value must occupy the same space");
     }
 
-    /// The text form round-trips through the database unchanged, and it is the SAME form
-    /// `kamu_money_core` renders — one format across Rust and SQL, per §0.1.
+    /// The text form round-trips through the database unchanged and matches
+    /// `kamu_money_core`'s canonical rendering.
     #[pg_test]
     fn the_text_form_matches_money_core() {
         for (input, expected) in [
@@ -473,7 +399,7 @@ mod tests {
         }
     }
 
-    /// Half of E13: PostgreSQL itself loses the value, silently, with `INSERT 0 1`.
+    /// PostgreSQL `numeric(36,18)` rounds this over-precise value to zero.
     ///
     /// The refusal half is [`kmoney_refuses_what_numeric_silently_rounds`] below. They are two
     /// tests because a raised PostgreSQL `ERROR` longjmps out of `Spi`, aborting the
@@ -484,7 +410,7 @@ mod tests {
         let rounded = Spi::get_one::<bool>("SELECT '0.0000000000000000004'::numeric(36,18) = 0")
             .expect("query ran")
             .expect("not null");
-        assert!(rounded, "E13: numeric(36,18) rounds 4e-19 to zero, silently");
+        assert!(rounded, "numeric(36,18) rounds 4e-19 to zero");
     }
 
     /// `kmoney` refuses exactly what `numeric(36,18)` swallows.
@@ -519,32 +445,23 @@ mod tests {
     }
 
     /// A currency `kamu_money_core` does not know is refused at input, not stored and guessed at
-    /// later. There is exactly one currency table and it lives in `kamu_money_core` (C9).
+    /// later. There is exactly one currency table, in `kamu_money_core`.
     #[pg_test(error = "kmoney: invalid money literal, in \"ZWL 1.00\"")]
     fn an_unknown_currency_is_refused_at_the_boundary() {
         Spi::get_one::<String>("SELECT 'ZWL 1.00'::kmoney::text").ok();
     }
 
-    /// There is no route from `kmoney` to `numeric`, and that is load-bearing rather than
-    /// an omission: a bare `numeric` would put every silently-rounding PostgreSQL operator
-    /// back in scope (E9). The text form is the egress.
-    /// **THE PHASE 4 <-> PHASE 5 DIFFERENTIAL.**
-    ///
-    /// Phase 4 stores money as the canonical text form in a `text` column, on any PostgreSQL.
-    /// Phase 5 stores it as this native 18-byte type. They are different storage strategies
-    /// for the same value, and the whole "one codec" claim rests on them agreeing.
+    /// Native and text storage must expose the same canonical representation.
     ///
     /// Both columns are written from the SAME literal here, and the assertion is that
-    /// `kmoney`'s output function reproduces the text form exactly. If `kamu_money_core::text` and
-    /// this extension's in/out functions ever diverge, an application reading through
-    /// `money-postgres` and a query reading the native column would return different numbers
-    /// for the same row -- which is the failure §0.1 exists to make impossible.
+    /// `kmoney`'s output function reproduces the text form exactly. Divergence would make the
+    /// portable and native columns return different representations for the same amount.
     #[pg_test]
     fn the_native_type_and_the_text_storage_agree() {
         Spi::run(
             "CREATE TABLE both_forms (
-                 phase4 text    NOT NULL,   -- what money-postgres / money-sqlx write
-                 phase5 kmoney  NOT NULL    -- what this extension stores
+                 portable text  NOT NULL,
+                 native kmoney  NOT NULL
              )",
         )
         .expect("table created");
@@ -565,16 +482,17 @@ mod tests {
 
         // Rendering the native column back must reproduce the stored text, for every row.
         let disagreements =
-            Spi::get_one::<i64>("SELECT count(*) FROM both_forms WHERE phase4 <> phase5::text")
+            Spi::get_one::<i64>("SELECT count(*) FROM both_forms WHERE portable <> native::text")
                 .expect("query ran")
                 .expect("not null");
         assert_eq!(disagreements, 0, "the text storage and the native type must render identically");
 
         // And the reverse direction: text parsed into the native type equals the native value.
-        let mismatches =
-            Spi::get_one::<i64>("SELECT count(*) FROM both_forms WHERE phase4::kmoney::text <> phase5::text")
-                .expect("query ran")
-                .expect("not null");
+        let mismatches = Spi::get_one::<i64>(
+            "SELECT count(*) FROM both_forms WHERE portable::kmoney::text <> native::text",
+        )
+        .expect("query ran")
+        .expect("not null");
         assert_eq!(mismatches, 0, "text -> kmoney -> text must be the identity");
     }
 

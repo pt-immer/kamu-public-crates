@@ -12,36 +12,20 @@ use std::collections::TryReserveError;
 /// Distribute `units` across `weights`, conserving the total exactly.
 ///
 /// The non-generic core of [`Money::allocate`], for callers that only learn the currency at
-/// run time — a PostgreSQL type cannot be generic, and C9 requires the adapter to share this
-/// implementation rather than restate it. The currency is irrelevant to the arithmetic: this
+/// run time. The currency is irrelevant to the arithmetic: this
 /// conserves at the canonical scale, which is the only scale money has here.
 ///
 /// A **zero weight** is allowed and receives **exactly zero** — including none of the truncation
 /// remainder. A weight of zero is "this recipient has no claim"; handing it a rounding unit
 /// would conserve the total while paying the wrong party, which conservation tests cannot see.
-/// So the remainder is distributed only among positive-weight positions (R2-F1).
+/// The remainder is distributed only among positive-weight positions.
 ///
 /// # Errors
-/// [`AllocationError::Amount`] if `units` is outside the domain. Without it this function
-/// accepted `i128::MAX` and returned parts outside the domain — values no `Money` constructor
-/// would admit, handed back as though they were money. The `expect`s below all rest on
-/// in-domain input; this is what makes that reasoning true rather than assumed.
-///
-/// [`AllocationError::InvalidWeights`] if `weights` is empty or every weight is zero — there
-/// is no meaningful distribution, and silently returning `[]` would destroy the whole amount.
-///
-/// Both arms were `assert!` until an idiomatic-API review pointed out that this function had
-/// two failure protocols at once: `Err` for a bad amount, panic for bad weights, in a
-/// signature that already offered the caller a `Result`. Weights arrive from request bodies
-/// and config files, so the panic forced every such caller to pre-validate or accept that
-/// user input could abort the process.
+/// Returns [`AllocationError::Amount`] when `units` is outside the money domain, or
+/// [`AllocationError::InvalidWeights`] when `weights` is empty or all zero.
 ///
 /// # Panics
-/// Only on a broken internal invariant: the distribution leaves a remainder smaller than the
-/// number of **positive-weight** parts, and the assertion below says so. No caller input can
-/// provoke it — bad input is what the `Err` arms above are for — and if it ever fired,
-/// conservation would no longer be provable, which is a condition worth stopping for rather than
-/// distributing around.
+/// Panics only if an internal remainder or domain invariant is broken.
 pub fn allocate_units(units: i128, weights: &[u32]) -> Result<Vec<i128>, AllocationError> {
     if !crate::domain_impl::in_domain(units) {
         return Err(AmountError::out_of_domain(units).into());
@@ -55,20 +39,13 @@ pub fn allocate_units(units: i128, weights: &[u32]) -> Result<Vec<i128>, Allocat
     let mut remainder = units;
 
     for &w in weights {
-        // I256 IS REQUIRED. At the domain top this product is ~1e36 * 4.3e9 = 4.3e45,
-        // which overflows i128 (max 1.7e38). Verified in DESIGN.md E11.
+        // The product can reach ~4.3e45, beyond i128 but far below I256::MAX.
         let num = I256::from(units)
             .checked_mul(I256::from(i128::from(w)))
             .expect("|units * w| <= 4.3e45, ~31 orders of magnitude below I256::MAX");
 
-        // `div_round_i256` names this function as an intended caller: its precondition is
-        // `den < I256::MAX / 2`, and `total_w` is a sum of `u32`s. Going through it rather
-        // than writing `/` means the truncation is a NAMED rounding mode rather than an
-        // unstated property of Rust's `/`, which is the whole reason `Rounding` exists.
-        // The residue it returns is dropped deliberately: it is denominated in units of
-        // `total_w`, and `remainder` below re-derives the same shortfall in canonical
-        // units, which is what Fowler's distribution needs. Nothing is lost by ignoring
-        // it — it is an `I256`, not a canonical-unit `Residue` obligation.
+        // State truncation explicitly. The returned remainder is denominator-relative,
+        // while the canonical-unit shortfall is tracked below.
         let (share, _) = div_round_i256(num, I256::from(total_w), Rounding::TowardZero);
         let share = i128::try_from(share).expect("|share| <= |units| <= DOMAIN_MAX");
         parts.push(share);
@@ -80,14 +57,8 @@ pub fn allocate_units(units: i128, weights: &[u32]) -> Result<Vec<i128>, Allocat
             .expect("|remainder| <= |units| <= DOMAIN_MAX, ~170x below i128::MAX");
     }
 
-    // A zero-weight share truncated to EXACTLY 0 (`units * 0 / total_w`) and so lost no
-    // fraction; only positive-weight shares lost anything, each strictly less than one unit and
-    // all with the same sign. So the remainder is bounded by the number of POSITIVE weights, not
-    // the vector length — a tighter bound than the old `bump < weights.len()`, and the fact that
-    // makes the distribution below always fit. `try_from` rather than `as`: the bound is a
-    // derived invariant, not a property of the type, and an `as` cast that silently truncates
-    // when a derivation turns out to be wrong is how this crate has been bitten before — in the
-    // residue leak counter, whose whole job was detecting silent loss.
+    // Each positive share loses less than one unit; zero-weight shares lose none. Therefore the
+    // remainder is smaller than the number of positive weights.
     let step = remainder.signum();
     let bump = usize::try_from(remainder.unsigned_abs())
         .expect("|remainder| < count of positive weights, which is a usize");
@@ -98,11 +69,7 @@ pub fn allocate_units(units: i128, weights: &[u32]) -> Result<Vec<i128>, Allocat
          no longer provable",
     );
 
-    // The remainder goes ONLY to POSITIVE-weight positions (R2-F1). Walking positions by index
-    // — `take(bump)` over all parts — handed the rounding unit to whichever slot came first,
-    // including a zero-weight one, which has no claim to it: money conserved but paid to the
-    // wrong party, invisible to every conservation test because the sum is unchanged. The
-    // `filter` restricts the front-loading to slots that actually asked for a share.
+    // Only positive-weight positions have a claim on the remainder.
     parts.iter_mut().zip(weights).filter(|&(_, &w)| w != 0).take(bump).for_each(|(part, _)| {
         *part = part.checked_add(step).expect("|part| <= |units| <= DOMAIN_MAX, ~170x below i128::MAX");
     });
@@ -159,11 +126,7 @@ impl<C: StaticCurrency> Money<C> {
         let units = self.units();
         let divisor = i128::from(n.get());
 
-        // TRUNCATING division, matching `allocate_units`, which is the reference this must not
-        // diverge from. `div_euclid` was tried first and is wrong here: it floors toward
-        // negative infinity, so `split(-1, 2)` returned `[0, -1]` where `allocate` returns
-        // `[-1, 0]`. Both conserve and both differ by one unit, so conservation tests pass
-        // either way -- only an equivalence test against the replaced expression catches it.
+        // Truncate toward zero to match equal-weight `allocate_units`, including negative values.
         let base = units.checked_div(divisor).expect("divisor came from a NonZeroU32");
         let remainder = units.checked_rem(divisor).expect("divisor came from a NonZeroU32");
 
@@ -179,10 +142,7 @@ impl<C: StaticCurrency> Money<C> {
 
 /// The lazy half of [`Money::split`], returned by [`Money::split`].
 ///
-/// **O(1) state and no allocation, whatever `n` is** — the iterator holds the distribution
-/// constants and a cursor, and nothing that grows with the part count. That is what makes an
-/// unbounded part count a *time* cost rather than a memory one — the distinction that turns
-/// `u32::MAX` from a 68.7 GB request into a long loop the caller can stop.
+/// Holds O(1) state and allocates nothing; large counts cost iteration time, not memory.
 pub struct SplitParts<C: StaticCurrency> {
     base: i128,
     /// `+1` or `-1`: the direction the truncation remainder is handed out in, which follows the
@@ -192,19 +152,12 @@ pub struct SplitParts<C: StaticCurrency> {
     extra: usize,
     next: usize,
     count: usize,
-    // `Money<C>` proves it uses `C` through a real field; this iterator's state is
-    // currency-agnostic, so without this the parameter is unconstrained (E0392) — the same
-    // structural note that applies to `Rate`.
+    // The iterator state is currency-agnostic; the marker binds its output currency.
     _currency: PhantomData<C>,
 }
 
-// `Clone` but deliberately **NOT `Copy`**, which `clippy::copy_iterator` is right about: a
-// `Copy` iterator is silently duplicated by any use that moves it, so `for m in parts` would
-// leave the caller's `parts` untouched at its original position and a later `parts.next()`
-// would replay values already consumed. Cloning a cursor should be something a caller asks
-// for. Hand-written rather than derived for the reason given at `money.rs:17`:
-// `#[derive(Clone)]` would emit `impl<C: Clone>`, bounding a phantom parameter when nothing
-// about the iterator's state depends on it.
+// Not Copy: consuming a copied cursor could replay values. A manual Clone avoids a needless
+// `C: Clone` bound from derive.
 impl<C: StaticCurrency> Clone for SplitParts<C> {
     fn clone(&self) -> Self {
         Self {
@@ -219,9 +172,7 @@ impl<C: StaticCurrency> Clone for SplitParts<C> {
 }
 
 impl<C: StaticCurrency> core::fmt::Debug for SplitParts<C> {
-    /// Reports progress rather than internals: the distribution constants (`base`, `step`,
-    /// `extra`) are derived and say nothing a reader of a debug line wants. Hence
-    /// `finish_non_exhaustive`, which prints the `..` that says so.
+    /// Report progress; distribution constants are derived internals.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SplitParts")
             .field("currency", &C::CODE.alpha3())

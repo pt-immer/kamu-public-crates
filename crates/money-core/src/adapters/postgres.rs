@@ -1,31 +1,17 @@
-//! `postgres-types` adapters: money in a column, as the canonical text form. (DESIGN.md C9)
+//! `postgres-types` adapters for the canonical text form.
 //!
 //! # Why text, and not `numeric`
 //!
-//! This is the settled answer and it is not a compromise. `numeric(36,18)` **silently rounds
-//! over-precise input on the way in** — E13 measured `'0.0000000000000000004'` stored as zero,
-//! with `INSERT 0 1` and no warning — and no `CHECK` or `DOMAIN` can catch it, because
-//! constraints run *after* the cast and are shown the already-altered value. A type that cannot
-//! be written to safely is not a storage type.
+//! PostgreSQL `numeric(36,18)` rounds over-precise input before `CHECK` or `DOMAIN`
+//! constraints can inspect it. Text preserves the crate's reject-instead-of-round contract.
 //!
-//! Text has no lossy cast to hide in. It is exact over the whole domain, it carries its
-//! currency so a stored amount cannot be separated from what it denominates, and it is
-//! **arithmetically inert**: a `text` column has no `*`, no `/`, no `avg()`, so E9's boundary
-//! rule needs no policing because the operators do not exist. That is C8's *"the boundary rule
-//! disappears"* reached by a second road — and this road runs on any PostgreSQL, including the
-//! managed services (RDS, Cloud SQL, Neon, Supabase) that will not load a native extension.
-//! (`YugabyteDB` DOES load it natively now — E16 — so on YB the native type serves, not this road.)
-//!
-//! Cost, stated rather than buried: wider on disk than `numeric` for typical amounts, and
-//! unordered without a functional index. E14 already established that this design does not
-//! compete on bytes.
+//! Text also carries the currency and exposes no accidental arithmetic operators. The tradeoff
+//! is wider storage for typical amounts and no numeric ordering without a functional index.
 //!
 //! # One codec, four consumers
 //!
-//! Both Rust drivers encode through [`Display`](core::fmt::Display) and decode
-//! through [`FromStr`](core::str::FromStr). Serde's structured fields and
-//! `kmoney` use the same decimal parser and renderer in `text`; they do not
-//! maintain another numeric grammar.
+//! Both Rust drivers encode through [`Display`](core::fmt::Display) and decode through
+//! [`FromStr`](core::str::FromStr). Serde and `kmoney` share the same parser and renderer.
 //!
 //! ```no_run
 //! # use kamu_money_core::{Money, iso::USD};
@@ -42,12 +28,8 @@
 //!
 //! # The native `kmoney` column: one canonical projection, both directions
 //!
-//! On a server with `kamu-money-pg` installed the column can be the native type instead, and then
-//! **the cast is part of the query rather than an implementation detail**. These adapters accept
-//! text-family OIDs and reject the `kmoney` OID before any parsing (R2-F5, deliberately — there
-//! is no native binary codec), so the parameter travels as text and the *server* converts. That
-//! runs the extension's own input function, which is this same codec, so nothing is re-implemented
-//! at the boundary.
+//! With `kamu-money-pg`, cast explicitly at the query boundary. These adapters accept
+//! text-family OIDs and reject the native `kmoney` OID before parsing.
 //!
 //! Read `amount::text`; write `($1::text)::kmoney`. That is the whole contract:
 //!
@@ -76,10 +58,8 @@
 //! # Ok(()) }
 //! ```
 //!
-//! A view or a named projection is the usual way to avoid repeating the casts. Both halves are
-//! executed against a live extension through **both** drivers by
-//! `kamu-money-core/tests/pg_native_column.rs` (`just test-pg-driver`) — the write half since
-//! 2026-07-27, which is when it stopped being an inference.
+//! A view or named projection can centralize repeated casts. `just test-pg-driver` exercises
+//! both directions through both drivers against a live extension.
 
 use super::codec::{decode, encode};
 use crate::{Money, Rate, StaticCurrency};
@@ -91,49 +71,27 @@ use std::error::Error;
 ///
 /// # Reading a native `kmoney` column requires an explicit cast
 ///
-/// This rejects by **OID, before any parsing**, so `kamu-money-pg`'s native `kmoney` type is not
-/// accepted here no matter which wire format the server would emit. That is deliberate (R2-F5:
-/// no native-OID binary codec), but it makes the query shape part of the contract rather than
-/// an implementation detail:
+/// This rejects by OID before parsing, so a native `kmoney` column requires an explicit cast:
 ///
 /// ```sql
 /// SELECT amount::text FROM ledger;   -- decodes into Money<C>
 /// SELECT amount        FROM ledger;  -- ERROR: the kmoney OID is not text-family
 /// ```
 ///
-/// "The driver reads a native column as text" means a **server-side cast changes the OID**, not
-/// that the client negotiates a text format. A view or a named projection is the usual way to
-/// avoid repeating the cast.
-///
-/// Notably **not** `NUMERIC` — accepting it would let a schema silently move to the one
-/// storage type this design rejects, and the failure would appear as a rounded amount rather
-/// than as a type error. Delegating to `&str` preserves that refusal: `postgres-types` does
-/// not accept `NUMERIC` for `&str` either.
-///
-/// This used to hand-list `TEXT | VARCHAR | BPCHAR`, which quietly made the two drivers
-/// disagree about what a money column is: `adapters::sqlx` delegates to `&str`, whose sqlx
-/// impl also covers `NAME`, `citext` and — the one that bites — `UNKNOWN`, the type
-/// PostgreSQL assigns a parameter it cannot infer. So a query that worked with a `&str` bound
-/// failed with `Money<C>`, in a pair of modules whose entire thesis is that they are the same
-/// codec. Two adapters that each round-trip correctly can still disagree with each other;
-/// this is that hazard in the type list rather than in the digits.
+/// The server-side cast changes the OID; the client does not negotiate a native text format.
+/// Delegating to `&str` keeps accepted types aligned with `postgres-types` and excludes
+/// `NUMERIC`.
 fn accepts_to_sql(ty: &Type) -> bool {
     <&str as ToSql>::accepts(ty)
 }
 
-/// The read direction, delegating to `&str`'s FROMSQL impl — which is deliberately a
-/// different set from the write direction's. `postgres-types` lets `&str` be written to
-/// `ltree`/`lquery`/`ltxtquery` but not read from them, and mirroring that exactly is the
-/// point: the claim is "wherever a `&str` goes, a `Money<C>` goes", and a single shared
-/// predicate would have quietly made it "almost".
+/// Preserve `postgres-types`' distinct read and write type sets.
 fn accepts_from_sql(ty: &Type) -> bool {
     <&str as FromSql>::accepts(ty)
 }
 
 impl<C: StaticCurrency> ToSql for Money<C> {
     fn to_sql(&self, ty: &Type, out: &mut BytesMut) -> Result<IsNull, Box<dyn Error + Sync + Send>> {
-        // `to_string` is Display, which is the canonical form by definition. Going through it
-        // rather than re-rendering here is what makes the "one codec" claim structural.
         <&str as ToSql>::to_sql(&encode(self).as_str(), ty, out)
     }
 
@@ -147,9 +105,6 @@ impl<C: StaticCurrency> ToSql for Money<C> {
 impl<'a, C: StaticCurrency> FromSql<'a> for Money<C> {
     fn from_sql(ty: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn Error + Sync + Send>> {
         let text = <&str as FromSql>::from_sql(ty, raw)?;
-        // `FromStr` checks the currency against `C` as well as parsing the digits, so a row
-        // written as IDR cannot be read into a `Money<USD>` — the cross-check that catches a
-        // column being read as the wrong currency, where types alone cannot help.
         Ok(decode(text)?)
     }
 
@@ -173,9 +128,6 @@ impl<Base: StaticCurrency, Quote: StaticCurrency> ToSql for Rate<Base, Quote> {
 impl<'a, Base: StaticCurrency, Quote: StaticCurrency> FromSql<'a> for Rate<Base, Quote> {
     fn from_sql(ty: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn Error + Sync + Send>> {
         let text = <&str as FromSql>::from_sql(ty, raw)?;
-        // Checks BOTH ends of the pair, base first — accepting a reversed pair would invert
-        // the price, which is the one error a quote feed can make that still looks like a
-        // number.
         Ok(decode(text)?)
     }
 

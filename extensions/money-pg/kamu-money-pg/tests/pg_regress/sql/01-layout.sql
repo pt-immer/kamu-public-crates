@@ -40,7 +40,7 @@ INSERT INTO compared VALUES
     ('IDR 999999999999999999.999999999999999999', 999999999999999999.999999999999999999);
 -- The RELATIONS are asserted, not numeric's exact widths. `numeric` is variable-width and its
 -- encoding is PostgreSQL's business; pinning 7 and 23 here would turn any change in someone
--- else's type into a kmoney divergence. What C8 claims is that kmoney is fixed at 18 and that
+-- else's type into a kmoney divergence. The contract is that kmoney stays fixed at 18 and
 -- numeric beats it on a typical amount and loses at the top -- which is what this checks.
 SELECT 'kmoney_fixed_at_18=' || (count(DISTINCT pg_column_size(r)) = 1 AND max(pg_column_size(r)) = 18)
     || ' numeric_wins_typical=' || (min(pg_column_size(n)) < 18)
@@ -54,7 +54,7 @@ INSERT INTO varied VALUES
 SELECT 'distinct_sizes=' || count(DISTINCT pg_column_size(v)) FROM varied;
 
 \echo -- numeric_silently_rounds_four_e_minus_nineteen_to_zero
--- E13, the half PostgreSQL does silently. The refusal half is in 02-text.
+-- PostgreSQL numeric rounds this silently; 02-text asserts that kmoney refuses it.
 SELECT 'numeric_rounds_4e_minus_19_to_zero=' || ('0.0000000000000000004'::numeric(36,18) = 0);
 
 \echo == CASE COMPLETE: 01-layout ==

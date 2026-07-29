@@ -3,41 +3,20 @@ name: On PR Synced
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-  # Also run post-merge on main so the CI badge reflects the integration branch
-  # and main keeps a green signal. On push, the classifier diffs before..after, so
-  # the same per-crate gating applies. (ci-success on push is signal-only — the
-  # branch ruleset's required check applies to PR merges, not pushes.)
   push:
     branches: [main]
 
-# NOTE: no workflow-level `paths:` filter — that would prevent the check
-# contexts from being created on unrelated PRs, leaving any required status
-# check stuck "Expected" forever. Gating happens at the JOB level via `if:`
-# (a skipped required job is treated as success), and a single always-running
-# `ci-success` aggregate gate is the one context the branch ruleset requires.
 
-# Every job runs its command through `just <recipe>` so the Justfile is the
-# single source of truth for build/lint/test/coverage commands and `just <recipe>`
-# reproduces any CI job locally. The job-level fan-out (per crate, path-classified)
-# is a CI concern; the recipes it calls are the granular ones the aggregates
-# compose. Even the cargo-deny job runs `just deny` (cargo-deny installed via
-# taiki-e/install-action) — no dedicated action, so CI == local invocation.
 
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
-  # Select the `ci` profile in .config/nextest.toml for every cargo-nextest run
-  # in this workflow (tests and coverage alike): no fail-fast, so one push
-  # surfaces every broken test rather than one per round-trip, and failure
-  # output repeated at the end of the log.
   NEXTEST_PROFILE: ci
 
 permissions:
   contents: read
 
 jobs:
-  # Classify every changed path. The repository-owned classifier is total:
-  # an unrecognised path fails this job instead of making every leaf skip.
   changes:
     name: detect changes
     runs-on: ubuntu-latest
@@ -54,7 +33,6 @@ jobs:
       shell: ${{ steps.classify.outputs.shell }}
       worker: ${{ steps.classify.outputs.worker }}
     steps:
-      # Full history guarantees both sides of either event's diff are present.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
@@ -88,11 +66,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
           toolchain: 1.96.0
-        with:
           components: rustfmt
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just
+          tool: just@1.57.0
       - run: just fmt-rust-check
 
   clippy-workspace:
@@ -110,7 +87,7 @@ jobs:
           components: clippy
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just
+          tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: just clippy-workspace
 
@@ -126,11 +103,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
           toolchain: 1.96.0
-        with:
           components: clippy
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just
+          tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: just clippy-iso3166
 
@@ -143,13 +119,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
+          toolchain: 1.96.0
           components: clippy
           targets: wasm32-unknown-unknown
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just
+          tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: just clippy-logging
 
@@ -162,12 +139,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
+          toolchain: 1.96.0
           components: clippy
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just
+          tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: just clippy-snap
 
@@ -176,6 +154,8 @@ jobs:
     needs: [changes, fmt, clippy-workspace]
     if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
     strategy:
       fail-fast: false
       matrix:
@@ -184,18 +164,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # matrix
         with:
           toolchain: ${{ matrix.toolchain }}
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just,cargo-nextest
+          tool: just@1.57.0,cargo-nextest@0.9.140
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      # `just test-all` — the same recipe `just gate` runs, so a green gate and a
-      # green CI test job mean the same thing. It covers the workspace plus the
-      # feature permutations a default run never reaches (kamu-logging with-otlp,
-      # kamu-snap-* all-features), each under cargo-nextest, then the doctests
-      # nextest cannot run.
       - run: just test-all
 
   test-iso3166-features:
@@ -207,10 +182,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
+        with:
+          toolchain: 1.96.0
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just,cargo-nextest
+          tool: just@1.57.0,cargo-nextest@0.9.140
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: just test-iso3166
 
@@ -223,12 +200,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
+          toolchain: 1.96.0
           targets: thumbv7em-none-eabi
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just
+          tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: just build-nostd
 
@@ -239,12 +217,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
+          toolchain: 1.96.0
           targets: wasm32-unknown-unknown
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just
+          tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: just build-wasm
 
@@ -257,10 +236,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
+        with:
+          toolchain: 1.96.0
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just
+          tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: just doc-workspace
 
@@ -273,10 +254,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
+        with:
+          toolchain: 1.96.0
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just
+          tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: just doc-iso3166
 
@@ -286,20 +269,15 @@ jobs:
     if: ${{ needs.changes.outputs.rust == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      # Runs the same `just deny` (`cargo deny --all-features check`) as the local
-      # gate, with the latest cargo-deny from taiki-e/install-action — so the CI
-      # and local invocations are byte-identical (no version/flag drift). This
-      # replaces EmbarkStudios/cargo-deny-action@v2: its floating tag began
-      # bundling a cargo-deny whose CLI the action's entrypoint orders wrongly
-      # (`error: unrecognized subcommand 'warn'`), and dependabot would re-bump any
-      # pin straight back to the broken version.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
+        with:
+          toolchain: 1.96.0
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just,cargo-deny
+          tool: just@1.57.0,cargo-deny@0.20.2
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: just deny
 
@@ -315,9 +293,8 @@ jobs:
           node-version: lts/*
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just,taplo-cli,typos-cli
-      # markdownlint-cli2 -> node_modules/.bin, which the Justfile prepends to PATH.
-      - run: npm install --no-fund --no-audit
+          tool: just@1.57.0,taplo-cli@0.10.0,typos-cli@1.48.0
+      - run: npm ci --no-fund --no-audit
       - run: just lint-docs
 
   test-repo-policy:
@@ -331,7 +308,7 @@ jobs:
           submodules: true
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just
+          tool: just@1.57.0
       - run: just test-repo-policy
 
   check-worker-example:
@@ -341,15 +318,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
+          toolchain: 1.96.0
           targets: wasm32-unknown-unknown
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: lts/*
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just
+          tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: crates/logging/examples/cloudflare-worker
@@ -364,13 +342,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
+        with:
+          toolchain: 1.96.0
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just
+          tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      # Cargo metadata owns the package inventory. During a first-publish
-      # dependency tier, this job fails visibly until its prerequisite is live.
       - run: just publish-all
 
   coverage-iso3166:
@@ -382,17 +360,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
+          toolchain: 1.96.0
           components: llvm-tools-preview
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          # cargo-nextest is required: the cov-* recipes measure through
-          # `cargo llvm-cov nextest`, so coverage runs the same binaries the
-          # same way `just test-all` does.
-          tool: just,cargo-llvm-cov,cargo-nextest
+          tool: just@1.57.0,cargo-llvm-cov@0.8.7,cargo-nextest@0.9.140
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      # `just cov` enforces the 98% floor and writes target/lcov.info.
       - run: just cov
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -406,15 +381,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
+          toolchain: 1.96.0
           components: llvm-tools-preview
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          # cargo-nextest is required: the cov-* recipes measure through
-          # `cargo llvm-cov nextest`, so coverage runs the same binaries the
-          # same way `just test-all` does.
-          tool: just,cargo-llvm-cov,cargo-nextest
+          tool: just@1.57.0,cargo-llvm-cov@0.8.7,cargo-nextest@0.9.140
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: just cov-logging
 
@@ -425,12 +398,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
+          toolchain: 1.96.0
           targets: wasm32-unknown-unknown
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just
+          tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: just build-wasm-snap
 
@@ -441,15 +415,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
+          toolchain: 1.96.0
           components: llvm-tools-preview
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          # cargo-nextest is required: the cov-* recipes measure through
-          # `cargo llvm-cov nextest`, so coverage runs the same binaries the
-          # same way `just test-all` does.
-          tool: just,cargo-llvm-cov,cargo-nextest
+          tool: just@1.57.0,cargo-llvm-cov@0.8.7,cargo-nextest@0.9.140
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: just cov-snap-crypto
 
@@ -460,24 +432,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
+          toolchain: 1.96.0
           components: llvm-tools-preview
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          # cargo-nextest is required: the cov-* recipes measure through
-          # `cargo llvm-cov nextest`, so coverage runs the same binaries the
-          # same way `just test-all` does.
-          tool: just,cargo-llvm-cov,cargo-nextest
+          tool: just@1.57.0,cargo-llvm-cov@0.8.7,cargo-nextest@0.9.140
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: just cov-snap-response
 
-  # Single aggregate gate (scatter -> gather -> and-gate). This is the ONLY
-  # context the branch ruleset requires: it always runs (so the context is always
-  # created), and `re-actors/alls-green` passes when every needed job either
-  # succeeded or was a path-filtered skip, and fails if any job failed/cancelled.
-  # Adding/renaming/splitting jobs above never needs a ruleset edit again — only
-  # this `needs:` list (and `allowed-skips`) changes.
   clippy-money:
     name: clippy (kamu-money-core features)
     needs: [changes, fmt]
@@ -485,12 +449,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
+          toolchain: 1.96.0
           components: clippy
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just
+          tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: just clippy-money
 
@@ -501,20 +466,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          # `just test-money` owns tests/compile_fail.rs, whose trybuild goldens
-          # quote standard-library source. Without rust-src those cases fail for
-          # a reason that says nothing about the code.
+          toolchain: 1.96.0
           components: rust-src
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just,cargo-nextest
+          tool: just@1.57.0,cargo-nextest@0.9.140
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      # Docker-free feature permutations plus the doctests nextest cannot run.
-      # The trybuild suite runs HERE and not in test-workspace, because its
-      # goldens can only ever match one rustc and that job also runs on the MSRV
-      # toolchain.
       - run: just test-money
 
   test-money-db:
@@ -524,14 +483,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
+        with:
+          toolchain: 1.96.0
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just,cargo-nextest
+          tool: just@1.57.0,cargo-nextest@0.9.140
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      # Each test here starts its own PostgreSQL testcontainer; ubuntu-latest
-      # ships a working Docker daemon. Concurrency is bounded at two by the
-      # `money-db` test group in .config/nextest.toml, not by anything here.
       - run: just test-money-db
 
   docs-money:
@@ -541,10 +499,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
+        with:
+          toolchain: 1.96.0
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just
+          tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: just doc-money
 
@@ -555,43 +515,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
+          toolchain: 1.96.0
           components: llvm-tools-preview
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          # cargo-nextest is required: the cov-* recipes measure through
-          # `cargo llvm-cov nextest`, so coverage runs the same binaries the
-          # same way `just test-all` does.
-          tool: just,cargo-llvm-cov,cargo-nextest
+          tool: just@1.57.0,cargo-llvm-cov@0.8.7,cargo-nextest@0.9.140
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      # The floor is 80 against a measured 84.89%. It is not higher because this
-      # gate excludes the container-backed suites, which are exactly what
-      # exercises the two driver adapters — see the recipe's own comment.
       - run: just cov-money
 
-  # ---------------------------------------------------------------------------
-  # Shell, and the PostgreSQL extension lane
-  # ---------------------------------------------------------------------------
 
   lint-shell:
     name: lint shell (shellcheck)
     needs: changes
-    # NO CI JOB RAN THIS UNTIL NOW. `lint-shell` has existed since the recipe set
-    # was settled, but it lived only in `lint-all` and `gate`, both local — CI runs
-    # `fmt-rust-check` and `lint-docs`, and neither composes it. That was harmless
-    # while it covered zero tracked scripts. It now covers 38, so without this job
-    # CI would merge a broken one.
     if: ${{ needs.changes.outputs.shell == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just,shellcheck
-      # The recipe checks the lane with its working directory set to the lane
-      # root, because those scripts resolve siblings relative to it. Measured: 33
-      # unfollowable-source findings from the repository root, 0 from the lane.
+          tool: just@1.57.0,shellcheck@0.11.0
       - run: just lint-shell
 
   deny-money-pg:
@@ -603,9 +547,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just,cargo-deny
-      # Separate policy and graph: the pgrx fork allowance cannot leak into the
-      # nine published crates' audit.
+          tool: just@1.57.0,cargo-deny@0.20.2
       - run: just pg deny
 
   test-money-pg-offline:
@@ -615,17 +557,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
+        with:
+          toolchain: 1.96.0
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just,cargo-nextest
+          tool: just@1.57.0,cargo-nextest@0.9.140
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: extensions/money-pg
-      # NEEDS NO PostgreSQL AND NO pgrx. The guards inspect repository structure,
-      # and the safe payload tests compile the exact extension module without its
-      # ABI shell. An integration test under the pgrx cdylib would drag PostgreSQL
-      # onto this job's critical path.
       - run: just pg fmt-check
       - run: just pg test-hygiene
 
@@ -642,11 +582,10 @@ jobs:
           components: miri
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just
+          tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: extensions/money-pg
-      # Deliberately narrow: Miri cannot prove PostgreSQL/pgrx ABI promises.
       - run: just pg miri-payload
 
   lint-money-pg:
@@ -656,26 +595,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
+          toolchain: 1.96.0
           components: clippy
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just,cargo-pgrx@0.19.1
+          tool: just@1.57.0,cargo-pgrx@0.19.1
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: extensions/money-pg
-      # PGDG's PostgreSQL, NOT a from-source build. `cargo pgrx init` with no
-      # argument compiles PostgreSQL itself, which is minutes per major on a
-      # hosted runner; pointing it at an installed pg_config is seconds. The
-      # runner image already ships a PostgreSQL, but not its server headers, and
-      # pgrx needs the headers.
       - name: Install PostgreSQL 18 server headers
-        # FROM PGDG, NOT UBUNTU'S ARCHIVE. The runner image ships PostgreSQL 16;
-        # `postgresql-18` is simply not a package it can see, and apt reports
-        # "Unable to locate package" rather than anything about versions. PGDG is
-        # also what a PostgreSQL extension should be built against — it is where
-        # the majors this crate contracts to support actually come from.
         run: |
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
@@ -686,24 +616,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends postgresql-18 postgresql-server-dev-18
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          # ~/.pgrx is where the BYTES are. `cargo pgrx init` ignores the `[env]`
-          # PGRX_HOME the lane's cargo config forces and writes to the default home
-          # path; the recipe below reconciles the two with a symlink. Caching the
-          # symlink's location instead would cache a dangling link.
           path: ~/.pgrx
           key: pgrx-0.19.1-pg18-${{ runner.os }}
       - name: Initialise PGRX_HOME against the installed server
-        # `just pg pgrx-init`, NOT a raw `cargo pgrx init`. The recipe already knows
-        # the thing that broke this job twice: `cargo pgrx init` does not honour the
-        # forced `[env]` PGRX_HOME and writes to ~/.pgrx, while pgrx-pg-sys's BUILD
-        # SCRIPT does honour it and then fails with "$PGRX_HOME does not exist". The
-        # recipe symlinks the two together and asserts .pgrx/config.toml exists
-        # afterwards, so it fails loudly rather than reporting success and leaving
-        # the next command to break. It is also the repository's rule: CI calls just.
         run: just pg pgrx-init /usr/lib/postgresql/18/bin/pg_config
-      # ONE MAJOR, NEVER --all-features: pgrx's pg15..pg18 features are mutually
-      # exclusive, so an --all-features sweep does not lint this crate strictly,
-      # it fails to build it.
       - run: just pg lint
 
   docs-money-pg:
@@ -713,19 +629,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
+        with:
+          toolchain: 1.96.0
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just,cargo-pgrx@0.19.1
+          tool: just@1.57.0,cargo-pgrx@0.19.1
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: extensions/money-pg
       - name: Install PostgreSQL 18 server headers
-        # FROM PGDG, NOT UBUNTU'S ARCHIVE. The runner image ships PostgreSQL 16;
-        # `postgresql-18` is simply not a package it can see, and apt reports
-        # "Unable to locate package" rather than anything about versions. PGDG is
-        # also what a PostgreSQL extension should be built against — it is where
-        # the majors this crate contracts to support actually come from.
         run: |
           sudo install -d /usr/share/postgresql-common/pgdg
           sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
@@ -736,20 +649,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends postgresql-18 postgresql-server-dev-18
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          # ~/.pgrx is where the BYTES are. `cargo pgrx init` ignores the `[env]`
-          # PGRX_HOME the lane's cargo config forces and writes to the default home
-          # path; the recipe below reconciles the two with a symlink. Caching the
-          # symlink's location instead would cache a dangling link.
           path: ~/.pgrx
           key: pgrx-0.19.1-pg18-${{ runner.os }}
       - name: Initialise PGRX_HOME against the installed server
-        # `just pg pgrx-init`, NOT a raw `cargo pgrx init`. The recipe already knows
-        # the thing that broke this job twice: `cargo pgrx init` does not honour the
-        # forced `[env]` PGRX_HOME and writes to ~/.pgrx, while pgrx-pg-sys's BUILD
-        # SCRIPT does honour it and then fails with "$PGRX_HOME does not exist". The
-        # recipe symlinks the two together and asserts .pgrx/config.toml exists
-        # afterwards, so it fails loudly rather than reporting success and leaving
-        # the next command to break. It is also the repository's rule: CI calls just.
         run: just pg pgrx-init /usr/lib/postgresql/18/bin/pg_config
       - run: just pg doc-pg
 
@@ -759,12 +661,6 @@ jobs:
     if: ${{ needs.changes.outputs.moneypg == 'true' }}
     runs-on: ubuntu-latest
     strategy:
-      # FOUR JOBS, NOT ONE LOOP. The recipe's own `test-matrix.sh` walks the
-      # majors serially in a single process, which is right on a workstation and
-      # wrong here: four jobs each get their own fresh runner with its own 14 GB,
-      # so the images never co-reside, and the wall clock is one major rather than
-      # four. fail-fast off, because "PG16 broke" and "PG16 and PG18 broke" are
-      # different findings and the second is the one that says where to look.
       fail-fast: false
       matrix:
         pg: [15, 16, 17, 18]
@@ -772,12 +668,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just
-      # Each leg builds the extension inside a container against its own major.
-      # Teardown is scoped by the `kamu-money-pg.*` labels the harness applies —
-      # never a global prune, which on a shared daemon would take other work with
-      # it. A hosted runner is not shared, but the harness must behave the same
-      # everywhere or the habit is what fails when it matters.
+          tool: just@1.57.0
       - run: just pg test-pg "${{ matrix.pg }}"
 
   test-money-pg-yb:
@@ -789,11 +680,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
         with:
-          tool: just
-      # The ported #[pg_test] suite against a live single-node YugabyteDB, plus
-      # the stock-PG15 reference it is diffed against. Node memory is capped by
-      # yb/node-limits.sh — a container sees the HOST's RAM, not its own limit, so
-      # without that cap a node sizes itself for the whole runner and is killed.
+          tool: just@1.57.0
       - run: just pg test-yb-regress
 
   ci-success:
@@ -837,10 +724,6 @@ jobs:
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
-      # Every path-filtered leaf is allowed to be `skipped`; `changes` is NOT in
-      # the list, so it must always run and succeed. A job that actually
-      # fails/cancels still fails the gate — and a cascade-skip can't hide a
-      # failure, because the failing job is itself one of these `needs`.
       - uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
         with:
           jobs: ${{ toJSON(needs) }}

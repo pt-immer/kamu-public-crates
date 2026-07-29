@@ -4,12 +4,8 @@
 #
 #   kamu-money-pg/bench/run-bench-boundary-yb.sh [tag]
 #
-# WHY THIS EXISTS SEPARATELY FROM THE PostgreSQL PROBE. YugabyteDB is the deployment target, and
-# it is a PostgreSQL FORK with one named mechanism for the pgrx boundary to be dearer than it is
-# on stock PostgreSQL: YSQL is multi-threaded, so `CurrentMemoryContext` is the thread-local
-# `YbCurrentMemoryContext` that pgrx's wrapper touches on every call, and a TLS access costs more
-# than a process-global load. "It passes on PostgreSQL" is not evidence about YugabyteDB --
-# §0.4's own rule -- so the number that decides anything gets measured here.
+# YugabyteDB is measured separately from PostgreSQL. YSQL is multi-threaded, so pgrx touches the
+# thread-local `YbCurrentMemoryContext` on every call; stock PostgreSQL cannot measure that cost.
 #
 # WHY A DEDICATED IMAGE. Both functions have to be compiled against the SAME server headers and
 # load into the SAME backend, or the subtraction is between two different ABIs. So the extension
@@ -104,9 +100,7 @@ docker run -d --name "$NAME" --label "kamu-money-pg.bench=$RUN_ID" \
 # Measured on this host. Refuse rather than measure one socket and label it the other.
 numa_verify "$NAME" || exit 4
 
-# READINESS IS A QUERY THAT ANSWERED, not an address that resolved. `hostname -i` succeeds within
-# a second of the container starting, so a guard on it alone reports ready for a node whose YSQL
-# never came up -- the defect a 2026-07-26 review found in three other runners here.
+# Readiness requires a successful query; resolving the container address is insufficient.
 HOST=""
 READY=0
 for _ in $(seq 1 120); do

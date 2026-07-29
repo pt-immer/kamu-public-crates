@@ -1,30 +1,20 @@
-//! The display form: symbol, grouping, and a **minimum** fraction width. (DESIGN.md C2)
+//! Locale-aware display: symbol, grouping, and a minimum fraction width.
 //!
 //! # Why this is not `Display`
 //!
-//! [`Display`](core::fmt::Display) is **frozen**. It backs five consumers — itself, the serde
-//! wire (C7), `kmoney`'s input/output functions (C8), the `postgres`/`sqlx` stored form (C9),
-//! and the phase-4/phase-5 differential asserting all of them agree. Changing its output would
-//! change an on-disk format and a wire format at the same time, in one edit, silently.
+//! [`Display`](core::fmt::Display) is the canonical wire and database form. Locale-aware
+//! rendering is a separate entry point so decoration cannot change stored data.
 //!
-//! So locale-aware rendering is a **separate entry point** and never routes through `Display`.
-//! What the two DO share is `text::fixed_point_parts` — the digits themselves — which is the
-//! opposite of drift: the canonical form and every display form are allowed to disagree about
-//! separators and decoration, and are structurally unable to disagree about the number.
-//! (Deliberately not an intra-doc link: the function is `pub(crate)`, and linking public docs
-//! to a private item is a strict-rustdoc error.)
+//! Both forms share the fixed-point digit extraction. They may differ in separators and
+//! decoration, but not in the represented number.
 //!
 //! # The one rule that constrains everything here
 //!
-//! §0.1: **display pads, never rounds.** A policy owns the *minimum* fraction width; the
-//! value's own significant digits own the *maximum*. This is not a stylistic limit — a
-//! renderer that truncated to the display width would print a number that is not the stored
-//! number, which is the "second number claiming to be the money" the axiom exists to reject.
+//! Display pads but never rounds. A policy owns the minimum fraction width; the value's
+//! significant digits determine the maximum.
 //!
-//! IDR is the case the spec names and the reason the two widths cannot be one field: it
-//! **settles** at 2dp (ISO 4217) and **displays** at 0dp (market practice). A naive
-//! "display exponent" would render `16000.50` as `Rp 16.000`, losing half a thousand rupiah
-//! to a formatting decision.
+//! IDR settles at two decimal places but commonly displays with no required fraction. A value
+//! such as `16000.50` still renders its significant fractional digit.
 //!
 //! ```
 //! use kamu_money_core::iso::IDR;
@@ -37,19 +27,10 @@
 //! assert_eq!(ID_IDR.render(m).unwrap(), "Rp 16.000,5"); // display: 0 minimum, nothing lost
 //! ```
 //!
-//! # What this module deliberately is not
+//! # Scope
 //!
-//! **Not a locale database.** The four constants below are worked examples, sized to cover
-//! prefix and suffix symbols, both separator conventions, and a currency whose display width
-//! is below its settlement width. Real locale data is CLDR's, it is large, and it changes on
-//! someone else's schedule; baking a snapshot of it into a money crate would create a table
-//! that rots silently. Build a [`LocalePolicy`] from whatever CLDR/ICU source the application
-//! already carries.
-//!
-//! **No accounting parentheses, no `NegativeStyle`.** C2 scopes this to symbol, grouping and
-//! minimum width, and §0.3 admits complexity only where it deletes a demonstrable failure. A
-//! leading `-` is unambiguous and correct; `(1,234.50)` is a preference. It was considered and
-//! cut, which is the same call that deleted `to_minor_units()` and `StaticCurrency::EXP`.
+//! This module is not a locale database. Its constants are examples; applications can build
+//! policies from their own CLDR or ICU data. Negative values always use a leading `-`.
 
 use crate::Money;
 use crate::StaticCurrency;
@@ -105,33 +86,17 @@ const _: () = assert!(crate::SCALE == 18);
 
 /// How one locale shows one currency.
 ///
-/// A policy is the pairing of a locale (separators, grouping, symbol placement) with a
-/// currency (the symbol, the display width) — which is why it carries an [`Iso4217`] and
-/// [`render`](LocalePolicy::render) is fallible. An Indonesian reader viewing a US dollar
-/// balance wants Indonesian separators around a dollar symbol; that is a different policy
-/// from [`ID_IDR`], not the same one reused.
+/// A policy pairs locale decoration with one [`Iso4217`] currency.
 ///
 /// # Why rendering can fail
 ///
-/// The currency is checked on the way out exactly as [`FromStr`](core::str::FromStr) checks it
-/// on the way in. Without it, formatting a `Money<USD>` through [`ID_IDR`] would emit `Rp` in
-/// front of dollars — a mislabelled amount reaching a human, which is the failure this crate
-/// is organised around, arriving through the one surface a human actually reads.
+/// [`render`](LocalePolicy::render) rejects a mismatched `Money<C>` instead of attaching the
+/// wrong symbol.
 ///
 /// # Why the lifetime, and why not `'static`
 ///
-/// The module docs above tell an application to build a policy from whatever CLDR/ICU source it
-/// already carries. Until 2026-07-27 that instruction was **not followable**: every field was
-/// `&'static`, so locale data read from a file or a database at startup could only be used by
-/// leaking it, by building an unrelated global cache, or by pasting it back into source. The
-/// `'static` was there to keep the constructors `const`, which is a compile-time convenience —
-/// and it had extended past the invariant it was protecting to break the documented runtime path.
-/// Locale decoration does not need static lifetime to remain exact.
-///
-/// `LocalePolicy<'a>` fixes that at no cost to the shipped constants, which are simply
-/// `LocalePolicy<'static>` and still `const`. There is deliberately no owned or `Cow` form: no
-/// consumer needs one yet, and adding one before there is a real caller would be inventing an
-/// API to sit beside a working one. (DESIGN.md C2)
+/// Borrowed fields allow policies built from runtime locale data. Shipped constants use
+/// `LocalePolicy<'static>`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct LocalePolicy<'a> {
     currency: Iso4217,
@@ -332,11 +297,7 @@ fn group(digits: &str, sizes: &[u8], separator: &str) -> String {
     // `digits` comes from the fixed-point formatter and is ASCII, so byte offsets are char
     // boundaries here and no slice below can split a character.
     //
-    // The two `expect`s below were `unwrap_or_default()`, which is the one spelling that
-    // turns a broken invariant into SILENTLY DROPPED DIGITS in a number a human reads --
-    // this crate's headline failure mode, reached through its own formatter. Neither can
-    // fire today; stating the proof is what makes a future edit that breaks it fail loudly
-    // instead of quietly rendering less money than there is.
+    // Fail loudly if the ASCII boundary invariant breaks; never drop displayed digits.
     let mut chunks: Vec<&str> = Vec::new();
     let mut end = digits.len();
     let mut step: usize = 0;
@@ -361,15 +322,12 @@ fn group(digits: &str, sizes: &[u8], separator: &str) -> String {
     chunks.join(separator)
 }
 
-// ---------------------------------------------------------------------------------------
-// Worked examples. NOT a locale database -- see the module docs.
-// ---------------------------------------------------------------------------------------
+// Representative policies, not a locale database.
 
 /// `$1,234.50` — US English, US dollar.
 pub const EN_USD: LocalePolicy<'static> = LocalePolicy::new(Iso4217::USD, "$");
 
-/// `Rp 16.000` — Indonesian, rupiah. **Displays at 0dp while ISO settles at 2**, which is
-/// C2's motivating case and the reason display width and settlement width are two numbers.
+/// `Rp 16.000` — Indonesian rupiah. Displays at 0dp while ISO settles at 2.
 pub const ID_IDR: LocalePolicy<'static> = LocalePolicy {
     currency: Iso4217::IDR,
     symbol: "Rp ",

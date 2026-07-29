@@ -67,31 +67,15 @@ _workspace_lock_inherited() {
 workspace_lock() {
     local what="${1:-a workspace suite}"
 
-    # `KMONEY_LOCK_DIR` is overridable ONLY so the self-test can drive the exclusion controls
-    # against a fixture directory. Without it the self-test contends for the REAL lock, which
-    # makes it fail whenever it runs nested inside something that legitimately holds it --
-    # `release-check` does, and on 2026-07-26 that turned the whole gate red. Same escape hatch,
-    #
-    # RESOLVED BEFORE THE RE-ENTRANCY CHECK, because that check now compares the inherited
-    # descriptor against this exact path rather than trusting a flag.
+    # `KMONEY_LOCK_DIR` exists only for fixture-backed self-tests. Resolve it before checking
+    # re-entrancy because the inherited descriptor must point to this exact path.
     local dir
     dir="${KMONEY_LOCK_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/out}"
     mkdir -p "$dir"
     local lock="$dir/.workspace.lock" holder="$dir/.workspace.holder"
 
-    # RE-ENTRANT, AND THE INHERITANCE IS VERIFIED RATHER THAN ANNOUNCED. `release-check` takes the
-    # lock and then invokes the suites, which take it too when run on their own; the descriptor is
-    # inherited across exec, so the lock is genuinely still held and a descendant must proceed
-    # rather than deadlock against its own parent.
-    #
-    # UNTIL 2026-07-26 THE TEST FOR THAT WAS `KMONEY_WORKSPACE_LOCK=1`, AND NOTHING ELSE. A review
-    # ran the obvious control:
-    #
-    #     lock-control returned-success-without-lock=yes
-    #
-    # A mistyped export, an inherited variable from an unrelated tool, or a `-e` on a docker run
-    # disabled the single-writer property outright -- and the self-test's own "descendant" control
-    # was an unrelated `bash -c` with the variable set, so it certified the bypass as correct.
+    # Descendants inherit the open descriptor and may re-enter. An environment flag alone never
+    # proves ownership.
     #
     # The descriptor is the thing that actually holds the lock, so the descriptor is what gets
     # checked. A forged variable now names a number that is either not open or is open on some

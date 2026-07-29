@@ -22,7 +22,7 @@ CREATE EXTENSION IF NOT EXISTS kmoney;
 
 -- Normalize infrastructure chatter so the A/B diff compares kmoney's behavior, not the
 -- server's: YugabyteDB emits a WARNING about ROWS_PER_TRANSACTION batching when COPY targets
--- a temp table (§2b), which stock PG15 has no notion of. Neither is an kmoney effect. ERRORs
+-- a temp table (case 2b), which stock PG15 has no notion of. Neither is a kmoney effect. ERRORs
 -- (which the refusal probes assert) are level ERROR and still print.
 SET client_min_messages = error;
 
@@ -41,9 +41,8 @@ SELECT length(kmoney_send('USD 10.50'::kmoney)) AS send_len,
        encode(kmoney_send('USD 1.00'::kmoney), 'hex') AS usd_one_hex;
 
 \echo == 2b. COPY (FORMAT BINARY) round trip: send out, recv back in ==
--- The only in-DB path that actually invokes kmoney_recv -- its arg is `internal`,
--- unreachable from a SQL literal. R2-F5: the earlier test used INSERT .. SELECT and
--- touched neither send nor recv. Server-side file; single ysqlsh session, fixed name.
+-- COPY is the in-database path that invokes kmoney_recv; its argument is `internal` and cannot
+-- be provided by a SQL literal. Server-side file; single ysqlsh session, fixed name.
 CREATE TEMP TABLE wire_src (amount kmoney);
 INSERT INTO wire_src VALUES ('IDR -16000.50'),
                             ('USD 0.000000000000000001'),
@@ -71,7 +70,7 @@ SELECT kmoney_sum(VARIADIC ARRAY[]::kmoney[])::text AS empty_is_null;
 \echo -- mixed-currency variadic must ERROR:
 SELECT kmoney_sum('USD 1.00','IDR 1.00')::text AS must_error;
 
-\echo == 5. kmoney_allocate incl the R2-F1 zero-weight guard ==
+\echo == 5. kmoney_allocate including the zero-weight guard ==
 SELECT string_agg(part::text, ' | ') AS even
   FROM unnest(kmoney_allocate('USD 10.00', ARRAY[1,1,1])) part;
 SELECT string_agg(part::text, ' | ') AS zero_weight
@@ -91,7 +90,7 @@ SELECT count(*) AS usd_ones FROM pred WHERE amount = 'USD 1.00'::kmoney;
 SELECT ('IDR 1.00'::kmoney > 'USD 1.00'::kmoney) AS must_error;
 
 \echo == 7. PINNED hash values (the sharpest custom-type ABI signal) ==
--- These i32 come from kamu_money_core::stable_hash (F3 golden vectors). If the 18-byte
+-- These i32 come from kamu_money_core::stable_hash golden vectors. If the 18-byte
 -- payload is read at a wrong offset on YB, these diverge -- silently-wrong money
 -- made visible. kmoney_hash is a plain function now (no hash opclass/index).
 SELECT kmoney_hash('USD 0.00'::kmoney)  AS h_usd_0,
@@ -102,16 +101,16 @@ SELECT kmoney_hash('USD 1.00'::kmoney) = kmoney_mixed_hash('USD 1.00'::kmoney_mi
 
 \echo == 8. the sum aggregate on kmoney, and its absence on kmoney_mixed ==
 SELECT ('USD 1.00'::kmoney_mixed = 'IDR 1.00'::kmoney_mixed) AS mixed_cross_eq_false;
-\echo -- sum(kmoney) EXISTS, with a wide transition state (R2-F4b):
--- Two rows whose PARTIAL sum leaves the domain while the total does not. The aggregate R2-F4
--- removed had a `kmoney` transition state and failed here; this one accumulates in I256 and
+\echo -- sum(kmoney) exists with a wide transition state:
+-- Two rows whose partial sum leaves the domain while the total does not. This aggregate uses
+-- I256 and
 -- checks the domain once. On the ABI surface this also exercises a bytea transition state
 -- crossing the fmgr boundary on every row, which nothing else in this battery does.
 SELECT sum(a)::text AS agg_across_a_domain_edge
   FROM (VALUES ('USD 999999999999999999.999999999999999999'::kmoney),
                ('USD 999999999999999999.999999999999999999'::kmoney),
                ('USD -999999999999999999.999999999999999999'::kmoney)) t(a);
-\echo -- but sum(kmoney_mixed) must still NOT exist -- that is the whole point of the mixed type:
+\echo -- sum(kmoney_mixed) must remain unavailable because mixed rows have no single currency:
 SELECT sum(a) FROM (VALUES ('USD 1.00'::kmoney_mixed)) t(a);
 
 \echo == 9. domain + precision refusals (parse path) ==
