@@ -332,7 +332,7 @@ yb-selftest out="":
     [ -n "$OUT" ] || OUT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}/out-yb.txt"
     ./kamu-money-pg/yb/assert-battery-selftest.sh "$OUT"
 [doc("The ported #[pg_test] suite against a live single-node YugabyteDB.")]
-test-yb-regress tag="":
+test-yb-regress tag="": (yb-build tag)
     #!/usr/bin/env bash
     set -euo pipefail
     ./kamu-money-pg/yb/run-yb-regress.sh "$(./kamu-money-pg/yb/yb-image.sh {{ tag }})"
