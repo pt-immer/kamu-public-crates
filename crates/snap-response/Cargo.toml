@@ -27,5 +27,8 @@ kamu-snap-crypto = { workspace = true, optional = true }
 [lints]
 workspace = true
 
+[[example]]
+name = "client_parse"
+
 [package.metadata.docs.rs]
 all-features = true

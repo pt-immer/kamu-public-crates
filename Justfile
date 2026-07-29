@@ -349,6 +349,15 @@ check-worker-example:
     npm --prefix crates/logging/examples/cloudflare-worker ci --no-fund --no-audit
     npm --prefix crates/logging/examples/cloudflare-worker run build
 
+# Examples ship inside the published packages, so a broken one is a broken release
+# artifact. Each crate is built under the features its examples declare.
+[doc("Type-check every crate's examples.")]
+check-examples:
+    cargo check --examples -p kamu-logging --features systemd,with-actix-web
+    cargo check --examples -p kamu-money-core --features serde
+    cargo check --examples -p kamu-snap-crypto --features snap-bi
+    cargo check --examples -p kamu-snap-response
+
 # Test fail-closed CI classification, registry probing, and standalone-package
 # ownership; then prove every tracked path is classified.
 [doc("Test CI path ownership and workflow policy.")]
@@ -391,7 +400,7 @@ clean:
 gate:
     #!/usr/bin/env bash
     set -uo pipefail
-    names=("lint-all" "test-all" "test-money" "test-repo-policy" "msrv(1.94.0)" "cov-all" "doc" "build-nostd" "build-wasm" "build-wasm-snap" "check-worker-example" "deny")
+    names=("lint-all" "test-all" "test-money" "test-repo-policy" "msrv(1.94.0)" "cov-all" "doc" "build-nostd" "build-wasm" "build-wasm-snap" "check-worker-example" "check-examples" "deny")
     cmds=("just lint-all"
           "just test-all"
           "just test-money"
@@ -403,6 +412,7 @@ gate:
           "just build-wasm"
           "just build-wasm-snap"
           "just check-worker-example"
+          "just check-examples"
           "just deny")
     declare -a rcs outs
     fail=0

@@ -271,6 +271,19 @@ use kamu_logging::{debug, info, warn, error, instrument, span, Level, Span};
 | OTLP exporter is slow in simple mode   | Keep the default batch processor for high-volume services                   |
 | `service.name` missing from fmt output | It is on the startup event and OTLP resource, not every formatted log event |
 
+## Examples
+
+Run with `cargo run --example <name> --features systemd`:
+
+| Example | What it shows |
+| --- | --- |
+| [`minimal`](examples/minimal.rs) | Zero-config `init()`. |
+| [`json_stdout`](examples/json_stdout.rs) | JSON on stdout for log aggregators (Vector, Promtail, Datadog). |
+| [`actix`](examples/actix.rs) | Correlation-enriched root spans; also needs `with-actix-web`. |
+
+The standalone Worker app is [`examples/cloudflare-worker/`](examples/cloudflare-worker/),
+covered in [Cloudflare Workers](#cloudflare-workers) above.
+
 ## SemVer policy
 
 `2.x.y` — breaking changes only on major bumps. Additive changes ship as minor

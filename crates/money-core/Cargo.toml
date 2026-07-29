@@ -81,6 +81,12 @@ workspace = true
 harness = false
 name = "kernel"
 
+[[example]]
+name = "fx"
+
+[[example]]
+name = "ledger"
+
 # Needs the optional feature. Declaring it here means `cargo build --examples`
 # and `clippy --all-targets` skip it cleanly under default features instead of
 # failing, and build it under --all-features.

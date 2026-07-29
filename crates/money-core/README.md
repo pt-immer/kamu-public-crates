@@ -131,6 +131,16 @@ Credit, provenance and the redistribution position are in
 invariant to executable evidence. It also records the alternatives deliberately
 excluded from the API.
 
+## Examples
+
+Run with `cargo run --example <name>`:
+
+| Example | What it shows |
+| --- | --- |
+| [`ledger`](examples/ledger.rs) | The everyday path: balances, transfers, splitting a bill, dividing money. |
+| [`fx`](examples/fx.rs) | FX conversion: typed pairs, rounding once, and the failures that are conditions rather than errors. |
+| [`wire`](examples/wire.rs) | The serde wire: two modes per field, and the trap that makes the codec hand-written. Add `--features serde`. |
+
 ## Licence
 
 Licensed under either of [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT) at

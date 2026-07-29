@@ -125,6 +125,12 @@ remain.
 - `WebhookVerifier` is split into `BodyWebhookVerifier` and
   `RequestWebhookVerifier`.
 
+## Examples
+
+[`sign_snap_bi_request`](examples/sign_snap_bi_request.rs) builds and signs an
+outbound SNAP BI service request. Run it with
+`cargo run --example sign_snap_bi_request`.
+
 ## License
 
 Dual-licensed under either [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at

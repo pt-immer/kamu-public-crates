@@ -143,6 +143,11 @@ if serialization fails.
 | `ResponseCode::classify() -> Option<Error>` | `Option<ErrorClass>` |
 | numeric panic-based constructors | `CaseCode` and fallible numeric constructors |
 
+## Examples
+
+[`client_parse`](examples/client_parse.rs) parses success, failure, and malformed
+SNAP BI responses. Run it with `cargo run --example client_parse`.
+
 ## License
 
 Dual-licensed under either [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at
