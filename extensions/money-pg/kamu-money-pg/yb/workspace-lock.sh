@@ -1,50 +1,23 @@
 #!/usr/bin/env bash
-# ONE WRITER AT A TIME for this workspace's scratch space.
+# Serialize writers to the default workspace scratch root.
 #
 #   source ./kamu-money-pg/yb/workspace-lock.sh
 #   workspace_lock "release-check"
 #
-# WHY THIS EXISTS. Containers and networks in this repo are well isolated: every suite invents a
-# run ID, brings up its own private network and labels everything it creates, so two suites cannot
-# see each other's nodes. The FILESYSTEM side had no such property. Every path below now resolves
-# under ${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}, and with that variable UNSET -- the default --
-# they are as fixed as they ever were:
+# A unique explicit `KMONEY_RUN_ROOT` gives one run a private artifact tree, so no
+# lock is needed. With the variable unset, manual and legacy calls share:
 #
 #   <root>/{kmoney.so,kmoney.control,kmoney--*.sql}   the extracted triplet
 #   <root>/out-yb.txt                                 the YB battery output
 #   <root>/ref/out-pg15.txt                           the stock-PG15 reference
 #   <root>/regress-yb, regress-cluster-n*, suite-n*.log, concurrent, release-suites
 #
-# So two release checks in one checkout could overwrite the extracted triplet between the point it
-# is hashed and the point the manifest records it -- binding node image A to artifact hashes from
-# node image B -- or diff one run's battery output against another run's reference, or replay a
-# sibling's suite log into a transcript that calls itself the ordered release evidence. pgrx's
-# generated SQL is not reproducible, so that substitution is possible even when both runs start
-# from the same revision. Nothing here would have raised.
+# Concurrent writers there can combine artifacts, hashes, references, and logs
+# from different runs. `flock -n` refuses the second writer immediately.
 #
-# WHAT THIS LOCK STILL PROTECTS, AND WHAT IT NO LONGER HAS TO. The paragraph that stood here chose
-# a lock INSTEAD of run-scoped paths, called run-scoping the better end state, and said it would be
-# worth the change once this workspace lived somewhere with real CI. That happened: it is now
-# extensions/money-pg in kamu-public-crates. Every path above resolves from KMONEY_RUN_ROOT, so a
-# caller that sets it writes a tree nobody else touches.
-#
-# The lock did NOT become redundant, because run-scoping never covered the case it was chosen for:
-# a stray `just yb-ab` started BY HAND, with KMONEY_RUN_ROOT unset, writes the same `out-yb.txt` a
-# release check is reading. The boundary is therefore:
-#
-#   run-scoped, no lock needed   every path above, whenever KMONEY_RUN_ROOT is set
-#   still shared, still locked   those same paths under the DEFAULT root -- anything started by
-#                                hand, or by a recipe that did not set the variable
-#
-# CI needs neither: each job gets a fresh runner with its own checkout, so there is no second
-# writer to exclude. What remains here is a developer-workstation guard, which is what it was
-# actually defending all along. The cost is unchanged and still deliberate -- a second release
-# check sharing the default root is refused rather than proceeding independently.
-#
-# SOURCED, NEVER EXECUTED. A lock is held by an open file descriptor for as long as the holding
-# process lives; a subprocess that takes one and exits has released it before its caller does any
-# work. `flock -n` fails immediately rather than blocking: a gate that silently waits 27 minutes
-# on another run looks exactly like a gate that has hung.
+# Source this file: the caller must retain the open lock descriptor for its
+# lifetime. Descendants may reuse the lock only when the inherited descriptor
+# resolves to this exact lock file.
 
 # Where the lock lives: resolved from THIS file, not from the caller's cwd, so a script that has
 # already `cd`'d somewhere still finds the one lock.
@@ -66,6 +39,12 @@ _workspace_lock_inherited() {
 
 workspace_lock() {
     local what="${1:-a workspace suite}"
+
+    # A caller-provided run root owns no default-root paths. `KMONEY_LOCK_DIR`
+    # is the self-test override and deliberately keeps locking enabled.
+    if [ -n "${KMONEY_RUN_ROOT:-}" ] && [ -z "${KMONEY_LOCK_DIR:-}" ]; then
+        return 0
+    fi
 
     # `KMONEY_LOCK_DIR` exists only for fixture-backed self-tests. Resolve it before checking
     # re-entrancy because the inherited descriptor must point to this exact path.

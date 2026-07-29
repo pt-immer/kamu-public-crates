@@ -6,21 +6,9 @@
 //!
 //! Text parsing, rendering, currency lookup, and arithmetic delegate to `kamu_money_core`.
 
-// kamu-money-core's lint posture, mirrored here. Both crates cherry-pick from `clippy::restriction`
-// and `clippy::nursery` BY NAME rather than enabling either group, for the reason kamu-money-core
-// records: `restriction` is self-contradictory by design and `nursery` is under development, so
-// denying a whole group lets a toolchain upgrade break the build for reasons unrelated to this
-// code.
-//
-// This is the C ABI crate, so casts are load-bearing rather than incidental — which is exactly
-// why the lints are ON. Every `as` that survives is a deliberate reinterpret, and each one takes
-// its exception NARROWLY, on the statement where it fires, with the reason written beside it:
-//   - `typmod as i32` in kmoney_typmod_out (sign-extends PostgreSQL's -1 sentinel; `try_from`
-//     would reject it, so the lint's "safe" fix would be the bug).
-//   - varlena -> ArrayType in kmoney_typmod_in (palloc is MAXALIGN'd, so the pointer is
-//     over-aligned; the same cast PostgreSQL's own DatumGetArrayTypeP performs).
-// A function-wide allow was rejected: it would blanket-permit future unaudited casts in the very
-// functions that most need auditing.
+// Match money-core's named restriction/nursery lints without enabling either
+// unstable group wholesale. FFI casts are denied globally; the two required
+// typmod reinterpretations carry statement-local exceptions and rationale.
 #![deny(clippy::all, clippy::pedantic)]
 #![deny(unsafe_op_in_unsafe_fn, clippy::undocumented_unsafe_blocks)]
 #![deny(
@@ -52,22 +40,13 @@ mod safe;
 ///
 /// # Why this is not `#[derive(PostgresType)]`
 ///
-/// pgrx's derive emits `INTERNALLENGTH = variable` as a hardcoded string literal
-/// (`pgrx-sql-entity-graph-0.19.1`, `postgres_type/entity.rs`) — it is not a parameter, so every
-/// derived type is a varlena. That costs a header on every value: 1 byte on disk, 4 in memory,
-/// plus TOAST eligibility that an 18-byte payload will never use.
+/// pgrx 0.19.1's derive hardcodes `INTERNALLENGTH = variable`, so it cannot
+/// declare this fixed-width value. The extension therefore owns `CREATE TYPE`
+/// and the datum ABI implementations.
 ///
-/// PostgreSQL does not require that. `uuid` is `typlen = 16, typbyval = f, typalign = c,
-/// typstorage = p` — a fixed-length, 1-byte-aligned, plain, non-varlena type, which is exactly
-/// this shape at 16 instead of 18. Reaching it means owning the datum path: the `CREATE TYPE` is
-/// hand-written below, and so are `IntoDatum`, `FromDatum`, `SqlTranslatable`, `ArgAbi` and
-/// `BoxRet`.
-///
-/// **What this does NOT buy**: pass-by-value. `typbyval` requires `typlen <= 8` because a
-/// `Datum` is 8 bytes, and 128 bits of units plus a currency is 18. `uuid`, `interval` and
-/// `point` are all pass-by-reference for the same reason, so a `palloc` per function result is
-/// inherent to any wide PostgreSQL type rather than a cost this design chose. It is a bump
-/// allocation in a per-tuple memory context that is reset wholesale, not a `malloc`.
+/// PostgreSQL stores the 18-byte value by reference because `Datum` holds at
+/// most 8 bytes. Function results use `palloc` in the current memory context;
+/// fixed width removes the varlena header and TOAST eligibility, not allocation.
 macro_rules! fixed_length_money_type {
     ($(#[$meta:meta])* $t:ident) => {
         $(#[$meta])*
@@ -76,10 +55,8 @@ macro_rules! fixed_length_money_type {
         #[allow(non_camel_case_types)]
         pub struct $t(Payload);
 
-        // Held where they cannot rot. `size_of` is the on-disk width PostgreSQL is told about
-        // in `INTERNALLENGTH`, and a mismatch would read past the end of a tuple field;
-        // `align_of` must be 1 because `ALIGNMENT = char` promises PostgreSQL may place the
-        // value anywhere. Both are compile errors, not tests.
+        // Compile-time checks bind the Rust layout to `INTERNALLENGTH = 18`
+        // and `ALIGNMENT = char`.
         const _: () = assert!(
             size_of::<$t>() == PAYLOAD_BYTES,
             "the struct width must equal the INTERNALLENGTH declared to PostgreSQL"
@@ -116,10 +93,8 @@ macro_rules! fixed_length_money_type {
     };
 }
 
-// The shell type must exist before the in/out functions can name it, and the real type before
-// anything else can use it. `bootstrap` puts this first in the generated script.
-// Both shell types in one block: pgrx permits exactly one `bootstrap` positioning, and a
-// shell has to exist before an in/out function can name the type in its signature.
+// Shell types must precede the I/O functions that name them. pgrx permits one
+// `bootstrap` block, so both declarations live here.
 extension_sql!(
     r"
 CREATE TYPE kmoney;
@@ -132,18 +107,13 @@ CREATE TYPE kmoney_mixed;
 fixed_length_money_type! {
     /// Money, on disk: 18 bytes, fixed width, currency carried in the value.
     ///
-    /// The currency lives in the value because PostgreSQL does not pass typmod to operators:
-    /// `kmoney(USD) +
-    /// kmoney(IDR)` reaches the operator as `kmoney + kmoney` and the only thing that can
-    /// tell them apart is the value itself.
+    /// The currency lives in the value because PostgreSQL does not pass typmod
+    /// to operators: `kmoney(USD) + kmoney(IDR)` arrives as `kmoney + kmoney`.
     ///
     /// # Why this type is `snake_case`
     ///
-    /// The SQL name is the permanent public interface, so the Rust name matches `kmoney`.
-    /// Nothing imports this crate
-    /// as a Rust library, it is a `cdylib`. Keeping the two identical also means
-    /// `rust_regtypein::<Self>()`, which resolves the OID from the Rust type's last path
-    /// segment, finds the right type without a mapping table.
+    /// The Rust name matches the permanent SQL name and lets
+    /// `rust_regtypein::<Self>()` resolve its OID without a mapping table.
     kmoney
 }
 
@@ -164,91 +134,36 @@ fn kmoney_in(input: &core::ffi::CStr) -> kmoney {
 #[doc(hidden)]
 #[pg_extern(immutable, parallel_safe, requires = ["money_shell_types"])]
 fn kmoney_out(value: kmoney) -> alloc::ffi::CString {
-    // An unknown code means the row was written by a build whose currency table differed, or
-    // the bytes are corrupt. Rendering a placeholder would emit a number attached to the wrong
-    // currency, which is precisely the silent wrongness this design exists to prevent.
+    // Reject unknown or corrupt currency codes instead of rendering a
+    // plausible amount under the wrong currency.
     let amount = safe::validated_or_error(value.payload(), "kmoney");
-    // A stored amount outside the domain means corrupt bytes or a datum written by something
-    // that bypassed the input function. `text::render` refuses it rather than emitting
-    // canonical-looking text no parser would accept back, so this surfaces as a SQL ERROR on
-    // the row that is actually broken.
     let rendered = text::render(amount.units(), amount.currency())
         .unwrap_or_else(|e| error!("kmoney: stored amount cannot be rendered: {e}"));
     alloc::ffi::CString::new(rendered)
         .unwrap_or_else(|e| error!("kmoney: rendered form contains a NUL byte: {e}"))
 }
 
-// =========================================================================================
-// TYPMOD: `kmoney(IDR)` pins a column to one currency.
-//
-// These four functions are RAW `extern "C"` because pgrx 0.19.1 cannot express them. PostgreSQL
-// hands `typmod_in` a `cstring[]`, and pgrx has no safe mapping for that -- a
-// `#[pg_extern] fn(Vec<Option<&CStr>>)` fails to compile with "cannot be passed into a Postgres
-// function as a Datum", and the crate's only typmod support is const-generic and built-in-only
-// (`Numeric<P, S>`). So the array is parsed against `pg_sys` directly and the SQL is declared by
-// hand.
-//
-// The typmod VALUE is the ISO 4217 numeric code. PostgreSQL reserves -1 for "no modifier" and
-// every assigned code is 1..=999, so the two never collide and no encoding is needed.
-//
-// This does not make cross-currency arithmetic fail: PostgreSQL does
-// not pass typmod to operators, so `kmoney(USD) + kmoney(IDR)` still arrives as
-// `kmoney + kmoney`. Typmod is a column-level INSERT/coercion check and nothing more; the
-// value-carried code remains the only thing standing between two currencies in an expression.
-// =========================================================================================
-
-// =========================================================================================
-// Arithmetic — defined for `kmoney` and, deliberately, for NOTHING ELSE.
-//
-// `kmoney_mixed` below has no `+`, no `-`, and no sum of any kind. That
-// is stronger than a runtime check, because `SELECT sum(amount)` on a mixed column fails at
-// PLAN time — before a row is read — rather than on row 4,000,000 of a nightly batch. It is
-// the SQL analogue of `Add` existing only on `Money<C>`: the unproven form cannot be added
-// because the impl is not there.
-//
-// `kmoney` has `+`, `-`, variadic `kmoney_sum`, and a `sum` aggregate with a wide transition
-// state. Partial totals therefore cannot fail solely because of row or combine order.
-// =========================================================================================
-
 fixed_length_money_type! {
     /// Money whose currency is **not** fixed by the column.
     ///
-    /// Byte-identical to [`kmoney`] on disk, and that is the point: the difference is not the
-    /// representation, it is the **absence of an operator surface**. A column declared
-    /// `kmoney_mixed` may hold rows in different currencies, and `SELECT sum(amount)` over it
-    /// fails when the query is planned:
+    /// Byte-identical to [`kmoney`] on disk but without arithmetic or ordering
+    /// operators. A column may hold several currencies, and
+    /// `SELECT sum(amount)` fails while the query is planned:
     ///
     /// ```text
     /// ERROR:  function sum(kmoney_mixed) does not exist
     /// ```
     ///
-    /// A runtime check would have read four million rows first and then failed on the one that
-    /// disagreed. This fails before the scan, on every such query, deterministically, whether
-    /// or not the data happens to be homogeneous today.
-    ///
-    /// To compute with these values, prove a row into `kmoney` with `kmoney_from_mixed` (the SQL function; the Rust item behind it is private) —
-    /// exactly as Rust proves a value into a typed `Money<C>` before it can be added.
+    /// Convert a value with the SQL function `kmoney_from_mixed`, which checks
+    /// the expected currency before returning [`kmoney`].
     kmoney_mixed
 }
 
-// There is no `kmoney -> numeric` cast. Such a cast would expose PostgreSQL's unconstrained
-// numeric operators and their value-dependent rounding. Egress uses the exact, currency-tagged
-// text form instead. Tests may still compare storage and ingress behavior with `numeric`.
+// No `kmoney -> numeric` cast: egress keeps the exact currency-tagged text form
+// instead of exposing PostgreSQL numeric arithmetic.
 
-// =========================================================================================
-// THE BOUNDARY PROBE --- what a pgrx call costs, and nothing else.
-//
-// Behind `--features boundary-probe`, so none of this is in the shipped SQL surface. Adding a
-// no-op to the extension to support a benchmark is a trade this workspace has not made; adding
-// one that is not compiled unless a benchmark asks for it is a different trade.
-//
-// `c_noop` in
-// `kamu-money-pg/bench/boundary/c_noop.c` is `bigint -> bigint` returning its argument, and so
-// is `rs_noop`. Everything the pgrx one costs above the C one is the wrapper: fmgr dispatch is
-// common to both. `rs_noop_kmoney` then adds exactly one thing --- `FromDatum` for the 18-byte
-// type --- so the type's conversion separates from any function body.
-//
-// DO NOT give these bodies. A body is the thing being subtracted out.
+// Benchmark-only no-ops isolate pgrx wrapper cost (`rs_noop`) and the 18-byte
+// `FromDatum` cost (`rs_noop_kmoney`) from function-body work.
 #[cfg(feature = "boundary-probe")]
 #[pg_extern(immutable, parallel_safe)]
 fn rs_noop(x: i64) -> i64 {

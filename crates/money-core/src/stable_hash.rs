@@ -129,48 +129,4 @@ mod tests {
         // A high-half difference must affect the result.
         assert_ne!(fold_to_i32(0x0000_0000_dead_beef), fold_to_i32(0xffff_ffff_dead_beef));
     }
-
-    /// Scan every crate under the discovered repository root for unstable hashers.
-    #[test]
-    fn no_source_file_reaches_for_the_unstable_hasher() {
-        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let Some(root) = manifest.ancestors().find(|p| p.join("Justfile").is_file()) else {
-            return; // unpacked .crate, no repository to inspect
-        };
-
-        let mut offenders = Vec::new();
-        let mut scanned = 0_usize;
-        let members = std::fs::read_dir(root.join("crates")).expect("crates/ is readable");
-        for member in members.flatten() {
-            let Ok(entries) = std::fs::read_dir(member.path().join("src")) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                // Split the needle so the guard does not report its own source.
-                let needle = concat!("DefaultHasher", "::new");
-                if path.extension().is_some_and(|e| e == "rs")
-                    && let Ok(text) = std::fs::read_to_string(&path)
-                {
-                    scanned += 1;
-                    if text.contains(needle) {
-                        offenders.push(path.display().to_string());
-                    }
-                }
-            }
-        }
-
-        // Positive control for repository discovery.
-        assert!(
-            scanned > 0,
-            "the hasher guard read no source files at all — root discovery or the crates/ \
-             layout changed, and this test was about to pass without checking anything"
-        );
-        assert!(
-            offenders.is_empty(),
-            "DefaultHasher's algorithm is explicitly unstable across Rust releases and must \
-             not back anything persisted. Use kamu_money_core::advanced::stable_hash. \
-             Found in: {offenders:?}"
-        );
-    }
 }

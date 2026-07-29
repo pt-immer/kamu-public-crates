@@ -1,7 +1,7 @@
-//! Division with an explicit residue: `kmoney_div`.
+//! Division with an explicit residue.
 //!
-//! Returns quotient AND residue as a row, because SQL has no typestate to enforce what
-//! `Division<C>` enforces in Rust -- so the residue is handed back rather than guarded.
+//! SQL cannot express `Division<C>` typestate, so `kmoney_div` returns quotient
+//! and residue together.
 
 use super::{kmoney, validated_or_error};
 use kamu_money_core::Rounding;
@@ -9,34 +9,25 @@ use pgrx::prelude::*;
 
 /// Divide an amount, returning the quotient **and the residue** as one row.
 ///
-/// # The guarantee that does not survive SQL, stated plainly
-///
-/// In Rust this operation is guarded by a typestate: `div_int` returns a `Division<C>` that
-/// will not surrender its quotient until the caller has named an exit — `take_residue()` or
-/// `discard_deliberately()`. A returned `Residue<C>` is `#[must_use]` but does not panic on drop.
-///
-/// **SQL cannot express that.** There is no way to write a PostgreSQL function whose result is
-/// unusable until a second value has been dealt with; any column of a composite can be omitted.
-/// The residue is therefore returned *beside* the quotient, where ignoring it is visible in the
-/// query:
+/// Rust's `Division<C>` withholds the quotient until
+/// `take_residue()` or `discard_deliberately()`. PostgreSQL composite columns
+/// can be omitted, so SQL cannot enforce that transition; it only makes the
+/// residue visible beside the quotient:
 ///
 /// ```sql
 /// SELECT * FROM kmoney_div('USD 10.00', 3, 'toward_zero');
 /// --         quotient         |         residue
 /// --  USD 3.333333333333333333 | USD 0.000000000000000001
 ///
-/// -- dropping the residue is possible, but you had to write .quotient to do it:
+/// -- Explicitly project the quotient to omit the residue:
 /// SELECT (kmoney_div('USD 10.00', 3, 'toward_zero')).quotient;
 /// ```
 ///
-/// Note the quotient keeps **all eighteen digits**. Nothing here rounds to a currency's minor
-/// unit: `USD 10.00 / 3` is not `USD 3.33`, and a function that returned `3.33` would have
-/// silently moved the other `0.003333…` somewhere. Presenting a payable figure is a separate
-/// act performed at the point of payment; canonical display pads but never rounds.
-///
-/// `quotient * n + residue = amount` holds exactly, for every rounding mode. If you need the
-/// residue *enforced* rather than merely returned, do the division in Rust — that is the
-/// honest boundary, and [`kmoney_allocate`] is the SQL operation that has no residue at all.
+/// The quotient stays at the canonical 18-digit scale; this function does not
+/// round to the currency's minor unit.
+/// `quotient * n + residue = amount` holds for every rounding mode. Use Rust
+/// when residue handling must be enforced. [`kmoney_allocate`] conserves the
+/// input without returning a residue.
 #[pg_extern(immutable, parallel_safe, requires = ["kmoney_concrete"])]
 fn kmoney_div(
     amount: kmoney,
@@ -53,8 +44,7 @@ fn kmoney_div(
         error!("kmoney_div: cannot divide into zero parts");
     };
 
-    // No default mode, for the reason kamu_money_core gives: a default rounding mode is a decision
-    // made by whoever wrote the library rather than whoever owns the money.
+    // Require the caller to select the rounding policy.
     let Some(mode) = Rounding::from_name(rounding) else {
         error!("kmoney_div: {rounding:?} is not a rounding mode; expected one of: {}", Rounding::names());
     };
@@ -72,13 +62,7 @@ fn kmoney_div(
 mod tests {
     use pgrx::prelude::*;
 
-    // -----------------------------------------------------------------------------------
-    // Division and allocation: the residue, and the operation that has none.
-    // -----------------------------------------------------------------------------------
-
-    /// The residue comes back **beside** the quotient. SQL cannot force the caller to look at
-    /// it — that guarantee does not cross the boundary — but it cannot be produced without
-    /// being returned either.
+    /// The residue is returned beside the quotient.
     #[pg_test]
     fn division_returns_the_residue_beside_the_quotient() {
         let (quotient, residue) = Spi::get_two::<String, String>(
@@ -91,8 +75,7 @@ mod tests {
         assert_eq!(residue.expect("not null"), "USD 0.000000000000000001");
     }
 
-    /// `quotient * n + residue == amount`, exactly, for every mode. This is the identity the
-    /// residue exists to preserve, checked in SQL rather than assumed from the Rust tests.
+    /// SQL preserves `quotient * n + residue == amount` for every mode.
     #[pg_test]
     fn the_division_identity_holds_for_every_rounding_mode() {
         for mode in [
@@ -120,8 +103,7 @@ mod tests {
         }
     }
 
-    /// No default rounding mode, in SQL either — a default is a decision made by whoever wrote
-    /// the library rather than whoever owns the money.
+    /// SQL requires a recognized rounding mode.
     #[pg_test(
         error = "kmoney_div: \"bankers\" is not a rounding mode; expected one of: half_even, half_away_from_zero, half_toward_zero, toward_zero, away_from_zero, floor, ceil"
     )]

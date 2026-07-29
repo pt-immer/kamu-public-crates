@@ -13,13 +13,32 @@ class PathClassifierTests(unittest.TestCase):
         cases = {
             "crates/iso3166/src/lib.rs": {"iso3166"},
             "crates/logging/src/lib.rs": {"logging"},
-            "crates/money-core/src/lib.rs": {"money"},
+            "crates/money-core/src/lib.rs": {"money", "moneypg"},
             "crates/snap-response/src/lib.rs": {"snap"},
             "extensions/money-pg/Cargo.toml": {"moneypg"},
         }
         for path, expected in cases.items():
             with self.subTest(path=path):
                 self.assertTrue(expected <= classify_path(path))
+
+    def test_money_core_package_inputs_retest_the_extension(self) -> None:
+        for path in (
+            "crates/money-core/Cargo.toml",
+            "crates/money-core/build.rs",
+            "crates/money-core/build/iso4217.rs",
+            "crates/money-core/src/arith.rs",
+            "crates/money-core/vendor/list-one.xml",
+        ):
+            with self.subTest(path=path):
+                values = classify_paths([path])
+                self.assertTrue(values["money"])
+                self.assertTrue(values["moneypg"])
+
+        self.assertNotIn(
+            "moneypg",
+            classify_path("crates/money-core/README.md"),
+            "documentation does not change the extension's compiled dependency",
+        )
 
     def test_root_policy_files_are_shared(self) -> None:
         for path in (

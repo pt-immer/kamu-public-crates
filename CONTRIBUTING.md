@@ -56,8 +56,10 @@ that the ordinary development gate omits.
 
 Ordinary tests run with
 [cargo-nextest](https://nexte.st/), configured in
-`.config/nextest.toml`. Nextest does not run doctests, so every test recipe also
-runs `cargo test --doc`. Preserve that pair when adding a recipe.
+`.config/nextest.toml`. Nextest does not run doctests, so complete ordinary-test
+aggregates also run `cargo test --doc`. Coverage recipes intentionally exclude
+doctests from their measurements. Preserve an explicit doctest owner when
+adding or splitting test aggregates.
 
 Do not use workspace-wide `--all-features`. `kamu-logging` has mutually
 exclusive native and wasm features, and pgrx features select one PostgreSQL

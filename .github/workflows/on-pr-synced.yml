@@ -552,7 +552,7 @@ jobs:
 
   test-money-pg-offline:
     name: test (kamu-money-pg hygiene guards)
-    needs: [changes, lint-shell]
+    needs: changes
     if: ${{ needs.changes.outputs.moneypg == 'true' }}
     runs-on: ubuntu-latest
     steps:
@@ -590,7 +590,7 @@ jobs:
 
   lint-money-pg:
     name: clippy (kamu-money-pg pg18)
-    needs: [changes, lint-shell]
+    needs: changes
     if: ${{ needs.changes.outputs.moneypg == 'true' }}
     runs-on: ubuntu-latest
     steps:

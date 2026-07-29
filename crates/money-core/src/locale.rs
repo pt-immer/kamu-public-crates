@@ -168,9 +168,8 @@ impl<'a> LocalePolicy<'a> {
 
     /// Set the digit grouping, read right-to-left, with the **last entry repeating**.
     ///
-    /// `&[3]` is the western group-of-three. `&[3, 2]` is the Indian lakh/crore shape —
-    /// `1,23,45,678` — which is the whole reason this is a slice and not a single number.
-    /// `&[]` disables grouping.
+    /// `&[3]` groups by three. `&[3, 2]` renders the Indian lakh/crore shape
+    /// `1,23,45,678`. `&[]` disables grouping.
     ///
     /// # Errors
     ///

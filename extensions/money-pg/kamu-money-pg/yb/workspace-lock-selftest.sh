@@ -52,7 +52,7 @@ chmod +x "$WORK/holder.sh"
 setsid "$WORK/holder.sh" &
 # Wait for the lock to actually be held rather than assuming a sleep is long enough.
 for _ in $(seq 1 100); do [ -f "$WORK/ready" ] && break; sleep 0.1; done
-HOLDER_PID="$(cat "$WORK/pgid" 2>/dev/null || echo 0)"
+HOLDER_PID="$(cat "$WORK/pgid" 2>/dev/null || true)"
 
 if [ ! -f "$WORK/ready" ]; then
     bad "the first caller never acquired the lock at all"
@@ -176,24 +176,63 @@ fi
 # The kernel releases the lock when the last inherited descriptor closes. Killing only the
 # parent must not free it while a child still writes; killing the whole group must free it.
 # No `wait`: setsid detached the holder, so it is not a child of this shell. Poll for its death.
-kill "$HOLDER_PID" 2>/dev/null || true
-for _ in $(seq 1 100); do kill -0 "$HOLDER_PID" 2>/dev/null || break; sleep 0.1; done
-if bash -c "source '$LOCKLIB'; workspace_lock 'selftest-orphan'" 2>/dev/null; then
-    bad "the lock freed while a child of the dead holder was still running and still writing"
+if [[ "$HOLDER_PID" =~ ^[1-9][0-9]*$ ]]; then
+    kill "$HOLDER_PID" 2>/dev/null || true
+    for _ in $(seq 1 100); do kill -0 "$HOLDER_PID" 2>/dev/null || break; sleep 0.1; done
+    if bash -c "source '$LOCKLIB'; workspace_lock 'selftest-orphan'" 2>/dev/null; then
+        bad "the lock freed while a child of the dead holder was still running and still writing"
+    else
+        ok "killing only the top-level holder does not free the lock while its children live"
+    fi
+
+    # The whole process group, which is what a Ctrl-C or runner teardown sends.
+    kill -- -"$HOLDER_PID" 2>/dev/null || true
+    for _ in $(seq 1 100); do
+        bash -c "source '$LOCKLIB'; workspace_lock 'selftest-probe'" 2>/dev/null && break
+        sleep 0.1
+    done
+    if bash -c "source '$LOCKLIB'; workspace_lock 'selftest-after'" 2>/dev/null; then
+        ok "once the whole group is gone the lock is free -- no stale file wedges the workspace"
+    else
+        bad "the lock survived its entire process group, so a killed run wedges the checkout"
+    fi
 else
-    ok "killing only the top-level holder does not free the lock while its children live"
+    bad "the holder did not publish a valid pid; lifecycle controls cannot run"
 fi
 
-# The whole process group, which is what a Ctrl-C or a runner teardown actually sends.
-kill -- -"$HOLDER_PID" 2>/dev/null || true
-for _ in $(seq 1 100); do
-    bash -c "source '$LOCKLIB'; workspace_lock 'selftest-probe'" 2>/dev/null && break
-    sleep 0.1
-done
-if bash -c "source '$LOCKLIB'; workspace_lock 'selftest-after'" 2>/dev/null; then
-    ok "once the whole group is gone the lock is free -- no stale file wedges the workspace"
+# --- isolated run roots ----------------------------------------------------------------------
+# Copy the library so its default lock path also lives under the fixture tree.
+ISOLATED_DIR="$WORK/isolated"
+ISOLATED_LOCKLIB="$ISOLATED_DIR/workspace-lock.sh"
+mkdir -p "$ISOLATED_DIR"
+cp "$LOCKLIB" "$ISOLATED_LOCKLIB"
+cat > "$ISOLATED_DIR/holder.sh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+source "$ISOLATED_LOCKLIB"
+workspace_lock "isolated-control-holder"
+echo \$\$ > "$ISOLATED_DIR/pgid"
+touch "$ISOLATED_DIR/ready"
+sleep 30
+EOF
+chmod +x "$ISOLATED_DIR/holder.sh"
+env -u KMONEY_RUN_ROOT -u KMONEY_LOCK_DIR -u KMONEY_WORKSPACE_LOCK_FD \
+    setsid "$ISOLATED_DIR/holder.sh" &
+for _ in $(seq 1 100); do [ -f "$ISOLATED_DIR/ready" ] && break; sleep 0.1; done
+ISOLATED_PID="$(cat "$ISOLATED_DIR/pgid" 2>/dev/null || true)"
+
+if [ ! -f "$ISOLATED_DIR/ready" ]; then
+    bad "the isolated-root control holder never acquired its default lock"
+elif env -u KMONEY_LOCK_DIR -u KMONEY_WORKSPACE_LOCK_FD \
+    KMONEY_RUN_ROOT="$WORK/private-run" \
+    bash -c "source '$ISOLATED_LOCKLIB'; workspace_lock 'private-run'" \
+    >/dev/null 2>&1; then
+    ok "an explicit run root does not contend with the shared default root"
 else
-    bad "the lock survived its entire process group, so a killed run wedges the checkout"
+    bad "an explicit run root was refused by the unrelated default-root lock"
+fi
+if [[ "$ISOLATED_PID" =~ ^[1-9][0-9]*$ ]]; then
+    kill -- -"$ISOLATED_PID" 2>/dev/null || true
 fi
 
 echo

@@ -103,7 +103,7 @@ let three = NonZeroU32::new(3).unwrap();
 let (each, residue) = whole.div_int(three, Rounding::TowardZero).take_residue();
 assert_eq!(residue.take_units(), 1, "10 into 3 leaves 1 unit at scale 18");
 
-// Exit two: say out loud that you do not want it.
+// Exit two: make the discard explicit.
 let same = whole
     .div_int(three, Rounding::TowardZero)
     .discard_deliberately();
@@ -119,9 +119,8 @@ cannot turn an accounting mistake into a process abort.
 The ISO 4217 register is generated at build time from
 [`vendor/list-one.xml`](vendor/list-one.xml), published by SIX Group AG as the
 maintenance agency for ISO 4217. There is no committed table to hand-edit and no
-generator to forget to run: the XML and the table are the same object, and the
-publication date, row counts and internal consistency are checked as it is read,
-so a replaced register fails the build rather than a test.
+generator to run separately: the build reads the XML and validates its
+publication date, row counts, and internal consistency.
 
 Credit, provenance and the redistribution position are in
 [`VENDORED.md`](VENDORED.md) and [`NOTICE`](NOTICE).

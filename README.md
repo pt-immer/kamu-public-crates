@@ -59,7 +59,7 @@ flowchart LR
 
 ## Public crate inventory
 
-| Crate | Current source version | Documentation |
+| Crate | Release status | Documentation |
 | --- | ---: | --- |
 | [`kamu-iso3166`](crates/iso3166) | [![crates.io](https://img.shields.io/crates/v/kamu-iso3166?style=flat-square)](https://crates.io/crates/kamu-iso3166) | [docs.rs](https://docs.rs/kamu-iso3166) |
 | [`kamu-logging`](crates/logging) | [![crates.io](https://img.shields.io/crates/v/kamu-logging?style=flat-square)](https://crates.io/crates/kamu-logging) | [docs.rs](https://docs.rs/kamu-logging) |
@@ -71,8 +71,8 @@ flowchart LR
 | [`kamu-snap-response-actix`](crates/snap-response-actix) | [![crates.io](https://img.shields.io/crates/v/kamu-snap-response-actix?style=flat-square)](https://crates.io/crates/kamu-snap-response-actix) | [docs.rs](https://docs.rs/kamu-snap-response-actix) |
 | [`kamu-snap-response-axum`](crates/snap-response-axum) | [![crates.io](https://img.shields.io/crates/v/kamu-snap-response-axum?style=flat-square)](https://crates.io/crates/kamu-snap-response-axum) | [docs.rs](https://docs.rs/kamu-snap-response-axum) |
 
-Each crate owns its version and changelog. Source versions can lead crates.io
-while a release is being prepared.
+Each crate owns its version and changelog. Badges show crates.io releases;
+source manifests can lead them while a release is being prepared.
 
 ### The excluded PostgreSQL lane
 
@@ -80,7 +80,7 @@ while a release is being prepared.
 `kmoney` pgrx extension and its YugabyteDB harness. It is not a tenth public
 crate and cannot be built by the root `--workspace` commands. The separation
 keeps pgrx patches, profiles, lockfiles, and Docker-heavy validation out of the
-nine crates that ship to crates.io.
+nine publishable crates.
 
 Use `just pg <recipe>` to enter that lane. Its
 [`DESIGN.md`](extensions/money-pg/DESIGN.md) defines the boundary; the
@@ -117,10 +117,11 @@ just gate-all   # public-crate gate plus the developer lane gate
 Extension releases additionally require `just pg gate-pg-release`, which builds
 the native extension against YugabyteDB and runs the cluster suites.
 
-`cargo-nextest` runs ordinary tests in isolated processes. It does not run
-doctests, so every repository recipe pairs nextest with `cargo test --doc`.
-Feature matrices are selected per crate: workspace-wide `--all-features` is
-invalid because some target and backend features are mutually exclusive.
+`cargo-nextest` runs ordinary tests in isolated processes but omits doctests.
+Complete ordinary-test aggregates run `cargo test --doc` explicitly; coverage
+recipes measure ordinary tests only. Feature matrices are selected per crate:
+workspace-wide `--all-features` is invalid because some target and backend
+features are mutually exclusive.
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for commits, releases, and data updates.
 Automation details live in [`AGENTS.md`](AGENTS.md).

@@ -155,13 +155,9 @@ shopt -u nullglob
 distinct_nodes="$(printf '%s' "$nodes_used" | sort -u | grep -c . || true)"
 if [ "$worker_fail" -eq 0 ]; then
     ok "$committed transfers committed across $WORKERS workers on $distinct_nodes node(s) ($retries retryable conflicts retried)"
-    # Said out loud, because the alternative is that a reader takes this probe as evidence about
-    # the conflict path when it may not have touched it at all. Whether these transfers happen to
-    # collide depends on scheduling; probe 5 forces one on purpose and is the actual evidence.
+    # Scheduling may produce no conflict; probe 5 deterministically covers retry.
     [ "$retries" -eq 0 ] && echo "        (no conflicts arose here -- probe 5 forces one, and is what covers the retry path)"
-    # THE SPREAD IS ASSERTED, NOT NARRATED. The line above claimed "on $N nodes" for this
-    # harness's entire history while every worker in fact talked to node 0, and no probe could
-    # tell. With more workers than nodes, every node must have taken traffic.
+    # With at least one worker per node, require every node to receive traffic.
     want_nodes=$(( WORKERS < N ? WORKERS : N ))
     if [ "$distinct_nodes" -eq "$want_nodes" ]; then
         ok "the workers really did spread: $distinct_nodes distinct node(s) took traffic"

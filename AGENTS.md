@@ -52,6 +52,10 @@ Repository-wide policy remains at the root. In particular, `lint-shell` and
 - `kamu-logging` owns a process-global tracing subscriber. Tests that need fresh
   global state must run in isolated processes; do not call `init()` repeatedly
   to construct error variants.
+- Persisted money hashes use
+  `kamu_money_core::advanced::stable_hash`. The root source-policy test scans
+  every tracked Rust file, including the excluded lane, for
+  `DefaultHasher::new`.
 - BRI SNAP BI signatures exclude URI queries. The provider vector in
   `crates/snap-crypto/tests/snap_bi_recipes.rs` pins this contract. Adapters pass
   `path()`, not `path_and_query()`, unless a new provider contract and vector
@@ -94,6 +98,9 @@ Run `just gate` before pushing public-workspace changes. Run `just gate-all`
 before pushing extension changes. The latter takes hours and needs Docker.
 Before an extension release, also run `just pg gate-pg-release`; it compiles
 the native extension against YugabyteDB and exercises the cluster suites.
+YugabyteDB commands serialize the shared default scratch root. Set a unique
+`KMONEY_RUN_ROOT` for independent concurrent runs; explicit roots bypass that
+default-root lock.
 
 Missing tools or targets fail rather than skip. Tool versions live in
 `.config/dev-tools.json`; `just setup` installs the repository-local tools and
@@ -119,8 +126,9 @@ their commands.
 
 - `cargo-nextest` is the ordinary test runner in recipes, coverage, and CI.
   `.config/nextest.toml` is its single configuration. Retries remain disabled.
-- Nextest does not run doctests. Every new nextest recipe must pair it with an
-  explicit `cargo test --doc`.
+- Nextest does not run doctests. Complete ordinary-test aggregates must own an
+  explicit `cargo test --doc`; coverage measurements intentionally exclude
+  doctests.
 - Container-backed tests are bounded by nextest test groups, not one-off command
   flags.
 - The root gate stays Docker-free. Docker-dependent coverage belongs to CI or
@@ -139,6 +147,12 @@ their commands.
 `main`. `scripts/ci_paths.py` classifies every changed path and fails when a
 repository surface has no owner. `just test-repo-policy` proves every tracked
 path remains classified.
+
+Compiled package inputs under `crates/money-core` also select the dependent
+`moneypg` lane; crate documentation alone does not. A path-filtered job must not
+depend on a job with a narrower path condition unless it handles skipped
+dependencies explicitly. The workflow policy test simulates this skip cascade
+for every tracked path.
 
 Heavy jobs use job-level conditions. Do not add workflow-level `paths:` filters:
 they can leave required checks pending. The six SNAP crates share one change

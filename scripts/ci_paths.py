@@ -73,6 +73,12 @@ def classify_path(raw_path: str) -> set[str]:
         classes.add("logging")
     elif path.startswith("crates/money-core/"):
         classes.add("money")
+        relative = path.removeprefix("crates/money-core/")
+        if (
+            relative in {"Cargo.toml", "build.rs"}
+            or relative.startswith(("build/", "src/", "vendor/"))
+        ):
+            classes.add("moneypg")
     elif path.startswith("crates/snap-"):
         classes.add("snap")
     elif path.startswith("extensions/money-pg/"):

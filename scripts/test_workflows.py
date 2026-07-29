@@ -8,6 +8,8 @@ import pathlib
 import re
 import unittest
 
+from scripts.ci_paths import classify_paths, tracked_paths
+
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -15,6 +17,52 @@ JUSTFILE = ROOT / "Justfile"
 TOOL_MANIFEST = json.loads(
     (ROOT / ".config" / "dev-tools.json").read_text(encoding="utf-8")
 )
+
+
+def workflow_jobs(source: str) -> dict[str, dict[str, object]]:
+    jobs = source.split("\njobs:\n", 1)[1]
+    starts = list(re.finditer(r"(?m)^  ([a-z0-9-]+):\n", jobs))
+    parsed: dict[str, dict[str, object]] = {}
+    for index, start in enumerate(starts):
+        end = starts[index + 1].start() if index + 1 < len(starts) else len(jobs)
+        body = jobs[start.end() : end]
+
+        needs: list[str] = []
+        inline = re.search(r"(?m)^    needs: \[([^]]+)\]$", body)
+        scalar = re.search(r"(?m)^    needs: ([a-z0-9-]+)$", body)
+        block = re.search(r"(?ms)^    needs:\n((?:      - [a-z0-9-]+\n)+)", body)
+        if inline:
+            needs = [item.strip() for item in inline.group(1).split(",")]
+        elif scalar:
+            needs = [scalar.group(1)]
+        elif block:
+            needs = re.findall(r"(?m)^      - ([a-z0-9-]+)$", block.group(1))
+        elif re.search(r"(?m)^    needs:", body):
+            raise AssertionError(
+                f"unsupported needs syntax in job {start.group(1)}"
+            )
+
+        condition = re.search(r"(?m)^    if: (.+)$", body)
+        always = condition is not None and condition.group(1) == "${{ always() }}"
+        output = None
+        if condition is not None and not always:
+            selected = re.fullmatch(
+                r"\$\{\{ needs\.changes\.outputs\.([a-z_]+) == 'true' \}\}",
+                condition.group(1),
+            )
+            if selected is None:
+                raise AssertionError(
+                    f"unsupported condition in job {start.group(1)}: "
+                    f"{condition.group(1)}"
+                )
+            output = selected.group(1)
+
+        parsed[start.group(1)] = {
+            "needs": needs,
+            "output": output,
+            "always": always,
+        }
+    return parsed
 
 
 class WorkflowPolicyTests(unittest.TestCase):
@@ -139,6 +187,52 @@ class WorkflowPolicyTests(unittest.TestCase):
             recipe,
         )
         self.assertNotIn("cargo publish -p", recipe)
+
+    def test_path_filtered_jobs_cannot_be_cascade_skipped(self) -> None:
+        workflow = (
+            WORKFLOWS / "on-pr-synced.yml"
+        ).read_text(encoding="utf-8")
+        jobs = workflow_jobs(workflow)
+        offenders: list[str] = []
+
+        for path in tracked_paths():
+            outputs = classify_paths([path])
+            direct = {
+                job: (
+                    True
+                    if policy["output"] is None
+                    else outputs[str(policy["output"])]
+                )
+                for job, policy in jobs.items()
+            }
+            scheduled: dict[str, bool] = {}
+
+            def is_scheduled(job: str) -> bool:
+                if job in scheduled:
+                    return scheduled[job]
+                policy = jobs[job]
+                dependencies = policy["needs"]
+                assert isinstance(dependencies, list)
+                selected = direct[job] and (
+                    bool(policy["always"])
+                    or all(is_scheduled(dependency) for dependency in dependencies)
+                )
+                scheduled[job] = selected
+                return selected
+
+            for job, selected in direct.items():
+                if (
+                    selected
+                    and not bool(jobs[job]["always"])
+                    and not is_scheduled(job)
+                ):
+                    offenders.append(f"{path}: {job}")
+
+        self.assertEqual(
+            offenders,
+            [],
+            "jobs selected by their path condition but suppressed by a skipped dependency",
+        )
 
 
 if __name__ == "__main__":
