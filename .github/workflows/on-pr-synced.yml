@@ -29,7 +29,6 @@ jobs:
       money: ${{ steps.classify.outputs.money }}
       snap: ${{ steps.classify.outputs.snap }}
       moneypg: ${{ steps.classify.outputs.moneypg }}
-      moneypg_containers: ${{ steps.classify.outputs.moneypg_containers }}
       lint: ${{ steps.classify.outputs.lint }}
       shell: ${{ steps.classify.outputs.shell }}
       worker: ${{ steps.classify.outputs.worker }}
@@ -677,8 +676,7 @@ jobs:
   test-money-pg-matrix:
     name: test (kamu-money-pg PG${{ matrix.pg }})
     needs: [changes, lint-money-pg]
-    # Parked; pinned in scripts/ci_paths.py. Passes — it is the local-core path that is temporary.
-    if: ${{ needs.changes.outputs.moneypg_containers == 'true' }}
+    if: ${{ needs.changes.outputs.moneypg == 'true' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -694,8 +692,7 @@ jobs:
   test-money-pg-yb:
     name: test (kamu-money-pg YugabyteDB)
     needs: [changes, lint-money-pg]
-    # Parked, and still red: needs a `just pg yb-build` step below before test-yb-regress.
-    if: ${{ needs.changes.outputs.moneypg_containers == 'true' }}
+    if: ${{ needs.changes.outputs.moneypg == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

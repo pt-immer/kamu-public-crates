@@ -131,8 +131,6 @@ def classify_paths(paths: Iterable[str]) -> dict[str, bool]:
             "money": classes["money"] or shared,
             "snap": classes["snap"] or shared,
             "moneypg": classes["moneypg"] or shared,
-            # Parked until the nine crates are (re)published; restore by mirroring "moneypg".
-            "moneypg_containers": False,
             "lint": any(classes.values()),
             "worker": classes["logging"] or shared,
         }
