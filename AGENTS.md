@@ -167,13 +167,16 @@ Third-party actions use full commit IDs with a readable release label in a
 comment. Workflow outputs and environment variables use underscores, never
 hyphens; GitHub expressions parse a hyphen as subtraction.
 
-Workflows that receive the crates.io token target the protected `crates-io`
-environment. Keep `pt-immer/rust-devs` as its required reviewer, and keep the
-team associated with this repository at read-only `pull` permission so GitHub
-can resolve it as a reviewer.
+Workflows that receive the crates.io token target the `crates-io` environment,
+which scopes the token. It carries **no reviewer rule**: publishing is gated by
+creating the GitHub Release, not by a second approval.
 
-`prevent_self_review` is deliberately **off** on that environment. Turn it back
-on once the reviewer team can approve a release it did not create.
+Pull requests into `main` are gated and reviewed. The repository owner's
+`--admin` merge is the only sanctioned bypass — do not relax the rule because
+merges routinely use it.
+
+`default_workflow_permissions` is `read`. Every workflow declares the
+permissions it needs.
 
 Ordinary extension container tests receive Cargo's normalized
 `kamu-money-core` package through a named Docker context. Release proof sets
