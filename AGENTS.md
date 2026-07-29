@@ -168,9 +168,12 @@ comment. Workflow outputs and environment variables use underscores, never
 hyphens; GitHub expressions parse a hyphen as subtraction.
 
 Workflows that receive the crates.io token target the protected `crates-io`
-environment. Keep `pt-immer/rust-devs` approval and self-review prevention on
-that environment, and keep the team associated with this repository at
-read-only `pull` permission so GitHub can resolve it as a reviewer.
+environment. Keep `pt-immer/rust-devs` as its required reviewer, and keep the
+team associated with this repository at read-only `pull` permission so GitHub
+can resolve it as a reviewer.
+
+`prevent_self_review` is deliberately **off** on that environment. Turn it back
+on once the reviewer team can approve a release it did not create.
 
 Ordinary extension container tests receive Cargo's normalized
 `kamu-money-core` package through a named Docker context. Release proof sets

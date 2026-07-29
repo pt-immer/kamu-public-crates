@@ -104,7 +104,7 @@ If a test cannot be expressed here, its row must read
 ## Running it
 
 ```sh
-just test-yb-regress     # a live single-node YugabyteDB, and the stock-PG15 reference
+just test-yb-regress     # builds the extension, then runs it on a live single-node YugabyteDB
 just test-yb-cluster     # every node of a 3-node RF=3 cluster
 ```
 

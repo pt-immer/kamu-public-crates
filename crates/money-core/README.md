@@ -8,9 +8,6 @@ Exact monetary arithmetic: `i128` at a fixed scale of 18, with compile-time
 currency identity. Division withholds its quotient until the caller explicitly
 takes or discards the residue.
 
-> Version `0.1.0` is present in the repository; its first crates.io release is
-> pending.
-
 The crate is intentionally ISO 4217-only. `StaticCurrency` is sealed so wire,
 database, and arithmetic identity all use the same generated register.
 

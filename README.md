@@ -63,7 +63,7 @@ flowchart LR
 | --- | ---: | --- |
 | [`kamu-iso3166`](crates/iso3166) | [![crates.io](https://img.shields.io/crates/v/kamu-iso3166?style=flat-square)](https://crates.io/crates/kamu-iso3166) | [docs.rs](https://docs.rs/kamu-iso3166) |
 | [`kamu-logging`](crates/logging) | [![crates.io](https://img.shields.io/crates/v/kamu-logging?style=flat-square)](https://crates.io/crates/kamu-logging) | [docs.rs](https://docs.rs/kamu-logging) |
-| [`kamu-money-core`](crates/money-core) | `0.1.0` · first release pending | [crate guide](crates/money-core/README.md) |
+| [`kamu-money-core`](crates/money-core) | [![crates.io](https://img.shields.io/crates/v/kamu-money-core?style=flat-square)](https://crates.io/crates/kamu-money-core) | [docs.rs](https://docs.rs/kamu-money-core) |
 | [`kamu-snap-crypto`](crates/snap-crypto) | [![crates.io](https://img.shields.io/crates/v/kamu-snap-crypto?style=flat-square)](https://crates.io/crates/kamu-snap-crypto) | [docs.rs](https://docs.rs/kamu-snap-crypto) |
 | [`kamu-snap-response`](crates/snap-response) | [![crates.io](https://img.shields.io/crates/v/kamu-snap-response?style=flat-square)](https://crates.io/crates/kamu-snap-response) | [docs.rs](https://docs.rs/kamu-snap-response) |
 | [`kamu-snap-crypto-actix`](crates/snap-crypto-actix) | [![crates.io](https://img.shields.io/crates/v/kamu-snap-crypto-actix?style=flat-square)](https://crates.io/crates/kamu-snap-crypto-actix) | [docs.rs](https://docs.rs/kamu-snap-crypto-actix) |
