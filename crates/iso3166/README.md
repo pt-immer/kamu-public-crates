@@ -82,8 +82,8 @@ Runtime dependencies are kept minimal and none require the allocator:
 
 ## MSRV
 
-Rust **1.94** (the workspace MSRV; the crate itself only needs
-`core::error::Error` in `no_std`, stable since 1.81).
+The declared MSRV is the workspace floor, shown by the badge above. The crate
+itself only needs `core::error::Error` in `no_std`, stable since 1.81.
 
 ## Licensing
 

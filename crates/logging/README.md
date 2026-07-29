@@ -20,8 +20,6 @@ Part of the [`kamu-public-crates`](https://github.com/pt-immer/kamu-public-crate
 kamu-logging = "2"
 ```
 
-MSRV: **Rust 1.94** (edition 2024).
-
 ## Features
 
 | Feature          | Default | What it enables                                                       |
