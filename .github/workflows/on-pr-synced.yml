@@ -67,7 +67,7 @@ jobs:
         with:
           toolchain: 1.96.0
           components: rustfmt
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
       - run: just fmt-rust-check
@@ -85,7 +85,7 @@ jobs:
         with:
           toolchain: 1.96.0
           components: clippy
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -104,7 +104,7 @@ jobs:
         with:
           toolchain: 1.96.0
           components: clippy
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -124,7 +124,7 @@ jobs:
           toolchain: 1.96.0
           components: clippy
           targets: wasm32-unknown-unknown
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -143,7 +143,7 @@ jobs:
         with:
           toolchain: 1.96.0
           components: clippy
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -167,7 +167,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # matrix
         with:
           toolchain: ${{ matrix.toolchain }}
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,cargo-nextest@0.9.140
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -185,7 +185,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
           toolchain: 1.96.0
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,cargo-nextest@0.9.140
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -204,7 +204,7 @@ jobs:
         with:
           toolchain: 1.96.0
           targets: thumbv7em-none-eabi
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -221,7 +221,7 @@ jobs:
         with:
           toolchain: 1.96.0
           targets: wasm32-unknown-unknown
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -239,7 +239,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
           toolchain: 1.96.0
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -257,7 +257,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
           toolchain: 1.96.0
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -275,7 +275,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
           toolchain: 1.96.0
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,cargo-deny@0.20.2
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -291,7 +291,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: lts/*
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,taplo-cli@0.10.0,typos-cli@1.48.0
       - run: npm ci --no-fund --no-audit
@@ -306,7 +306,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: true
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
       - run: just test-repo-policy
@@ -325,7 +325,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: lts/*
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -345,7 +345,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
           toolchain: 1.96.0
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -363,7 +363,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
           toolchain: 1.96.0
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -382,7 +382,7 @@ jobs:
         with:
           toolchain: 1.96.0
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,cargo-llvm-cov@0.8.7,cargo-nextest@0.9.140
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -403,7 +403,7 @@ jobs:
         with:
           toolchain: 1.96.0
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,cargo-llvm-cov@0.8.7,cargo-nextest@0.9.140
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -420,7 +420,7 @@ jobs:
         with:
           toolchain: 1.96.0
           targets: wasm32-unknown-unknown
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -437,7 +437,7 @@ jobs:
         with:
           toolchain: 1.96.0
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,cargo-llvm-cov@0.8.7,cargo-nextest@0.9.140
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -454,7 +454,7 @@ jobs:
         with:
           toolchain: 1.96.0
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,cargo-llvm-cov@0.8.7,cargo-nextest@0.9.140
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -471,7 +471,7 @@ jobs:
         with:
           toolchain: 1.96.0
           components: clippy
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -488,7 +488,7 @@ jobs:
         with:
           toolchain: 1.96.0
           components: rust-src
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,cargo-nextest@0.9.140
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -504,7 +504,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
           toolchain: 1.96.0
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,cargo-nextest@0.9.140
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -520,7 +520,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
           toolchain: 1.96.0
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -537,7 +537,7 @@ jobs:
         with:
           toolchain: 1.96.0
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,cargo-llvm-cov@0.8.7,cargo-nextest@0.9.140
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -551,7 +551,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,shellcheck@0.11.0
       - run: just lint-shell
@@ -563,7 +563,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,cargo-deny@0.20.2
       - run: just pg deny
@@ -578,7 +578,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
           toolchain: 1.96.0
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,cargo-nextest@0.9.140
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -598,7 +598,7 @@ jobs:
         with:
           toolchain: nightly
           components: miri
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -617,7 +617,7 @@ jobs:
         with:
           toolchain: 1.96.0
           components: clippy
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,cargo-pgrx@0.19.1
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -650,7 +650,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
           toolchain: 1.96.0
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,cargo-pgrx@0.19.1
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -684,7 +684,7 @@ jobs:
         pg: [15, 16, 17, 18]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
       - run: just pg test-pg "${{ matrix.pg }}"
@@ -696,7 +696,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: taiki-e/install-action@18b1216eba7f8039b0f8d131d5473787f0edce68 # v2
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
       - run: just pg test-yb-regress
