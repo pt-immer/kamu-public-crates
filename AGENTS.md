@@ -187,7 +187,7 @@ registry. Do not widen the primary Docker context to the repository root.
 
 Use lowercase, imperative Conventional Commit subjects:
 `feat:`, `fix:`, `refactor:`, `test:`, `docs:`, or `chore:`, optionally scoped.
-Name branches `<type>/kec-<n>-<slug>`.
+Name branches `<type>/tdkc-<n>-<slug>`.
 
 Every commit is GPG-signed and carries its lowercase JIRA ticket as a standalone
 paragraph:
@@ -197,8 +197,11 @@ chore(deps): refresh workspace dependencies
 
 Update requirements within the Rust 1.94 compatibility range.
 
-kec-1
+tdkc-1
 ```
+
+Tickets use the `tdkc-` prefix. History before 2026-08 carries the earlier
+`kec-` prefix; leave those commit messages as they are.
 
 Verify signed history with `git log --show-signature`.
 

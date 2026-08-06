@@ -88,8 +88,8 @@ scoped:
 feat(iso3166): add Alpha2::iter()
 ```
 
-Work uses lowercase `kec-` JIRA tickets. Name branches
-`<type>/kec-<n>-<slug>`. Every commit must be GPG-signed and place its ticket in
+Work uses lowercase `tdkc-` JIRA tickets. Name branches
+`<type>/tdkc-<n>-<slug>`. Every commit must be GPG-signed and place its ticket in
 a standalone paragraph before any trailer block:
 
 ```text
@@ -97,8 +97,11 @@ chore(deps): refresh workspace dependencies
 
 Update requirements within the Rust 1.94 compatibility range.
 
-kec-1
+tdkc-1
 ```
+
+History before 2026-08 carries the earlier `kec-` prefix; leave those commit
+messages as they are.
 
 ## Releasing a crate
 
