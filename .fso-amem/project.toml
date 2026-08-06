@@ -1,9 +1,9 @@
 [project]
 name = "kamu-public-crates"
-slug = "kamu-public-crates"
+slug = "immer-kamu-public-crates"
 
 [amem]
 server = "https://amem.flusci.org"
 
 [client]
-manifest_version = 25
+manifest_version = 28
