@@ -1,5 +1,7 @@
 //! Public option parsing and error display behavior.
 
+#![cfg(any(feature = "systemd", feature = "wasm32"))]
+
 use kamu_logging::{Error, Format, Sink};
 
 #[test]

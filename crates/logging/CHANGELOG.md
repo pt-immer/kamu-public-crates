@@ -4,6 +4,32 @@ All notable changes to this project are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project follows
 [SemVer](https://semver.org/) from `1.0.0` onwards.
 
+## [2.1.0] — 2026-08-07
+
+### Added
+
+- A `correlation` feature carrying `TraceParent`, `extract_from_headers`,
+  `parse_traceparent_trace_id`, `with_id`, and `span`. It declares no optional
+  dependencies, so enabling it alone builds the crate with no subscriber, sink,
+  or exporter in the dependency graph:
+
+  ```toml
+  kamu-logging = { version = "2", default-features = false, features = ["correlation"] }
+  ```
+
+- `systemd`, `wasm32`, and `with-actix-web` now imply `correlation`, and any one
+  of the four satisfies the crate's feature guard. Existing feature selections
+  are unaffected. `features = ["with-actix-web"]` alone now builds the Actix Web
+  middleware without a subscriber.
+
+### Changed
+
+- `init`, `init_or_skip`, `init_with`, `InitOptions`, `Format`, `Sink`,
+  `ParseFormatError`, `ParseSinkError`, and `Error` now require `systemd` or
+  `wasm32`. Every previously valid feature combination already enabled one.
+- `with-otlp` without `systemd` is rejected by a named `compile_error!` instead
+  of failing on a missing subscriber.
+
 ## [2.0.0] — 2026-07-28
 
 Make process-global ownership explicit and reject malformed data at the

@@ -68,12 +68,32 @@ clippy-workspace:
 clippy-iso3166:
     cargo clippy -p kamu-iso3166 --all-features --all-targets -- -D clippy::pedantic
 
-# Clippy kamu-logging's non-default feature paths (with-otlp + wasm32, both
-# cfg-gated off by default so clippy-workspace never sees them)
+# `correlation` exists so a library can take the traceparent parser without
+# taking a subscriber. Assert that literally: nothing that installs or sinks
+# logs may appear in its graph. `-e normal` keeps the unconditional actix-web
+# dev-dependency out of the answer.
+[doc("Assert kamu-logging's correlation-only graph pulls no subscriber or sink.")]
+deps-logging-correlation:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    graph=$(cargo tree -p kamu-logging --no-default-features --features correlation -e normal --prefix none --format '{p}')
+    banned=$(printf '%s\n' "$graph" | grep -E '^(console|opentelemetry|tracing-journald|tracing-subscriber|tracing-web)[ -]' || true)
+    if [ -n "$banned" ]; then
+        echo "deps-logging-correlation: correlation must not pull a subscriber or sink:" >&2
+        printf '%s\n' "$banned" >&2
+        exit 1
+    fi
+    echo "deps-logging-correlation: clean"
+
+# Clippy kamu-logging's non-default feature paths (with-otlp, wasm32, and the
+# two subscriber-free sets, all cfg-gated off by default so clippy-workspace
+# never sees them)
 [doc("Clippy every supported kamu-logging feature set.")]
-clippy-logging:
+clippy-logging: deps-logging-correlation
     cargo clippy -p kamu-logging --all-targets --features with-otlp -- -D warnings -D clippy::all
     cargo clippy -p kamu-logging --no-default-features --features wasm32 --target wasm32-unknown-unknown -- -D warnings -D clippy::all
+    cargo clippy -p kamu-logging --no-default-features --features correlation --all-targets -- -D warnings -D clippy::all
+    cargo clippy -p kamu-logging --no-default-features --features with-actix-web -- -D warnings -D clippy::all
 
 # Clippy kamu-snap-* non-default feature paths (all-features + no-default crypto lib)
 [doc("Clippy every supported SNAP feature set.")]
@@ -230,6 +250,8 @@ test-all:
     cargo nextest run --workspace -E 'not binary(compile_fail)'
     # The default logging run does not reach OTLP.
     cargo nextest run -p kamu-logging --features with-otlp
+    # Correlation must work with no subscriber installed at all.
+    cargo nextest run -p kamu-logging --no-default-features --features correlation
     cargo nextest run -p kamu-iso3166 --all-features
     cargo nextest run -p kamu-iso3166 --no-default-features --features serde
     cargo nextest run -p kamu-snap-crypto --all-features

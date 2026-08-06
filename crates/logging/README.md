@@ -24,10 +24,15 @@ kamu-logging = "2"
 
 | Feature          | Default | What it enables                                                       |
 |------------------|:-------:|-----------------------------------------------------------------------|
+| `correlation`    |   yes   | W3C `traceparent` parsing + correlation spans; installs no subscriber  |
 | `systemd`        |   yes   | TTY-aware console + journald sink, `RUST_LOG`, `log` → `tracing` bridge |
 | `with-actix-web` |   yes   | Correlation-enriched Actix Web middleware                              |
-| `with-otlp`      |   no    | OpenTelemetry OTLP exporter (HTTP/protobuf)                           |
+| `with-otlp`      |   no    | OpenTelemetry OTLP exporter (HTTP/protobuf); requires `systemd`         |
 | `wasm32`         |   no    | Cloudflare Worker / web console + panic hook (mutually exclusive)     |
+
+`systemd`, `wasm32`, and `with-actix-web` each imply `correlation`, and at least
+one of the four must be enabled. `systemd` and `wasm32` are mutually exclusive,
+as are `wasm32` and the Actix Web and OTLP features.
 
 ## Quickstart
 
@@ -155,6 +160,25 @@ assert_eq!(parent.trace_id(), "4bf92f3577b34da6a3ce929d0e0e4736");
 assert!(parent.is_sampled());
 # Ok::<(), kamu_logging::correlation::TraceParentError>(())
 ```
+
+## Correlation without a subscriber
+
+A library has no business choosing the logging backend for the binary that
+embeds it. Take `correlation` on its own and nothing that installs or sinks logs
+enters the dependency graph — no `tracing-subscriber`, no journald, no console
+writer, no exporter:
+
+```toml
+[dependencies]
+kamu-logging = { version = "2", default-features = false, features = ["correlation"] }
+```
+
+That build exposes `kamu_logging::correlation` and the re-exported `tracing`
+vocabulary. `init`, `init_with`, `InitOptions`, `Format`, `Sink`, and `Error`
+belong to the subscriber-owning surface and require `systemd` or `wasm32`.
+
+The same holds one layer up: `features = ["with-actix-web"]` alone gives the
+correlation-enriched middleware without committing the binary to a subscriber.
 
 ## OTLP export
 
