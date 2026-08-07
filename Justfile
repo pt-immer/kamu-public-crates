@@ -233,7 +233,13 @@ test-iso3166:
 test-money:
     cargo nextest run -p kamu-money-core
     cargo nextest run -p kamu-money-core --features serde
-    cargo nextest run -p kamu-money-core --features postgres -E 'not binary(pg_roundtrip)'
+    # `compile_fail` is excluded here deliberately, not overlooked. trybuild compiles
+    # each case as a separate downstream crate and rebuilds that scratch crate whenever
+    # the feature set changes, so every run that includes it pays ~60s cold rather than
+    # the ~3s a warm one costs. `postgres` gates no compile-fail case — `tests/ui/` is
+    # feature-independent and `tests/ui_serde/` is reached only under `serde` — so this
+    # run would recompile the identical suite the two runs above already prove.
+    cargo nextest run -p kamu-money-core --features postgres -E 'not (binary(pg_roundtrip) or binary(compile_fail))'
     # Nextest does not run doctests.
     cargo test -p kamu-money-core --all-features --doc --quiet
 
@@ -436,12 +442,52 @@ gate:
           "just check-worker-example"
           "just check-examples"
           "just deny")
-    declare -a rcs outs
+    # Group assignment. Stages within a group run SERIALLY because they share one
+    # Cargo build directory and would otherwise queue on its lock, gaining nothing;
+    # the groups themselves run concurrently. Only groups that ALREADY own a disjoint
+    # build directory are split out: `cov-all` drives cargo-llvm-cov into
+    # target/llvm-cov-target, and `misc` either builds a separate workspace or does
+    # not build at all.
+    #
+    # The msrv and cross-target stages are deliberately left in `host`. Splitting them
+    # would need NEW target directories to escape the same lock, and they measure 21s
+    # of a 430s run -- gigabytes of duplicated artifacts, cold on first use, to buy 5%.
+    #
+    # Every stage still runs. This overlaps them; it never drops one.
+    grps=(host host host host host cov host host host host misc host misc)
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    run_group() {
+      # The scratch directory belongs to the parent shell; a group that finishes
+      # early must not take it down while its siblings are still writing.
+      trap - EXIT
+      local grp=$1 i started elapsed rc
+      for i in "${!names[@]}"; do
+        [ "${grps[$i]}" = "$grp" ] || continue
+        started=$SECONDS
+        eval "${cmds[$i]}" >"$tmp/$i.out" 2>&1
+        rc=$?
+        elapsed=$((SECONDS - started))
+        printf '%s %s\n' "$rc" "$elapsed" >"$tmp/$i.meta"
+        # Printed as it lands, so a five-minute barrier still shows progress. Order is
+        # completion order; the ordered view is the failure replay and VERBOSE=1 below.
+        if [ "$rc" -eq 0 ]; then printf '  PASS  %5ds  %s\n' "$elapsed" "${names[$i]}"
+        else printf '  FAIL  %5ds  %s\n' "$elapsed" "${names[$i]}"; fi
+      done
+    }
+    for g in host cov misc; do run_group "$g" & done
+    wait
+    declare -a rcs outs secs
     fail=0
     for i in "${!names[@]}"; do
-      outs[$i]=$(eval "${cmds[$i]}" 2>&1); rcs[$i]=$?
-      if [ "${rcs[$i]}" -eq 0 ]; then printf '  PASS  %s\n' "${names[$i]}"; else printf '  FAIL  %s\n' "${names[$i]}"; fail=1; fi
+      # A missing .meta means the group died before recording a verdict. Treat that as
+      # a failure rather than letting `set -u` abort with an unrelated message.
+      if [ -r "$tmp/$i.meta" ]; then read -r rc sec <"$tmp/$i.meta"; else rc=1 sec=0; fi
+      rcs[$i]=$rc; secs[$i]=$sec
+      outs[$i]=$(cat "$tmp/$i.out" 2>/dev/null)
+      [ "$rc" -eq 0 ] || fail=1
     done
+    printf '  ----  %5ds  total\n' "$SECONDS"
     if [ "${VERBOSE:-0}" = "1" ]; then
       for i in "${!names[@]}"; do printf '\n=== %s ===\n%s\n' "${names[$i]}" "${outs[$i]}"; done
     elif [ "$fail" -ne 0 ]; then
