@@ -1,6 +1,6 @@
 [package]
 name = "kamu-logging"
-version = "2.0.0"
+version = "2.1.0"
 description = "Structured tracing setup for native services and Cloudflare Workers."
 documentation = "https://docs.rs/kamu-logging"
 categories = ["asynchronous", "development-tools::debugging", "wasm"]
@@ -15,9 +15,19 @@ rust-version.workspace = true
 
 [features]
 default = ["systemd", "with-actix-web"]
-systemd = ["dep:console", "dep:tracing-journald", "dep:tracing-log", "dep:tracing-subscriber"]
-wasm32 = ["dep:console_error_panic_hook", "dep:time", "dep:tracing-subscriber", "dep:tracing-web"]
-with-actix-web = ["dep:actix-web", "dep:tracing-actix-web"]
+# Deliberately empty: `correlation` is parsing and span construction over the
+# non-optional `tracing` and `thiserror` deps. Adding a `dep:` here would put a
+# subscriber back into a graph that asked for none.
+correlation = []
+systemd = ["correlation", "dep:console", "dep:tracing-journald", "dep:tracing-log", "dep:tracing-subscriber"]
+wasm32 = [
+  "correlation",
+  "dep:console_error_panic_hook",
+  "dep:time",
+  "dep:tracing-subscriber",
+  "dep:tracing-web",
+]
+with-actix-web = ["correlation", "dep:actix-web", "dep:tracing-actix-web"]
 with-otlp = [
   "dep:opentelemetry",
   "dep:opentelemetry-otlp",

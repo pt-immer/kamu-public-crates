@@ -1,12 +1,32 @@
 //! `kamu-logging` — opinionated `tracing` setup for PT IMMER services.
 //!
-//! Call [`init`] from `main` for the zero-config path, or [`init_with`] with
-//! an [`InitOptions`] builder for explicit format / sink / filter / OTLP
-//! configuration. See the crate README for worked examples.
-//! On `wasm32-unknown-unknown`, enable only the `wasm32` feature to install a
-//! panic hook and emit `tracing` events to the JavaScript console. This path is
-//! suitable for Cloudflare Workers via `workers-rs`; systemd, Actix Web, and
-//! OTLP exporter features are native-only.
+//! # Feature surfaces
+//!
+//! - `correlation` — W3C `traceparent` parsing and correlation-id spans. Holds
+//!   no global state and installs nothing. Enable it alone from a library that
+//!   must not pick a subscriber on behalf of the binary embedding it.
+//! - `systemd` (default) — TTY-aware console and journald subscriber.
+//! - `wasm32` — JavaScript console subscriber and panic hook.
+//! - `with-actix-web` (default) — correlation-enriched Actix Web middleware.
+//! - `with-otlp` — OpenTelemetry OTLP exporter layer.
+//!
+//! `systemd`, `wasm32`, and `with-actix-web` each imply `correlation`, and at
+//! least one of the four must be enabled. `systemd` and `wasm32` are mutually
+//! exclusive, as are `wasm32` and the Actix Web and OTLP features; `with-otlp`
+//! requires `systemd`.
+#![cfg_attr(
+    any(feature = "systemd", feature = "wasm32"),
+    doc = r"
+# Initialization
+
+Call [`init`] from `main` for the zero-config path, or [`init_with`] with an
+[`InitOptions`] builder for explicit format / sink / filter / OTLP
+configuration. See the crate README for worked examples. On
+`wasm32-unknown-unknown`, enable only the `wasm32` feature to install a panic
+hook and emit `tracing` events to the JavaScript console. This path is suitable
+for Cloudflare Workers via `workers-rs`; systemd, Actix Web, and OTLP exporter
+features are native-only."
+)]
 //!
 //! Re-exports common `tracing` items so consumers can avoid a separate
 //! `tracing` import for the basic logging vocabulary.
@@ -23,12 +43,22 @@ compile_error!("Feature \"with-actix-web\" can't be combined with \"wasm32\".");
 #[cfg(all(feature = "with-otlp", feature = "wasm32"))]
 compile_error!("Feature \"with-otlp\" can't be combined with \"wasm32\".");
 
-#[cfg(not(any(feature = "systemd", feature = "wasm32")))]
-compile_error!("At least feature \"systemd\" or \"wasm32\" must be enabled.");
+#[cfg(all(feature = "with-otlp", not(feature = "systemd")))]
+compile_error!("Feature \"with-otlp\" requires \"systemd\".");
 
+// `systemd`, `wasm32`, and `with-actix-web` each imply `correlation`, so this
+// single condition rejects the empty feature set on behalf of all of them.
+#[cfg(not(feature = "correlation"))]
+compile_error!(
+    "At least feature \"correlation\", \"systemd\", \"wasm32\", or \"with-actix-web\" must be enabled."
+);
+
+#[cfg(feature = "correlation")]
 pub mod correlation;
 
+#[cfg(any(feature = "systemd", feature = "wasm32"))]
 mod init;
+#[cfg(any(feature = "systemd", feature = "wasm32"))]
 mod options;
 
 #[cfg(feature = "with-actix-web")]
@@ -37,7 +67,9 @@ mod actix;
 #[cfg(feature = "with-otlp")]
 pub mod otlp;
 
+#[cfg(any(feature = "systemd", feature = "wasm32"))]
 pub use crate::init::{init, init_or_skip, init_with};
+#[cfg(any(feature = "systemd", feature = "wasm32"))]
 pub use crate::options::{Format, InitOptions, ParseFormatError, ParseSinkError, Sink};
 
 #[cfg(feature = "with-actix-web")]
@@ -53,6 +85,7 @@ pub use tracing::{Level, Span, debug, enabled, error, event, info, instrument, s
 /// Errors returned by [`init`] / [`init_with`].
 ///
 /// Marked `#[non_exhaustive]` so future variants are not breaking changes.
+#[cfg(any(feature = "systemd", feature = "wasm32"))]
 #[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
