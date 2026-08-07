@@ -86,8 +86,7 @@ CREATE TYPE {ty} (
          extension_sql!(\n    r\"\n{shells}\",\n    name = \"money_shell_types\",\n    bootstrap\n);\n{types}"
     );
 
-    let out =
-        PathBuf::from(env::var("OUT_DIR").expect("cargo sets OUT_DIR")).join("pinned_types.rs");
+    let out = PathBuf::from(env::var("OUT_DIR").expect("cargo sets OUT_DIR")).join("pinned_types.rs");
     fs::write(&out, manifest).expect("the manifest must be writable");
 
     // The count is a contract rather than a coincidence: every code in the

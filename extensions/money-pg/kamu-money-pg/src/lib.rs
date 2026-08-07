@@ -257,7 +257,6 @@ fixed_length_money_type! {
     kmoney_mixed
 }
 
-
 // No `kmoney -> numeric` cast: egress keeps the exact currency-tagged text form
 // instead of exposing PostgreSQL numeric arithmetic.
 
@@ -513,6 +512,74 @@ mod tests {
     #[pg_test(error = "cannot cast type kmoney to numeric")]
     fn there_is_no_cast_to_numeric() {
         Spi::get_one::<String>("SELECT ('USD 1.00'::kmoney)::numeric::text").ok();
+    }
+
+    // ---------------------------------------------------------------------
+    // Per-currency types. These assert the wire claim the shape exists for.
+    // ---------------------------------------------------------------------
+
+    /// The column's type is the currency, so egress carries no tag.
+    #[pg_test]
+    fn a_pinned_type_renders_bare() {
+        let rendered =
+            Spi::get_one::<String>("SELECT '10.50'::kmoney_usd::text").expect("query ran").expect("not null");
+        assert_eq!(
+            rendered, "10.50",
+            "the currency is the type; repeating it in the text would restate the catalog"
+        );
+    }
+
+    /// The tag is optional, and checked when present.
+    #[pg_test]
+    fn a_pinned_type_accepts_its_own_tag() {
+        let rendered = Spi::get_one::<String>("SELECT 'USD 10.50'::kmoney_usd::text")
+            .expect("query ran")
+            .expect("not null");
+        assert_eq!(rendered, "10.50");
+    }
+
+    /// THE wire claim: a well-formed value of another currency is refused, not
+    /// reinterpreted. Without this check the digits would simply be accepted.
+    #[pg_test(error = "kmoney_usd: expected USD, got IDR")]
+    fn a_pinned_type_refuses_another_currencys_tag() {
+        Spi::run("SELECT 'IDR 10.50'::kmoney_usd").expect("should have failed");
+    }
+
+    /// THE calculation claim: cross-currency arithmetic has no operator to
+    /// resolve, so it fails while the query is parsed rather than inside an
+    /// operator that had to check.
+    #[pg_test(error = "operator does not exist: kmoney_usd + kmoney_idr")]
+    fn cross_currency_arithmetic_has_no_operator() {
+        Spi::run("SELECT '1.00'::kmoney_usd + '1.00'::kmoney_idr").expect("should have failed");
+    }
+
+    /// The currency left the value, so the payload is two bytes narrower than
+    /// the erased type still carrying an ISO code.
+    #[pg_test]
+    fn a_pinned_value_is_sixteen_bytes() {
+        let pinned = Spi::get_one::<i32>("SELECT pg_column_size('10.50'::kmoney_usd)")
+            .expect("query ran")
+            .expect("not null");
+        let erased = Spi::get_one::<i32>("SELECT pg_column_size('USD 10.50'::kmoney_mixed)")
+            .expect("query ran")
+            .expect("not null");
+        assert_eq!(pinned, 16, "units only, with no varlena header");
+        assert_eq!(erased, 18, "the erased type still stores the ISO code beside them");
+    }
+
+    /// Every code in the register got a type, not merely the ones anyone tried.
+    #[pg_test]
+    fn every_iso_code_has_a_type() {
+        let generated = Spi::get_one::<i64>(
+            "SELECT count(*) FROM pg_type WHERE typname LIKE 'kmoney\\_%' AND typlen = 16",
+        )
+        .expect("query ran")
+        .expect("not null");
+        assert_eq!(
+            usize::try_from(generated).expect("a count fits usize"),
+            kamu_money_core::Iso4217::EVERY.len(),
+            "the manifest is derived from the register, so the counts cannot disagree"
+        );
     }
 }
 
