@@ -1,6 +1,7 @@
 //! Safe semantic layer over the raw PostgreSQL payload and ABI.
 
 pub(crate) mod payload;
+pub(crate) mod pinned;
 pub(crate) mod typmod;
 
 use kamu_money_core::Iso4217;

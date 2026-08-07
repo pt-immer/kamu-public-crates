@@ -234,10 +234,20 @@ pub fn parse(text: &str) -> Result<(Iso4217, i128), ParseMoneyError> {
 
 /// The amount half of a money literal, with no currency prefix: `"10.50"`.
 ///
-/// The structured wire form carries the currency in its own field, so repeating it inside the
-/// number would be nonsense. Same digits as [`Display`], same rule, one implementation.
-#[cfg(feature = "serde")]
-pub(crate) fn render_amount<C: StaticCurrency>(m: Money<C>) -> String {
+/// For a boundary that carries the currency **out of band** — a structured wire form whose
+/// sibling field names it, or a database column whose *type* fixes it. Repeating the code
+/// inside the number would be nonsense there. Same digits as
+/// [`Display`](core::fmt::Display), same rule, one implementation.
+///
+/// # Why this takes `Money<C>` and returns no `Result`
+///
+/// The typed input is the whole point. `Money<C>` is in-domain by construction and carries its
+/// own code, so there is no incoherent state left to report — contrast a loose
+/// `(units, currency)` pair, which can be out of domain and whose two halves nothing ties
+/// together. A renderer over that pair would need an error variant that this one does not,
+/// which is a defect in the pair rather than a feature of the renderer.
+#[must_use]
+pub fn render_amount<C: StaticCurrency>(m: Money<C>) -> String {
     render_fixed_point(m.units(), usize::from(C::CODE.exponent().unwrap_or(0)))
 }
 

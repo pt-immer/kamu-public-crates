@@ -29,7 +29,7 @@ use kamu_money_core::text;
 extern crate alloc;
 use pgrx::prelude::*;
 
-use safe::payload::{PAYLOAD_BYTES, Payload};
+use safe::payload::{PAYLOAD_BYTES, PINNED_PAYLOAD_BYTES, Payload, PinnedPayload};
 
 ::pgrx::pg_module_magic!(name, version);
 
@@ -93,12 +93,78 @@ macro_rules! fixed_length_money_type {
     };
 }
 
+/// Define a **per-currency** PostgreSQL type over a 16-byte `#[repr(C)]` payload.
+///
+/// The currency is the SQL type, not a field, so the value is the amount and
+/// nothing else. `kmoney_usd + kmoney_idr` therefore has no operator at all and
+/// fails while the query is parsed, rather than reaching a currency check
+/// inside one.
+///
+/// # What this macro does not generate
+///
+/// Text I/O — the only per-type surface that must *name* its currency, because
+/// it needs the settlement exponent. Those functions are written beside each
+/// invocation, because a `macro_rules!` can neither lowercase nor concatenate
+/// identifiers and so cannot build `kmoney_usd_out` from `kmoney_usd`. That
+/// limit is precisely why the full register is emitted from `build.rs`, where
+/// `format_ident!` can.
+macro_rules! pinned_money_type {
+    ($(#[$meta:meta])* $t:ident, $currency:ty) => {
+        $(#[$meta])*
+        #[derive(Copy, Clone)]
+        #[repr(C)]
+        #[allow(non_camel_case_types)]
+        pub struct $t(PinnedPayload);
+
+        // Binds the Rust layout to `INTERNALLENGTH = 16` and `ALIGNMENT = char`.
+        const _: () = assert!(
+            size_of::<$t>() == PINNED_PAYLOAD_BYTES,
+            "the struct width must equal the INTERNALLENGTH declared to PostgreSQL"
+        );
+        const _: () = assert!(
+            align_of::<$t>() == 1,
+            "ALIGNMENT = char promises PostgreSQL may place this value at any address"
+        );
+
+        impl safe::pinned::sealed::Sealed for $t {}
+
+        impl safe::pinned::PinnedCurrency for $t {
+            type Currency = $currency;
+            // `stringify!` is also what `SqlTranslatable::TYPE_IDENT` uses, so the
+            // Rust name and the SQL name agree by construction rather than by
+            // assertion -- which is what lets `rust_regtypein` resolve the OID.
+            const SQL_NAME: &'static str = stringify!($t);
+
+            fn units(self) -> i128 {
+                self.0.units()
+            }
+
+            fn from_units(units: i128) -> Self {
+                Self(PinnedPayload::from_units(units))
+            }
+        }
+
+        impl $t {
+            const fn payload(self) -> PinnedPayload {
+                self.0
+            }
+
+            const fn from_payload(payload: PinnedPayload) -> Self {
+                Self(payload)
+            }
+        }
+
+        crate::ffi::impl_pinned_datum!($t);
+    };
+}
+
 // Shell types must precede the I/O functions that name them. pgrx permits one
-// `bootstrap` block, so both declarations live here.
+// `bootstrap` block, so every declaration lives here.
 extension_sql!(
     r"
 CREATE TYPE kmoney;
 CREATE TYPE kmoney_mixed;
+CREATE TYPE kmoney_usd;
 ",
     name = "money_shell_types",
     bootstrap
@@ -158,6 +224,62 @@ fixed_length_money_type! {
     /// the expected currency before returning [`kmoney`].
     kmoney_mixed
 }
+
+pinned_money_type! {
+    /// United States dollar: 16 bytes, fixed width, **no currency in the value**.
+    ///
+    /// The column's type is the currency, so `'10.50'::kmoney_usd` needs no tag
+    /// and `sum(kmoney_usd)` cannot silently total two currencies. The tagged
+    /// form is still accepted on input and checked, so a well-formed value of
+    /// another currency is refused rather than reinterpreted.
+    kmoney_usd, kamu_money_core::iso::USD
+}
+
+#[doc(hidden)]
+#[pg_extern(immutable, parallel_safe, requires = ["money_shell_types"])]
+fn kmoney_usd_in(input: &core::ffi::CStr) -> kmoney_usd {
+    match input.to_str() {
+        Ok(text) => safe::pinned::parse_pinned(text),
+        Err(e) => error!("kmoney_usd: input is not valid UTF-8: {e}"),
+    }
+}
+
+#[doc(hidden)]
+#[pg_extern(immutable, parallel_safe, requires = ["money_shell_types"])]
+fn kmoney_usd_out(value: kmoney_usd) -> alloc::ffi::CString {
+    alloc::ffi::CString::new(safe::pinned::render_pinned(value))
+        .unwrap_or_else(|e| error!("kmoney_usd: rendered form contains a NUL byte: {e}"))
+}
+
+#[doc(hidden)]
+#[pg_extern(immutable, parallel_safe, requires = ["money_shell_types"])]
+fn kmoney_usd_send(value: kmoney_usd) -> Vec<u8> {
+    safe::pinned::send_pinned(value)
+}
+
+// A pinned type declares no TYPMOD_IN/TYPMOD_OUT: there is no modifier to
+// carry, because the currency is the type rather than a parameter of it. That
+// absence is the entire point of the shape, and it is what removes the
+// `CREATE CAST (kmoney AS kmoney) ... AS IMPLICIT` coercion the typmod form
+// needs.
+//
+// RECEIVE is deliberately not declared yet. Binary input takes `internal`,
+// which pgrx cannot map, so it needs the same raw shim the mixed types use;
+// until then this type has text I/O and binary output only.
+extension_sql!(
+    r"
+CREATE TYPE kmoney_usd (
+    INTERNALLENGTH = 16,
+    INPUT          = kmoney_usd_in,
+    OUTPUT         = kmoney_usd_out,
+    SEND           = kmoney_usd_send,
+    ALIGNMENT      = char,
+    STORAGE        = plain
+);
+",
+    name = "kmoney_usd_concrete",
+    requires = [kmoney_usd_send, "money_shell_types", kmoney_usd_in, kmoney_usd_out],
+);
 
 // No `kmoney -> numeric` cast: egress keeps the exact currency-tagged text form
 // instead of exposing PostgreSQL numeric arithmetic.

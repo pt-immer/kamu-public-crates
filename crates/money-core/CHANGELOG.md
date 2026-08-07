@@ -4,6 +4,19 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] — 2026-08-08
+
+### Added
+
+- `text::render_amount` is public and no longer gated on `serde`. It renders the
+  amount with no currency prefix, for a boundary that carries the currency out
+  of band — a structured wire form whose sibling field names it, or a database
+  column whose *type* fixes it. It takes `Money<C>` and returns `String`: the
+  typed input is in-domain by construction and carries its own code, so there is
+  no incoherent state to report. A renderer over a loose `(units, currency)`
+  pair would need an error variant this one does not, which is a property of the
+  pair rather than of rendering.
+
 ## [0.1.0] — 2026-07-28
 
 Initial release.
