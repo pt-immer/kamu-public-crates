@@ -120,6 +120,7 @@ macro_rules! pinned_money_type {
         io = [$in:ident, $out:ident, $send:ident],
         cmp = [$eq:ident, $ne:ident, $lt:ident, $le:ident, $gt:ident, $ge:ident],
         arith = [$add:ident, $sub:ident],
+        agg = [$accum:ident, $combine:ident, $final:ident],
         hash = $hash:ident $(,)?
     ) => {
         $(#[$meta])*
@@ -336,6 +337,74 @@ macro_rules! pinned_money_type {
                     value.units(),
                 ),
             )
+        }
+
+        // AGGREGATE. The transition state is a `bytea` carrying only the wide
+        // accumulator.
+        //
+        // The erased aggregate's state appends the ISO code, and every one of
+        // its three functions compares it: `accum` against the incoming row,
+        // `combine` across two partials, and `final` resolves it before
+        // returning. None of that survives here. The aggregate's argument type
+        // names the currency, so a state that disagreed with the rows feeding it
+        // cannot be built, and `"cannot sum X and Y: different currencies"` has
+        // no occasion on which to occur.
+        //
+        // Non-strict, which is required rather than incidental: with no
+        // `INITCOND` the state arrives NULL for the first row, and a strict
+        // function would never be called to establish it.
+        #[allow(clippy::needless_pass_by_value)]
+        #[pg_extern(immutable, parallel_safe, requires = [$concrete])]
+        fn $accum(state: Option<Vec<u8>>, value: Option<$t>) -> Option<Vec<u8>> {
+            // A NULL row leaves the state as it was, so an all-NULL group
+            // finishes NULL rather than a zero in a currency it never saw.
+            let Some(value) = value else {
+                return state;
+            };
+            let acc = match state {
+                None => kamu_money_core::advanced::arithmetic::UnitSum::ZERO,
+                Some(bytes) => safe::pinned::sum_state_decode::<$t>(&bytes),
+            };
+            let acc = acc.add_units(value.units()).unwrap_or_else(|e| {
+                error!("sum({}): {e}", <$t as safe::pinned::PinnedCurrency>::SQL_NAME)
+            });
+            Some(safe::pinned::sum_state_encode(acc))
+        }
+
+        /// Merge two partial states from parallel workers.
+        ///
+        /// Either side may be NULL -- a worker that scanned no rows produces no
+        /// state -- so this is non-strict too. `UnitSum::merge` is associative
+        /// and commutative, so which worker finished first cannot change the
+        /// total.
+        #[allow(clippy::needless_pass_by_value)]
+        #[pg_extern(immutable, parallel_safe, requires = [$concrete])]
+        fn $combine(left: Option<Vec<u8>>, right: Option<Vec<u8>>) -> Option<Vec<u8>> {
+            let (left, right) = match (left, right) {
+                (None, other) | (other, None) => return other,
+                (Some(l), Some(r)) => (l, r),
+            };
+            let acc = safe::pinned::sum_state_decode::<$t>(&left)
+                .merge(safe::pinned::sum_state_decode::<$t>(&right))
+                .unwrap_or_else(|e| {
+                    error!("sum({}): {e}", <$t as safe::pinned::PinnedCurrency>::SQL_NAME)
+                });
+            Some(safe::pinned::sum_state_encode(acc))
+        }
+
+        /// One narrowing, one domain check.
+        ///
+        /// The erased counterpart also resolves a stored ISO code here and
+        /// treats an unknown one as corruption. There is no code to resolve.
+        #[allow(clippy::needless_pass_by_value)]
+        #[pg_extern(immutable, parallel_safe, requires = [$concrete])]
+        fn $final(state: Option<Vec<u8>>) -> Option<$t> {
+            // No rows, or every row NULL: NULL, never a zero.
+            let acc = safe::pinned::sum_state_decode::<$t>(&state?);
+            let total = acc.finish().unwrap_or_else(|e| {
+                error!("sum({}): {e}", <$t as safe::pinned::PinnedCurrency>::SQL_NAME)
+            });
+            Some($t::from_payload(PinnedPayload::from_units(total)))
         }
     };
 }
@@ -777,7 +846,7 @@ mod tests {
 
     /// No generated type carries a btree or hash operator class.
     ///
-    /// Their absence is not an omission. It is the one surface YugabyteDB's
+    /// Their absence is not an omission. It is the one surface `YugabyteDB`'s
     /// planner will not resolve for a custom type, and removing it is what makes
     /// these types byte-exact there. An opclass added later would break that for
     /// every currency at once, so the assertion covers all of them.
@@ -785,11 +854,73 @@ mod tests {
     fn no_generated_type_carries_an_operator_class() {
         let classes = Spi::get_one::<i64>(
             "SELECT count(*) FROM pg_opclass WHERE opcintype IN \
-             (SELECT oid FROM pg_type WHERE typname LIKE 'kmoney\\\\_%' AND typlen = 16)",
+             (SELECT oid FROM pg_type WHERE typname LIKE 'kmoney\\_%' AND typlen = 16)",
         )
         .expect("query ran")
         .expect("not null");
+        // Prove the query looked at something before believing its zero. A
+        // count assertion that expects 0 passes identically when the predicate
+        // matches nothing, so an escaping slip in the LIKE pattern would
+        // silently disarm this test -- which is exactly what happened once.
+        let inspected = Spi::get_one::<i64>(
+            "SELECT count(*) FROM pg_type WHERE typname LIKE 'kmoney\\_%' AND typlen = 16",
+        )
+        .expect("query ran")
+        .expect("not null");
+        assert_eq!(
+            usize::try_from(inspected).expect("a count fits usize"),
+            kamu_money_core::Iso4217::EVERY.len(),
+            "the opclass count below means nothing unless this matched every generated type"
+        );
+
         assert_eq!(classes, 0, "an operator class here would cost YugabyteDB byte-exactness");
+    }
+
+    /// `sum()` totals a pinned column.
+    #[pg_test]
+    fn sum_totals_a_pinned_column() {
+        Spi::run("CREATE TABLE ledger (amount kmoney_usd)").expect("table created");
+        Spi::run("INSERT INTO ledger VALUES ('1.25'), ('2.75'), ('6.00')").expect("rows inserted");
+
+        let total = Spi::get_one::<String>("SELECT sum(amount)::text FROM ledger")
+            .expect("query ran")
+            .expect("not null");
+        assert_eq!(total, "10.00");
+    }
+
+    /// An empty group has no currency-free zero to return, so it is NULL -- the
+    /// same answer `sum()` gives for every built-in type.
+    #[pg_test]
+    fn sum_of_no_rows_is_null() {
+        Spi::run("CREATE TABLE empty_ledger (amount kmoney_usd)").expect("table created");
+
+        let total = Spi::get_one::<String>("SELECT sum(amount)::text FROM empty_ledger").expect("query ran");
+        assert!(total.is_none(), "no rows means no currency to carry, so no zero to return");
+    }
+
+    /// Every pinned type has its own `sum()`.
+    ///
+    /// So no aggregate accepts two currencies, and a cross-currency total is not
+    /// something a query can ask for. The erased type has to refuse one at run
+    /// time instead -- the same difference the operators show, one layer up.
+    #[pg_test]
+    fn every_pinned_type_has_its_own_sum() {
+        // Joined on `prorettype`, a plain `oid` column, rather than on
+        // `proargtypes[0]`: subscripting an `oidvector` in a join condition
+        // silently matched nothing.
+        let aggregates = Spi::get_one::<i64>(
+            "SELECT count(*) FROM pg_aggregate a \
+               JOIN pg_proc p ON p.oid = a.aggfnoid \
+               JOIN pg_type t ON t.oid = p.prorettype \
+              WHERE p.proname = 'sum' AND t.typlen = 16 AND t.typname LIKE 'kmoney\\_%'",
+        )
+        .expect("query ran")
+        .expect("not null");
+        assert_eq!(
+            usize::try_from(aggregates).expect("a count fits usize"),
+            kamu_money_core::Iso4217::EVERY.len(),
+            "one aggregate per currency, from the same register the types came from"
+        );
     }
 }
 

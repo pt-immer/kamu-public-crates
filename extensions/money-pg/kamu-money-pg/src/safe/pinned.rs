@@ -11,6 +11,7 @@
 //! checks, and `tests/ui/` pins the parts a reader would otherwise take on
 //! trust.
 
+use kamu_money_core::advanced::arithmetic::UnitSum;
 use kamu_money_core::{Money, StaticCurrency, text};
 use pgrx::prelude::*;
 
@@ -102,4 +103,37 @@ pub(crate) fn send_pinned<T: PinnedCurrency>(value: T) -> Vec<u8> {
     let amount = validate_pinned(PinnedPayload::from_units(value.units()))
         .unwrap_or_else(|e| error!("{}: {e}", T::SQL_NAME));
     PinnedPayload::from_units(amount.units()).to_bytes().to_vec()
+}
+
+/// Width of a pinned `sum()` transition state.
+///
+/// Two bytes narrower than the erased type's, which appends an ISO code. There
+/// is no code to carry here: the aggregate's own argument type names the
+/// currency, so a state that disagreed with it could not be constructed.
+pub(crate) const SUM_STATE_BYTES: usize = UnitSum::ENCODED_BYTES;
+
+/// Encode a pinned transition state.
+///
+/// `bytea` for the same reason the erased aggregate uses it: `internal` would
+/// need a serialize/deserialize pair before `PARALLEL = SAFE` could be declared
+/// and would put raw pointers in an aggregate context, while a bespoke type
+/// would add a catalog entry whose text form is meaningless.
+pub(crate) fn sum_state_encode(acc: UnitSum) -> Vec<u8> {
+    acc.to_le_bytes().to_vec()
+}
+
+/// Decode a pinned transition state, refusing anything that is not one.
+///
+/// The state type is `bytea`, so these functions are callable by hand with
+/// arbitrary bytes. A forged state must be an error rather than a misread of
+/// whatever was passed -- the same reasoning as the binary `RECEIVE` path.
+pub(crate) fn sum_state_decode<T: PinnedCurrency>(state: &[u8]) -> UnitSum {
+    let Ok(bytes) = <[u8; SUM_STATE_BYTES]>::try_from(state) else {
+        error!(
+            "sum({}): transition state must be exactly {SUM_STATE_BYTES} bytes, got {}",
+            T::SQL_NAME,
+            state.len()
+        );
+    };
+    UnitSum::from_le_bytes(bytes)
 }

@@ -51,6 +51,9 @@ fn main() {
         let (lt, le) = (format!("{ty}_lt"), format!("{ty}_le"));
         let (gt, ge) = (format!("{ty}_gt"), format!("{ty}_ge"));
         let (add, sub) = (format!("{ty}_add"), format!("{ty}_sub"));
+        let accum = format!("{ty}_sum_accum");
+        let combine = format!("{ty}_sum_combine");
+        let finalize = format!("{ty}_sum_final");
 
         writeln!(shells, "CREATE TYPE {ty};").expect("writing to a String cannot fail");
 
@@ -67,6 +70,7 @@ pinned_money_type! {{
     io = [{f_in}, {f_out}, {f_send}],
     cmp = [{eq}, {ne}, {lt}, {le}, {gt}, {ge}],
     arith = [{add}, {sub}],
+    agg = [{accum}, {combine}, {finalize}],
     hash = {f_hash},
 }}
 
@@ -83,6 +87,20 @@ CREATE TYPE {ty} (
 ",
     name = "{ty}_concrete",
     requires = [{f_send}, "money_shell_types", {f_in}, {f_out}],
+);
+
+extension_sql!(
+    r"
+CREATE AGGREGATE sum({ty}) (
+    SFUNC       = {accum},
+    STYPE       = bytea,
+    COMBINEFUNC = {combine},
+    FINALFUNC   = {finalize},
+    PARALLEL    = SAFE
+);
+",
+    name = "{ty}_sum_aggregate",
+    requires = ["{ty}_concrete", {accum}, {combine}, {finalize}],
 );
 "#,
             name = code.name(),
