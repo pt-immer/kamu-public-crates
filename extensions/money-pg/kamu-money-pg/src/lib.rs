@@ -192,17 +192,15 @@ macro_rules! pinned_money_type {
     };
 }
 
-// Shell types must precede the I/O functions that name them. pgrx permits one
-// `bootstrap` block, so every declaration lives here.
-extension_sql!(
-    r"
-CREATE TYPE kmoney;
-CREATE TYPE kmoney_mixed;
-CREATE TYPE kmoney_usd;
-",
-    name = "money_shell_types",
-    bootstrap
-);
+// One per-currency type for every ISO 4217 code, derived from the register by
+// `build.rs`. It also owns the single `bootstrap` block: pgrx permits only one,
+// and every shell type -- including `kmoney` and `kmoney_mixed`, which are not
+// per-currency -- must be declared before the I/O functions that name it.
+//
+// Nothing is decided in the expansion. `build.rs` says what is derived and
+// `pinned_money_type!` above says what is generated; between them there is no
+// third place for a currency to be described differently.
+include!(concat!(env!("OUT_DIR"), "/pinned_types.rs"));
 
 fixed_length_money_type! {
     /// Money, on disk: 18 bytes, fixed width, currency carried in the value.
@@ -259,39 +257,6 @@ fixed_length_money_type! {
     kmoney_mixed
 }
 
-pinned_money_type! {
-    /// United States dollar: 16 bytes, fixed width, **no currency in the value**.
-    ///
-    /// The column's type is the currency, so `'10.50'::kmoney_usd` needs no tag
-    /// and `sum(kmoney_usd)` cannot silently total two currencies. The tagged
-    /// form is still accepted on input and checked, so a well-formed value of
-    /// another currency is refused rather than reinterpreted.
-    kmoney_usd, kamu_money_core::iso::USD, kmoney_usd_in, kmoney_usd_out, kmoney_usd_send
-}
-
-// A pinned type declares no TYPMOD_IN/TYPMOD_OUT: there is no modifier to
-// carry, because the currency is the type rather than a parameter of it. That
-// absence is the entire point of the shape, and it is what removes the
-// `CREATE CAST (kmoney AS kmoney) ... AS IMPLICIT` coercion the typmod form
-// needs.
-//
-// RECEIVE is deliberately not declared yet. Binary input takes `internal`,
-// which pgrx cannot map, so it needs the same raw shim the mixed types use;
-// until then this type has text I/O and binary output only.
-extension_sql!(
-    r"
-CREATE TYPE kmoney_usd (
-    INTERNALLENGTH = 16,
-    INPUT          = kmoney_usd_in,
-    OUTPUT         = kmoney_usd_out,
-    SEND           = kmoney_usd_send,
-    ALIGNMENT      = char,
-    STORAGE        = plain
-);
-",
-    name = "kmoney_usd_concrete",
-    requires = [kmoney_usd_send, "money_shell_types", kmoney_usd_in, kmoney_usd_out],
-);
 
 // No `kmoney -> numeric` cast: egress keeps the exact currency-tagged text form
 // instead of exposing PostgreSQL numeric arithmetic.

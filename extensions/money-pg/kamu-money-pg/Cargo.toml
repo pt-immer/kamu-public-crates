@@ -50,6 +50,13 @@ pgrx = "=0.19.1"
 kamu-money-core = "0.1"
 tempfile = { version = "3", optional = true }
 
+[build-dependencies]
+# The per-currency manifest is DERIVED from this register rather than kept as a
+# second list, so the `Iso4217` enum, the currency markers and the SQL types
+# cannot disagree about a code, an exponent or a name. Drift is not detected
+# here; it is unrepresentable.
+kamu-money-core = "0.1"
+
 [dependencies.pgrx-bench]
 version = "=0.19.1"
 optional = true
