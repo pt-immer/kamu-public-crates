@@ -100,16 +100,20 @@ macro_rules! fixed_length_money_type {
 /// fails while the query is parsed, rather than reaching a currency check
 /// inside one.
 ///
-/// # What this macro does not generate
+/// # Why the function names are parameters
 ///
-/// Text I/O — the only per-type surface that must *name* its currency, because
-/// it needs the settlement exponent. Those functions are written beside each
-/// invocation, because a `macro_rules!` can neither lowercase nor concatenate
-/// identifiers and so cannot build `kmoney_usd_out` from `kmoney_usd`. That
-/// limit is precisely why the full register is emitted from `build.rs`, where
-/// `format_ident!` can.
+/// A `macro_rules!` can neither lowercase nor concatenate identifiers, so it
+/// cannot build `kmoney_usd_out` from `kmoney_usd`. Rather than hand-write the
+/// text I/O beside every invocation — 178 chances to mistype a name that
+/// nothing would catch — the caller passes every identifier already declined
+/// and this macro only *uses* them. Deriving them is `build.rs`'s job, where
+/// `format_ident!` can, and the manifest it emits is the flat table of
+/// declensions those invocations read from.
+///
+/// The macro is therefore purely structural: one definition, and every
+/// generated currency differs from it in nothing but its names.
 macro_rules! pinned_money_type {
-    ($(#[$meta:meta])* $t:ident, $currency:ty) => {
+    ($(#[$meta:meta])* $t:ident, $currency:ty, $in:ident, $out:ident, $send:ident) => {
         $(#[$meta])*
         #[derive(Copy, Clone)]
         #[repr(C)]
@@ -155,6 +159,36 @@ macro_rules! pinned_money_type {
         }
 
         crate::ffi::impl_pinned_datum!($t);
+
+        #[doc(hidden)]
+        #[pg_extern(immutable, parallel_safe, requires = ["money_shell_types"])]
+        fn $in(input: &core::ffi::CStr) -> $t {
+            match input.to_str() {
+                Ok(text) => safe::pinned::parse_pinned(text),
+                Err(e) => error!(
+                    "{}: input is not valid UTF-8: {e}",
+                    <$t as safe::pinned::PinnedCurrency>::SQL_NAME
+                ),
+            }
+        }
+
+        #[doc(hidden)]
+        #[pg_extern(immutable, parallel_safe, requires = ["money_shell_types"])]
+        fn $out(value: $t) -> alloc::ffi::CString {
+            let rendered = safe::pinned::render_pinned(value);
+            alloc::ffi::CString::new(rendered).unwrap_or_else(|e| {
+                error!(
+                    "{}: rendered form contains a NUL byte: {e}",
+                    <$t as safe::pinned::PinnedCurrency>::SQL_NAME
+                )
+            })
+        }
+
+        #[doc(hidden)]
+        #[pg_extern(immutable, parallel_safe, requires = ["money_shell_types"])]
+        fn $send(value: $t) -> Vec<u8> {
+            safe::pinned::send_pinned(value)
+        }
     };
 }
 
@@ -232,29 +266,7 @@ pinned_money_type! {
     /// and `sum(kmoney_usd)` cannot silently total two currencies. The tagged
     /// form is still accepted on input and checked, so a well-formed value of
     /// another currency is refused rather than reinterpreted.
-    kmoney_usd, kamu_money_core::iso::USD
-}
-
-#[doc(hidden)]
-#[pg_extern(immutable, parallel_safe, requires = ["money_shell_types"])]
-fn kmoney_usd_in(input: &core::ffi::CStr) -> kmoney_usd {
-    match input.to_str() {
-        Ok(text) => safe::pinned::parse_pinned(text),
-        Err(e) => error!("kmoney_usd: input is not valid UTF-8: {e}"),
-    }
-}
-
-#[doc(hidden)]
-#[pg_extern(immutable, parallel_safe, requires = ["money_shell_types"])]
-fn kmoney_usd_out(value: kmoney_usd) -> alloc::ffi::CString {
-    alloc::ffi::CString::new(safe::pinned::render_pinned(value))
-        .unwrap_or_else(|e| error!("kmoney_usd: rendered form contains a NUL byte: {e}"))
-}
-
-#[doc(hidden)]
-#[pg_extern(immutable, parallel_safe, requires = ["money_shell_types"])]
-fn kmoney_usd_send(value: kmoney_usd) -> Vec<u8> {
-    safe::pinned::send_pinned(value)
+    kmoney_usd, kamu_money_core::iso::USD, kmoney_usd_in, kmoney_usd_out, kmoney_usd_send
 }
 
 // A pinned type declares no TYPMOD_IN/TYPMOD_OUT: there is no modifier to
