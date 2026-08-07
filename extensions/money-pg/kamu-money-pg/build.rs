@@ -41,9 +41,16 @@ fn main() {
         let alpha3 = code.alpha3();
         let lower = alpha3.to_lowercase();
         let ty = format!("kmoney_{lower}");
+        // Every identifier the macro needs, declined here because a
+        // `macro_rules!` cannot build one.
         let f_in = format!("{ty}_in");
         let f_out = format!("{ty}_out");
         let f_send = format!("{ty}_send");
+        let f_hash = format!("{ty}_hash");
+        let (eq, ne) = (format!("{ty}_eq"), format!("{ty}_ne"));
+        let (lt, le) = (format!("{ty}_lt"), format!("{ty}_le"));
+        let (gt, ge) = (format!("{ty}_gt"), format!("{ty}_ge"));
+        let (add, sub) = (format!("{ty}_add"), format!("{ty}_sub"));
 
         writeln!(shells, "CREATE TYPE {ty};").expect("writing to a String cannot fail");
 
@@ -55,7 +62,12 @@ pinned_money_type! {{
     ///
     /// The column's type is the currency, so `'10.50'::{ty}` needs no tag and a
     /// cross-currency expression has no operator to resolve at all.
-    {ty}, kamu_money_core::iso::{alpha3}, {f_in}, {f_out}, {f_send}
+    {ty}: kamu_money_core::iso::{alpha3},
+    concrete = "{ty}_concrete",
+    io = [{f_in}, {f_out}, {f_send}],
+    cmp = [{eq}, {ne}, {lt}, {le}, {gt}, {ge}],
+    arith = [{add}, {sub}],
+    hash = {f_hash},
 }}
 
 extension_sql!(

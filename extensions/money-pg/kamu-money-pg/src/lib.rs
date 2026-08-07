@@ -113,7 +113,15 @@ macro_rules! fixed_length_money_type {
 /// The macro is therefore purely structural: one definition, and every
 /// generated currency differs from it in nothing but its names.
 macro_rules! pinned_money_type {
-    ($(#[$meta:meta])* $t:ident, $currency:ty, $in:ident, $out:ident, $send:ident) => {
+    (
+        $(#[$meta:meta])*
+        $t:ident : $currency:ty,
+        concrete = $concrete:literal,
+        io = [$in:ident, $out:ident, $send:ident],
+        cmp = [$eq:ident, $ne:ident, $lt:ident, $le:ident, $gt:ident, $ge:ident],
+        arith = [$add:ident, $sub:ident],
+        hash = $hash:ident $(,)?
+    ) => {
         $(#[$meta])*
         #[derive(Copy, Clone)]
         #[repr(C)]
@@ -149,6 +157,12 @@ macro_rules! pinned_money_type {
         }
 
         impl $t {
+            /// Canonical units. Inherent as well as on the trait, so the operator
+            /// bodies below read as arithmetic rather than as trait dispatch.
+            const fn units(self) -> i128 {
+                self.0.units()
+            }
+
             const fn payload(self) -> PinnedPayload {
                 self.0
             }
@@ -188,6 +202,140 @@ macro_rules! pinned_money_type {
         #[pg_extern(immutable, parallel_safe, requires = ["money_shell_types"])]
         fn $send(value: $t) -> Vec<u8> {
             safe::pinned::send_pinned(value)
+        }
+
+        // COMPARISON. Within one currency there is nothing left to check: the
+        // SQL type already guarantees both operands are this currency, so these
+        // read units and nothing else.
+        //
+        // Note what is absent. `kmoney` calls `same_currency` in every ordering
+        // operator and REFUSES a cross-currency comparison at run time. A pinned
+        // type has no such call to make and no such refusal to raise: ordering
+        // here is TOTAL, because the question it would have refused cannot be
+        // asked. Equality is likewise total, and for the same reason.
+        //
+        // Deliberately NO btree or hash operator class. These are sequential-scan
+        // predicates only. The absent default-opclass ordering is the one surface
+        // YugabyteDB's planner will not resolve for a custom type, and its
+        // absence is what keeps these types byte-exact there.
+        #[pg_operator(immutable, parallel_safe, requires = [$concrete])]
+        #[opname(=)]
+        #[commutator(=)]
+        #[negator(<>)]
+        #[restrict(eqsel)]
+        #[join(eqjoinsel)]
+        const fn $eq(a: $t, b: $t) -> bool {
+            a.units() == b.units()
+        }
+
+        #[pg_operator(immutable, parallel_safe, requires = [$concrete])]
+        #[opname(<>)]
+        #[commutator(<>)]
+        #[negator(=)]
+        #[restrict(neqsel)]
+        #[join(neqjoinsel)]
+        const fn $ne(a: $t, b: $t) -> bool {
+            a.units() != b.units()
+        }
+
+        #[pg_operator(immutable, parallel_safe, requires = [$concrete])]
+        #[opname(<)]
+        #[commutator(>)]
+        #[negator(>=)]
+        #[restrict(scalarltsel)]
+        #[join(scalarltjoinsel)]
+        const fn $lt(a: $t, b: $t) -> bool {
+            a.units() < b.units()
+        }
+
+        #[pg_operator(immutable, parallel_safe, requires = [$concrete])]
+        #[opname(<=)]
+        #[commutator(>=)]
+        #[negator(>)]
+        #[restrict(scalarlesel)]
+        #[join(scalarlejoinsel)]
+        const fn $le(a: $t, b: $t) -> bool {
+            a.units() <= b.units()
+        }
+
+        #[pg_operator(immutable, parallel_safe, requires = [$concrete])]
+        #[opname(>)]
+        #[commutator(<)]
+        #[negator(<=)]
+        #[restrict(scalargtsel)]
+        #[join(scalargtjoinsel)]
+        const fn $gt(a: $t, b: $t) -> bool {
+            a.units() > b.units()
+        }
+
+        #[pg_operator(immutable, parallel_safe, requires = [$concrete])]
+        #[opname(>=)]
+        #[commutator(<=)]
+        #[negator(<)]
+        #[restrict(scalargesel)]
+        #[join(scalargejoinsel)]
+        const fn $ge(a: $t, b: $t) -> bool {
+            a.units() >= b.units()
+        }
+
+        // ARITHMETIC. Delegates to the same `kamu-money-core` kernels
+        // `Money::checked_add` uses, so the SQL and Rust surfaces cannot
+        // disagree about addition.
+        //
+        // The kernel returns `None` for an out-of-domain operand OR result. A
+        // pinned value read from a column can be out of domain -- those bytes
+        // came from disk -- so this arm stays. It is the one failure typing
+        // cannot remove, because it is a fact about incoming data rather than
+        // about this process.
+        #[pg_operator(immutable, parallel_safe, requires = [$concrete])]
+        #[opname(+)]
+        #[commutator(+)]
+        fn $add(a: $t, b: $t) -> $t {
+            let Some(units) =
+                kamu_money_core::advanced::arithmetic::add_units(a.units(), b.units())
+            else {
+                error!(
+                    "{}: the result of + is outside the domain |units| <= 10^36 - 1",
+                    <$t as safe::pinned::PinnedCurrency>::SQL_NAME
+                );
+            };
+            $t::from_payload(PinnedPayload::from_units(units))
+        }
+
+        #[pg_operator(immutable, parallel_safe, requires = [$concrete])]
+        #[opname(-)]
+        fn $sub(a: $t, b: $t) -> $t {
+            let Some(units) =
+                kamu_money_core::advanced::arithmetic::sub_units(a.units(), b.units())
+            else {
+                error!(
+                    "{}: the result of - is outside the domain |units| <= 10^36 - 1",
+                    <$t as safe::pinned::PinnedCurrency>::SQL_NAME
+                );
+            };
+            $t::from_payload(PinnedPayload::from_units(units))
+        }
+
+        /// The stable hash of a pinned value, folded to `int4`.
+        ///
+        /// Feeds `stable_hash` the currency from the TYPE and the units from the
+        /// value, which is the same pair the erased type feeds it from its
+        /// payload. So the two hash identically for the same logical amount, and
+        /// `STABLE_HASH_VERSION` does not move even though the stored bytes
+        /// narrowed from 18 to 16.
+        ///
+        /// There is no hash operator class here, for the same reason there is no
+        /// btree one.
+        #[pg_extern(immutable, parallel_safe, requires = [$concrete])]
+        fn $hash(value: $t) -> i32 {
+            kamu_money_core::advanced::stable_hash::fold_to_i32(
+                kamu_money_core::advanced::stable_hash::stable_hash(
+                    <<$t as safe::pinned::PinnedCurrency>::Currency
+                        as kamu_money_core::StaticCurrency>::CODE
+                        .numeric(),
+                    value.units(),
+                ),
+            )
         }
     };
 }
@@ -580,6 +728,68 @@ mod tests {
             kamu_money_core::Iso4217::EVERY.len(),
             "the manifest is derived from the register, so the counts cannot disagree"
         );
+    }
+
+    /// Ordering is TOTAL within a pinned type.
+    ///
+    /// `kmoney` calls `same_currency` in every ordering operator and refuses a
+    /// cross-currency comparison at run time. Here the operator has nothing to
+    /// check, because the question it would refuse cannot be asked.
+    #[pg_test]
+    fn pinned_ordering_needs_no_currency_check() {
+        let ordered = Spi::get_one::<bool>("SELECT '1.00'::kmoney_usd < '2.00'::kmoney_usd")
+            .expect("query ran")
+            .expect("not null");
+        assert!(ordered, "within one currency, ordering is just units");
+    }
+
+    /// And the comparison it would have refused has no operator to reach.
+    #[pg_test(error = "operator does not exist: kmoney_usd < kmoney_idr")]
+    fn cross_currency_ordering_has_no_operator() {
+        Spi::run("SELECT '1.00'::kmoney_usd < '1.00'::kmoney_idr").expect("should have failed");
+    }
+
+    #[pg_test]
+    fn pinned_arithmetic_stays_within_the_currency() {
+        let sum = Spi::get_one::<String>("SELECT ('1.25'::kmoney_usd + '2.75'::kmoney_usd)::text")
+            .expect("query ran")
+            .expect("not null");
+        assert_eq!(sum, "4.00");
+    }
+
+    /// A pinned value hashes exactly as the erased one does for the same logical
+    /// amount.
+    ///
+    /// This is why `STABLE_HASH_VERSION` did not move when the payload narrowed
+    /// from 18 bytes to 16: both feed `stable_hash` the same `(code, units)`
+    /// pair, the pinned type from its *type* and the erased one from its
+    /// *payload*. The storage width changed; the hashed value did not.
+    #[pg_test]
+    fn a_pinned_value_hashes_as_the_erased_one_does() {
+        let pinned = Spi::get_one::<i32>("SELECT kmoney_usd_hash('10.50'::kmoney_usd)")
+            .expect("query ran")
+            .expect("not null");
+        let erased = Spi::get_one::<i32>("SELECT kmoney_mixed_hash('USD 10.50'::kmoney_mixed)")
+            .expect("query ran")
+            .expect("not null");
+        assert_eq!(pinned, erased, "same amount, same stable hash, whatever the storage width");
+    }
+
+    /// No generated type carries a btree or hash operator class.
+    ///
+    /// Their absence is not an omission. It is the one surface YugabyteDB's
+    /// planner will not resolve for a custom type, and removing it is what makes
+    /// these types byte-exact there. An opclass added later would break that for
+    /// every currency at once, so the assertion covers all of them.
+    #[pg_test]
+    fn no_generated_type_carries_an_operator_class() {
+        let classes = Spi::get_one::<i64>(
+            "SELECT count(*) FROM pg_opclass WHERE opcintype IN \
+             (SELECT oid FROM pg_type WHERE typname LIKE 'kmoney\\\\_%' AND typlen = 16)",
+        )
+        .expect("query ran")
+        .expect("not null");
+        assert_eq!(classes, 0, "an operator class here would cost YugabyteDB byte-exactness");
     }
 }
 
