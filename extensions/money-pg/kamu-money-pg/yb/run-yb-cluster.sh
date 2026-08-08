@@ -97,16 +97,18 @@ echo
 echo "=== 4. written on one node, read back byte-identically on the others ==="
 # A REPLICATED table, pre-split across tablets so the rows are genuinely distributed rather than
 # all sitting on the node that wrote them.
-yb_sql 0 -c "CREATE TABLE cross_node (id int PRIMARY KEY, amount kmoney_idr) SPLIT INTO 6 TABLETS" >/dev/null
-yb_sql 0 -c "INSERT INTO cross_node
+# Retried: the internal catalog scan under CREATE ... SPLIT deterministically
+# reports "Restart read required" on a freshly-installed 3,600-object catalog.
+yb_sql_retry 0 -c "CREATE TABLE cross_node (id int PRIMARY KEY, amount kmoney_idr) SPLIT INTO 6 TABLETS" >/dev/null
+yb_sql_retry 0 -c "INSERT INTO cross_node
              SELECT g, ('IDR ' || g || '.0' || (g % 10))::kmoney_idr FROM generate_series(1, 200) g" >/dev/null
 # The whole table as ONE string: the ordered text of every row, plus a hash fold over all of them.
 # Comparing a count or a sum would survive a single corrupted payload; this cannot.
 FINGERPRINT_SQL="SELECT md5(string_agg(amount::text, ',' ORDER BY id)) || '/' || sum(kmoney_idr_hash(amount))::text || '/' || count(*)::text FROM cross_node"
-ref="$(yb_sql 0 -c "$FINGERPRINT_SQL" | tr -d ' ')"
+ref="$(yb_sql_retry 0 -c "$FINGERPRINT_SQL" | tr -d ' ')"
 ok "node 0 fingerprint $ref"
 for i in $(seq 1 $((N - 1))); do
-    got="$(yb_sql "$i" -c "$FINGERPRINT_SQL" | tr -d ' ')"
+    got="$(yb_sql_retry "$i" -c "$FINGERPRINT_SQL" | tr -d ' ')"
     if [ "$got" = "$ref" ]; then
         ok "node $i reads back an identical fingerprint"
     else
@@ -116,9 +118,9 @@ done
 
 # And the raw wire form, not just the text rendering: 16 bytes, the same 16 bytes, everywhere.
 WIRE_SQL="SELECT encode(kmoney_idr_send(amount), 'hex') FROM cross_node WHERE id = 42"
-wref="$(yb_sql 0 -c "$WIRE_SQL" | tr -d ' ')"
+wref="$(yb_sql_retry 0 -c "$WIRE_SQL" | tr -d ' ')"
 for i in $(seq 1 $((N - 1))); do
-    got="$(yb_sql "$i" -c "$WIRE_SQL" | tr -d ' ')"
+    got="$(yb_sql_retry "$i" -c "$WIRE_SQL" | tr -d ' ')"
     if [ "$got" = "$wref" ] && [ "${#wref}" -eq 32 ]; then
         ok "node $i sends the identical 16-byte payload ($wref)"
     else
@@ -157,14 +159,14 @@ else
     else
         bad "yb-admin split_tablet refused -- the split probe proved nothing (this is a FAILURE, not a skip)"
     fi
-    post="$(yb_sql 0 -c "$FINGERPRINT_SQL" | tr -d ' ')"
+    post="$(yb_sql_retry 0 -c "$FINGERPRINT_SQL" | tr -d ' ')"
     if [ "$post" = "$ref" ]; then
         ok "every payload survived the split byte-identically ($post)"
     else
         bad "fingerprint changed across the split: $post != $ref"
     fi
     for i in $(seq 1 $((N - 1))); do
-        got="$(yb_sql "$i" -c "$FINGERPRINT_SQL" | tr -d ' ')"
+        got="$(yb_sql_retry "$i" -c "$FINGERPRINT_SQL" | tr -d ' ')"
         if [ "$got" = "$ref" ]; then
             ok "node $i still agrees after the split"
         else

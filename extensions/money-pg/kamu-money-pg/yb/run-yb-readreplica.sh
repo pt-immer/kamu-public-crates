@@ -70,8 +70,10 @@ done
 echo
 echo "=== 2. ONE CREATE EXTENSION on the primary is visible to the replica ==="
 yb_sql 0 -c 'CREATE EXTENSION kmoney' >/dev/null
-yb_sql 0 -c "CREATE TABLE rr_ledger (id int PRIMARY KEY, amount kmoney_idr)" >/dev/null
-yb_sql 0 -c "INSERT INTO rr_ledger VALUES (1, 'IDR 16000.000000000000000001'), \
+# Retried: table DDL right after the 3,600-object install can deterministically
+# report "Restart read required" from YB's internal catalog scan.
+yb_sql_retry 0 -c "CREATE TABLE rr_ledger (id int PRIMARY KEY, amount kmoney_idr)" >/dev/null
+yb_sql_retry 0 -c "INSERT INTO rr_ledger VALUES (1, 'IDR 16000.000000000000000001'), \
                                           (2, 'IDR -0.000000000000000001')" >/dev/null
 
 # Asynchronous by design, so this waits rather than assuming. A read replica that never catches up
