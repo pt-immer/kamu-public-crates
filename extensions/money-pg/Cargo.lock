@@ -817,7 +817,9 @@ dependencies = [
 
 [[package]]
 name = "kamu-money-core"
-version = "0.1.1"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "221f61aed3607011679f0ea9e19e6f598ea9d452eaea2664ac0acbc47444d8f8"
 dependencies = [
  "ethnum",
  "proc-macro2",
@@ -1131,9 +1133,9 @@ dependencies = [
 
 [[package]]
 name = "pgrx-bench"
-version = "0.19.1"
+version = "0.19.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1668f8855369affc58d0797aaf3807ec2f6d64ce140c3cb8031f4c526a4dc29f"
+checksum = "33563f6c3387d4d1d084063104a509320664fec4b674efd10a22092e54d59423"
 dependencies = [
  "criterion",
  "oorandom",

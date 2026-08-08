@@ -58,7 +58,7 @@ tempfile = { version = "3", optional = true }
 kamu-money-core = "0.1"
 
 [dependencies.pgrx-bench]
-version = "=0.19.1"
+version = "=0.19.2"
 optional = true
 
 [dev-dependencies]
