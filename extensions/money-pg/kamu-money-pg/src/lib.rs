@@ -946,6 +946,44 @@ mod tests {
             "one aggregate per currency, from the same register the types came from"
         );
     }
+
+    /// Division returns a quotient and a residue that reconstruct the input.
+    ///
+    /// Both arrive as the same type, so "quotient in one currency, residue in
+    /// another" is not a state this can produce -- the conservation check below
+    /// is therefore about *amounts* only, which is the whole point.
+    #[pg_test]
+    fn division_conserves_the_pinned_amount() {
+        let (quotient, residue) = Spi::get_two::<String, String>(
+            "SELECT quotient::text, residue::text FROM kmoney_usd_div('10.00'::kmoney_usd, 3, 'toward_zero')",
+        )
+        .expect("query ran");
+        let quotient = quotient.expect("not null");
+        let residue = residue.expect("not null");
+        assert_eq!(quotient, "3.333333333333333333");
+        assert_eq!(residue, "0.000000000000000001");
+
+        let rebuilt = Spi::get_one::<bool>(
+            "SELECT q.quotient + q.quotient + q.quotient + q.residue = '10.00'::kmoney_usd \
+               FROM kmoney_usd_div('10.00'::kmoney_usd, 3, 'toward_zero') q",
+        )
+        .expect("query ran")
+        .expect("not null");
+        assert!(rebuilt, "parts x quotient + residue must reconstruct the input exactly");
+    }
+
+    /// Allocation distributes across weights and conserves the total.
+    #[pg_test]
+    fn allocation_conserves_the_pinned_total() {
+        let total = Spi::get_one::<String>(
+            "SELECT sum(share)::text FROM unnest(\
+                 kmoney_usd_allocate('10.00'::kmoney_usd, ARRAY[1, 1, 1])\
+             ) AS share",
+        )
+        .expect("query ran")
+        .expect("not null");
+        assert_eq!(total, "10.00", "every unit lands in exactly one share");
+    }
 }
 
 /// Required by `cargo pgrx test`.
