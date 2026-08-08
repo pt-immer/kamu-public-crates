@@ -41,11 +41,13 @@ PINNED="702888007|-1388235877|-129968833|1671845669"
 
 echo
 echo "=== setup: 500 kmoney_idr rows, RF=3, pre-split across 6 tablets ==="
-yb_sql 0 -c "CREATE TABLE resilient (id int PRIMARY KEY, amount kmoney_idr) SPLIT INTO 6 TABLETS" >/dev/null
-yb_sql 0 -c "INSERT INTO resilient
+# Retried: the internal catalog scan under CREATE ... SPLIT deterministically
+# reports "Restart read required" on a freshly-installed 3,600-object catalog.
+yb_sql_retry 0 -c "CREATE TABLE resilient (id int PRIMARY KEY, amount kmoney_idr) SPLIT INTO 6 TABLETS" >/dev/null
+yb_sql_retry 0 -c "INSERT INTO resilient
              SELECT g, ('IDR ' || g || '.' || lpad((g % 100)::text, 2, '0') || '000000000000001')::kmoney_idr
                FROM generate_series(1, 500) g" >/dev/null
-REF="$(yb_sql 0 -c "$FINGERPRINT" | tr -d ' ')"
+REF="$(yb_sql_retry 0 -c "$FINGERPRINT" | tr -d ' ')"
 ok "fingerprint $REF"
 
 # Wait until a node answers again, or give up loudly. A resilience probe that silently proceeds

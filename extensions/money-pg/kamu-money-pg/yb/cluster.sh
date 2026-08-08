@@ -55,6 +55,36 @@ yb_sql() {
     docker exec -i "${YB_NODES[$i]}" bin/ysqlsh -h "${YB_HOSTS[$i]}" -U yugabyte -X -q -t -A "$@"
 }
 
+# `yb_sql` under the shared retry classifier, for statements that can hit a
+# TRANSIENT YugabyteDB abort. Needed deterministically since the extension grew
+# to ~3,600 catalog objects: the internal catalog scan under
+# `CREATE TABLE ... SPLIT` reliably reports "Restart read required" on a
+# freshly-installed cluster, and YB's transparent read-restart retries do not
+# cover it. Only output matching YB_RETRYABLE is retried; any other failure
+# returns immediately with its output. This retries the INFRASTRUCTURE, never
+# the value -- a wrong fingerprint is not retryable by construction, because
+# the classifier matches abort phrasing and not content.
+yb_sql_retry() {
+    local attempt out rc
+    for attempt in 1 2 3 4 5 6 7 8 9 10; do
+        set +e
+        out="$(yb_sql "$@" 2>&1)"; rc=$?
+        set -e
+        if [ "$rc" -eq 0 ]; then
+            printf '%s\n' "$out"
+            return 0
+        fi
+        if ! printf '%s' "$out" | grep -qiE "$YB_RETRYABLE"; then
+            printf '%s\n' "$out" >&2
+            return "$rc"
+        fi
+        sleep "$attempt"
+    done
+    printf '%s\n' "$out" >&2
+    echo "yb_sql_retry: still retryable after 10 attempts -- treating as real" >&2
+    return 1
+}
+
 # A client wrapper for node <index>, for run-suite.sh's --client. Echoes the wrapper's PATH.
 #
 # A generated wrapper merges ysqlsh streams inside the container and survives run-suite.sh
