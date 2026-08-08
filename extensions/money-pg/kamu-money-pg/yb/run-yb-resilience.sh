@@ -9,8 +9,8 @@
 # and a second artifact built against that image's headers. See `yb/RUNBOOK.md`.
 #
 # THE ASSERTION IS ALWAYS A VALUE. Every probe re-takes the same fingerprint: the ordered text of
-# every row, folded with the pinned kmoney_hash, plus the row count. "The query succeeded after the
-# restart" is not the claim; "every 18-byte payload is the one that went in" is.
+# every row, folded with the pinned hash, plus the row count. "The query succeeded after the
+# restart" is not the claim; "every 16-byte payload is the one that went in" is.
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
@@ -35,15 +35,15 @@ yb_cluster_up "$N" "$YB_IMAGE"
 yb_install_extension_on_all "$ART"
 yb_sql 0 -c 'CREATE EXTENSION kmoney' >/dev/null
 
-FINGERPRINT="SELECT md5(string_agg(amount::text, ',' ORDER BY id)) || '/' || sum(kmoney_hash(amount))::text || '/' || count(*)::text FROM resilient"
-HASHES="SELECT kmoney_hash('USD 0.00'::kmoney) || '|' || kmoney_hash('USD 1.00'::kmoney) || '|' || kmoney_hash('IDR 1.00'::kmoney) || '|' || kmoney_hash('USD -1.00'::kmoney)"
+FINGERPRINT="SELECT md5(string_agg(amount::text, ',' ORDER BY id)) || '/' || sum(kmoney_idr_hash(amount))::text || '/' || count(*)::text FROM resilient"
+HASHES="SELECT kmoney_usd_hash('0.00'::kmoney_usd) || '|' || kmoney_usd_hash('1.00'::kmoney_usd) || '|' || kmoney_idr_hash('1.00'::kmoney_idr) || '|' || kmoney_usd_hash('-1.00'::kmoney_usd)"
 PINNED="702888007|-1388235877|-129968833|1671845669"
 
 echo
-echo "=== setup: 500 kmoney rows, RF=3, pre-split across 6 tablets ==="
-yb_sql 0 -c "CREATE TABLE resilient (id int PRIMARY KEY, amount kmoney('IDR')) SPLIT INTO 6 TABLETS" >/dev/null
+echo "=== setup: 500 kmoney_idr rows, RF=3, pre-split across 6 tablets ==="
+yb_sql 0 -c "CREATE TABLE resilient (id int PRIMARY KEY, amount kmoney_idr) SPLIT INTO 6 TABLETS" >/dev/null
 yb_sql 0 -c "INSERT INTO resilient
-             SELECT g, ('IDR ' || g || '.' || lpad((g % 100)::text, 2, '0') || '000000000000001')::kmoney
+             SELECT g, ('IDR ' || g || '.' || lpad((g % 100)::text, 2, '0') || '000000000000001')::kmoney_idr
                FROM generate_series(1, 500) g" >/dev/null
 REF="$(yb_sql 0 -c "$FINGERPRINT" | tr -d ' ')"
 ok "fingerprint $REF"
@@ -101,8 +101,8 @@ else
     bad "no write could commit with one node down -- RF=3 should tolerate this"
 fi
 got="$(yb_sql 0 -c "SELECT amount::text FROM resilient WHERE id = 1001" | tr -d ' ')"
-if [ "$got" = "IDR777.77" ]; then
-    ok "the value written during the outage reads back as IDR 777.77"
+if [ "$got" = "777.77" ]; then
+    ok "the value written during the outage reads back as 777.77"
 else
     bad "the value written during the outage reads back as '$got'"
 fi
@@ -132,7 +132,7 @@ else
     bad "the rejoined node reports '$got', the cluster reports '$REF_AFTER'"
 fi
 got="$(yb_sql 2 -c "SELECT amount::text FROM resilient WHERE id = 1001" | tr -d ' ')"
-if [ "$got" = "IDR777.77" ]; then
+if [ "$got" = "777.77" ]; then
     ok "it has the row written while it was down, byte-identically"
 else
     bad "the rejoined node reports '$got' for the row written during its outage"
@@ -165,7 +165,7 @@ echo "NOT COVERED, deliberately: a rolling VERSION upgrade. It needs a second im
 echo "second from-source artifact build against that image's headers. See yb/RUNBOOK.md."
 echo
 if [ "$fail" -eq 0 ]; then
-    echo "run-yb-resilience: OK -- kmoney data survives a node restart, a node failure with writes"
+    echo "run-yb-resilience: OK -- money data survives a node restart, a node failure with writes"
     echo "                   continuing, and a rejoin, byte-identically each time."
 else
     echo "run-yb-resilience: FAILED -- $fail probe(s)" >&2

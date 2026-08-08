@@ -120,7 +120,7 @@ expect_reject 02-text 'output differs' "'at character N' INSIDE a message is NOT
 
 # --- value corruptions --------------------------------------------------------------------------
 golden 04-sum
-sed -i 's/^USD 11\.00$/USD 11.01/' "$FAKE_FIXTURE_DIR/04-sum.fixture"
+sed -i 's/^10\.00$/10.01/' "$FAKE_FIXTURE_DIR/04-sum.fixture"
 expect_reject 04-sum 'output differs' "one cent changed in a money value is REJECTED"
 
 golden 04-sum
@@ -139,7 +139,7 @@ expect_reject 02-text 'output differs' "a single letter changed in a refusal mes
 golden 02-text
 # An error that stops being raised must also fail the oracle.
 before=$(wc -l < "$FAKE_FIXTURE_DIR/02-text.fixture")
-sed -i '/^ERROR:  kmoney: invalid money literal/d' "$FAKE_FIXTURE_DIR/02-text.fixture"
+sed -i '/^ERROR:  kmoney_mixed: invalid money literal/d' "$FAKE_FIXTURE_DIR/02-text.fixture"
 # The mutation itself is asserted. A `sed` whose pattern has gone stale deletes nothing, the
 # fixture stays correct, the runner accepts it -- and the probe reports that the oracle failed to
 # reject a corruption that was never applied. Measured: this exact probe went red when the goldens

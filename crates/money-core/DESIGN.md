@@ -240,14 +240,14 @@ second decimal representation. Canonical text keeps parsing in this crate.
 The excluded [`extensions/money-pg`](../../extensions/money-pg) workspace owns a
 pgrx extension for self-hosted PostgreSQL and YugabyteDB:
 
-- `kmoney('IDR')` declares one currency through typmod and supports typed
-  arithmetic;
+- one SQL type per ISO 4217 currency — `kmoney_idr`, `kmoney_usd`, and the
+  rest — derived from this crate's register; each supports typed arithmetic,
+  and a cross-currency expression fails while the query is parsed;
 - `kmoney_mixed` stores heterogeneous currencies and deliberately has no
   arithmetic or sum aggregate;
-- the value carries its ISO numeric code because PostgreSQL does not pass typmod
-  to operators;
-- the fixed payload is 18 bytes: 16 little-endian unit bytes and two
-  little-endian ISO-code bytes;
+- a pinned payload is 16 little-endian unit bytes — the currency lives in the
+  catalog, not the value; `kmoney_mixed` appends two little-endian ISO-code
+  bytes for 18;
 - payload validation is centralized before semantic use;
 - the Rust representation uses byte arrays with alignment 1, avoiding an
   unaligned `i128` reference at the PostgreSQL ABI boundary;

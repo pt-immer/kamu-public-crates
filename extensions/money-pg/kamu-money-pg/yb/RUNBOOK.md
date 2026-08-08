@@ -167,12 +167,19 @@ The fallback retains:
 
 It gives up:
 
-- database arithmetic, allocation, and `sum(kmoney)`;
-- `kmoney('USD')` typmod enforcement;
-- the fixed 18-byte native representation.
+- database arithmetic, division, allocation, and the per-currency `sum()`;
+- per-currency column typing — `kmoney_usd` refusing a foreign currency at
+  input and cross-currency expressions failing to parse;
+- the fixed 16-byte pinned and 18-byte mixed native representations.
 
 This is a mechanism migration, not a value-format migration. The native
 input/output functions and portable adapters share the canonical codec.
+
+One exposure the fallback shares with the native path: its rows store tagged
+text (`USD 10.50`), so a register update that removed a currency would make
+historical fallback rows of that currency unreadable too. The register's
+append-only policy (`crates/money-core/VENDORED.md`, "Identity facts are
+append-only") is what protects both representations.
 
 ## Deploy
 
@@ -193,6 +200,15 @@ The database order is mandatory:
 
 Binary first, catalog second. During a rolling image update, new binaries must
 remain compatible with the current catalog until step 5 completes.
+
+`CREATE EXTENSION kmoney` creates the full generated catalog — 178 per-currency
+type families, several thousand objects — through yb-master in one statement.
+Expect it to take longer than a typical extension install, run it in a quiet
+window, and treat a partial failure (for example across a master leader change)
+as undefined catalog state: `DROP EXTENSION kmoney` and re-run the statement
+rather than reasoning about which objects survived. Its atomicity under a
+mid-statement master failover is a property of the YugabyteDB version's DDL
+handling, not of this extension, and has not been rehearsed here.
 
 ### Roll back
 
@@ -216,12 +232,28 @@ authority. The consuming platform owns those controls.
 
 ### Extension version changes
 
-Any version bump beyond `0.1.0` must add the corresponding
-`kmoney--old--new.sql` upgrade script. PostgreSQL refuses
-`ALTER EXTENSION UPDATE` without a valid upgrade path.
+`0.1.0 → 0.2.0` has no upgrade script, deliberately. The bump removes the
+`kmoney` type and narrows the stored payload 18 → 16 bytes, and
+`ALTER EXTENSION UPDATE` can carry neither: a type cannot be dropped from under
+its columns, and a payload change is a storage migration, not a catalog edit.
+The supported path is dump → transform → restore:
 
-A change to the 18-byte payload is a storage migration, not an ordinary release.
-It requires explicit old/new decoding, upgrade and rollback plans, and
+1. On `0.1.0`, dump. `pg_dump` emits every `kmoney` value through `kmoney_out`
+   as tagged text — `USD 10.50`.
+2. In the dumped schema, retype each column: `kmoney('USD')` becomes
+   `kmoney_usd`; a column that genuinely holds several currencies becomes
+   `kmoney_mixed`.
+3. Restore into a cluster running `0.2.0`. Pinned input accepts the tagged form
+   and refuses a tag that disagrees with the column's type, so a column mapped
+   to the wrong currency aborts the restore at the first mismatched row instead
+   of having its digits reinterpreted. The transform is checked by the wire,
+   not by the operator's diligence.
+
+Later bumps follow the original rule: a release that keeps every type and
+stored payload adds the corresponding `kmoney--old--new.sql` script, because
+PostgreSQL refuses `ALTER EXTENSION UPDATE` without a valid upgrade path. A
+release that changes a stored payload is a storage migration and repeats the
+dump → transform → restore rehearsal, with explicit old/new decoding and
 cross-version tests.
 
 ## Evidence limits
@@ -229,6 +261,12 @@ cross-version tests.
 - One YugabyteDB digest is supported at a time.
 - Same-version restart, node failure/rejoin, and dump/restore are tested.
 - A two-version rolling YugabyteDB upgrade is not yet rehearsed.
+- No `kmoney--old--new.sql` upgrade script has ever shipped, and no delta
+  generator exists: the first register ADDITION will require a hand-authored
+  script carrying that currency's full object family, plus a
+  fresh-install-versus-upgrade equivalence test. Neither is rehearsed.
+- `CREATE EXTENSION` atomicity under a mid-statement master failover is
+  untested; the runbook's answer is drop-and-retry, not resumption.
 - The node image produced here is a test fixture, not a published deliverable.
 - Benchmarks compare mechanisms on one host; they are not portable thresholds.
 - Native extension support does not cover managed services that prohibit custom

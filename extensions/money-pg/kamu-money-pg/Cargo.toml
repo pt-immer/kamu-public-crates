@@ -6,8 +6,8 @@
 #     cargo pgrx init --pg18 $(which pg_config)
 [package]
 name = "kamu-money-pg"
-version = "0.1.0"
-description = "PostgreSQL extension providing kmoney: money as a native fixed-size type, 18 bytes."
+version = "0.2.0"
+description = "PostgreSQL extension providing kmoney: one native fixed-size money type per ISO 4217 currency."
 # Package identity and `publish = false` are inherited from the lane root.
 authors.workspace = true
 edition.workspace = true
@@ -49,6 +49,13 @@ pgrx = "=0.19.1"
 # requirement. Until 0.1.0 is published, bare Cargo resolution fails explicitly.
 kamu-money-core = "0.1"
 tempfile = { version = "3", optional = true }
+
+[build-dependencies]
+# The per-currency manifest is DERIVED from this register rather than kept as a
+# second list, so the `Iso4217` enum, the currency markers and the SQL types
+# cannot disagree about a code, an exponent or a name. Drift is not detected
+# here; it is unrepresentable.
+kamu-money-core = "0.1"
 
 [dependencies.pgrx-bench]
 version = "=0.19.1"

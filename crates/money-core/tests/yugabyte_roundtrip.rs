@@ -4,7 +4,7 @@
 //!
 //! This is the **text-adapter** route to YugabyteDB, not the whole of YugabyteDB support.
 //!
-//! This covers the portable text-adapter route. Native `kmoney` support has its own extension
+//! This covers the portable text-adapter route. Native per-currency support has its own extension
 //! gate. The text route needs only a text column and keeps arithmetic in Rust.
 //!
 //! # No `testcontainers-modules` image for YugabyteDB

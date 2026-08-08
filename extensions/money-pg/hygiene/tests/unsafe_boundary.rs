@@ -99,29 +99,32 @@ fn unsafe_scanner_ignores_prose_and_counts_syntax() {
 
 #[test]
 fn allocation_checks_length_before_materializing_weights() {
+    // The allocate entry point is the `$allocate` arm of `pinned_money_type!`:
+    // one definition, 178 instantiations, so the ordering proven here holds for
+    // every generated currency.
     let source_root = support::lane_root().join("kamu-money-pg/src");
     let source = support::rust_sources_under(&source_root)
         .into_iter()
         .map(support::read)
-        .find(|source| source.lines().any(|line| line.trim_start().starts_with("fn kmoney_allocate(")))
-        .expect("src/ must define kmoney_allocate");
+        .find(|source| source.lines().any(|line| line.trim_start().starts_with("fn $allocate(")))
+        .expect("src/ must define the $allocate macro arm");
     let signature = source
         .lines()
-        .find(|line| line.trim_start().starts_with("fn kmoney_allocate("))
+        .find(|line| line.trim_start().starts_with("fn $allocate("))
         .expect("function signature must exist");
 
     assert!(
         signature.contains("Array<") && !signature.contains("Vec<Option<"),
-        "kmoney_allocate must borrow pgrx Array so the cap runs before collection: {}",
+        "$allocate must borrow pgrx Array so the cap runs before collection: {}",
         signature.trim()
     );
 
-    let body = &source[source.find("fn kmoney_allocate(").expect("function must exist")..];
+    let body = &source[source.find("fn $allocate(").expect("function must exist")..];
     let body = &body[..body.find("\n}\n").map_or(body.len(), |end| end + 2)];
     let len = body.find(".len()");
     let iter = body.find(".iter()");
     assert!(
         matches!((len, iter), (Some(len), Some(iter)) if len < iter),
-        "kmoney_allocate must read len before iterating (len={len:?}, iter={iter:?})"
+        "$allocate must read len before iterating (len={len:?}, iter={iter:?})"
     );
 }

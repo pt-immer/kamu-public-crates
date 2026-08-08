@@ -1,11 +1,8 @@
--- 03-arith: `+` and `-` in the backend, and the two things they refuse.
+-- 03-arith: exact arithmetic within a currency; no operator across currencies.
 --
--- Ports: addition_within_one_currency_is_exact,
--- addition_is_exact_at_one_unit_of_the_eighteenth_decimal,
--- addition_across_currencies_is_refused_at_runtime, addition_past_the_domain_top_is_refused.
---
--- These delegate to kamu_money_core's add_units/sub_units -- the same kernel Money::checked_add
--- runs. No numeric, no base-10000 limbs, no scale to lose.
+-- Ports: addition_is_exact_at_one_unit_of_the_eighteenth_decimal,
+-- addition_past_the_domain_top_is_refused, pinned_arithmetic_stays_within_the_currency,
+-- cross_currency_arithmetic_has_no_operator.
 \pset pager off
 \pset footer off
 \pset format unaligned
@@ -15,22 +12,17 @@
 SET client_min_messages = error;
 CREATE EXTENSION IF NOT EXISTS kmoney;
 
-\echo -- addition_within_one_currency_is_exact
-SELECT ('USD 10.50'::kmoney + 'USD 0.50'::kmoney)::text || ' | '
-    || ('USD 10.50'::kmoney - 'USD 0.50'::kmoney)::text;
-
 \echo -- addition_is_exact_at_one_unit_of_the_eighteenth_decimal
--- Exactness at the smallest representable step, where a float or a rounded numeric has already
--- given up.
-SELECT ('IDR 999999999999999999.999999999999999998'::kmoney
-      + 'IDR 0.000000000000000001'::kmoney)::text;
-
-\echo -- addition_across_currencies_is_refused_at_runtime
-SELECT ('USD 1.00'::kmoney + 'IDR 1.00'::kmoney)::text;
+SELECT ('0.000000000000000001'::kmoney_usd + '0.000000000000000002'::kmoney_usd)::text;
 
 \echo -- addition_past_the_domain_top_is_refused
--- Never a wrap, never a saturation.
-SELECT ('IDR 999999999999999999.999999999999999999'::kmoney
-      + 'IDR 0.000000000000000001'::kmoney)::text;
+SELECT ('999999999999999999.999999999999999999'::kmoney_idr + '0.000000000000000001'::kmoney_idr)::text;
+
+\echo -- pinned_arithmetic_stays_within_the_currency
+SELECT ('1.25'::kmoney_usd + '2.75'::kmoney_usd)::text;
+
+\echo -- cross_currency_arithmetic_has_no_operator
+-- Fails while the query is parsed: there is no operator to resolve.
+SELECT ('1.00'::kmoney_usd + '1.00'::kmoney_idr)::text;
 
 \echo == CASE COMPLETE: 03-arith ==

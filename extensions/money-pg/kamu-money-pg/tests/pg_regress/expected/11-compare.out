@@ -1,7 +1,7 @@
--- equality_is_currency_aware_and_never_raises
-cross_eq=false same_eq=true usd_ones=2 gt_within_one_currency=true
--- ordering_refuses_cross_currency
-ERROR:  kmoney: cannot compute IDR > USD: different currencies
+-- pinned_ordering_needs_no_currency_check
+ordered=true
+-- cross_currency_ordering_has_no_operator
+ERROR:  operator does not exist: kmoney_usd < kmoney_idr at character 27
 -- there_is_no_cast_to_numeric
-ERROR:  cannot cast type kmoney to numeric
+ERROR:  cannot cast type kmoney_usd to numeric at character 28
 == CASE COMPLETE: 11-compare ==

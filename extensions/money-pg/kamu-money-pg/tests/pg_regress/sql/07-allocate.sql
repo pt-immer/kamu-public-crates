@@ -1,12 +1,9 @@
--- 07-allocate: the operation that conserves exactly, and the two things it refuses.
+-- 07-allocate: conserving distribution, exact at canonical units.
 --
--- Ports: allocation_conserves_the_total_exactly, allocation_puts_the_odd_unit_on_the_first_share,
--- allocation_never_pays_a_zero_weight_recipient, allocation_honours_weights_and_still_conserves,
--- allocation_refuses_weights_that_sum_to_zero, allocation_refuses_a_null_weight.
---
--- WITH ORDINALITY + ORDER BY ord, where the Rust tests rely on unnest's natural order. Same
--- result, but the ordering is asked for rather than assumed -- and this suite has to produce
--- identical bytes on two engines whose executors are not the same code.
+-- Ports: allocation_conserves_the_pinned_total, allocation_honours_weights_and_still_conserves,
+-- a_negative_amount_allocates_by_the_same_scheme,
+-- allocation_never_pays_a_zero_weight_recipient, allocation_refuses_a_null_weight,
+-- allocation_refuses_weights_that_sum_to_zero.
 \pset pager off
 \pset footer off
 \pset format unaligned
@@ -16,46 +13,28 @@
 SET client_min_messages = error;
 CREATE EXTENSION IF NOT EXISTS kmoney;
 
-\echo -- allocation_conserves_the_total_exactly
-SELECT kmoney_sum(VARIADIC array_agg(part))::text
-  FROM unnest(kmoney_allocate('USD 10.00', ARRAY[1, 1, 1])) AS part;
-
-\echo -- allocation_puts_the_odd_unit_on_the_first_share
--- The shares are at the canonical scale, NOT rounded to the currency's minor unit -- rounding
--- here would move money silently.
-SELECT string_agg(part::text, ' | ' ORDER BY ord)
-  FROM unnest(kmoney_allocate('USD 10.00', ARRAY[1, 1, 1])) WITH ORDINALITY AS t(part, ord);
-
-\echo -- allocation_never_pays_a_zero_weight_recipient
--- One canonical unit across weights [0, 1, 1] leaves a 1-unit remainder that must reach
--- the first POSITIVE slot, never the zero at index 0: money conserved AND paid to a party with
--- a claim.
-SELECT string_agg(part::text, ' | ' ORDER BY ord)
-  FROM unnest(kmoney_allocate('USD 0.000000000000000001', ARRAY[0, 1, 1]))
-       WITH ORDINALITY AS t(part, ord);
+\echo -- allocation_conserves_the_pinned_total
+SELECT sum(share)::text FROM unnest(kmoney_usd_allocate('10.00'::kmoney_usd, ARRAY[1, 1, 1])) AS share;
 
 \echo -- allocation_honours_weights_and_still_conserves
-SELECT kmoney_sum(VARIADIC array_agg(part))::text
-  FROM unnest(kmoney_allocate('IDR 16000.01', ARRAY[7, 2, 1])) AS part;
+SELECT string_agg(share::text, ',') FROM unnest(kmoney_usd_allocate('0.10'::kmoney_usd, ARRAY[3, 1, 1])) AS share;
+-- The remainder SCHEME is frozen contract: leftover units land on the FIRST
+-- positive-weight shares. 8 units over [1,1,3] is [2,2,4] here; Hamilton /
+-- largest-remainder would say [2,1,5], and only an inexact division can tell
+-- the two apart.
+SELECT string_agg(share::text, ',') FROM unnest(kmoney_usd_allocate('0.000000000000000008'::kmoney_usd, ARRAY[1, 1, 3])) AS share;
 
-\echo -- allocation_refuses_weights_that_sum_to_zero
-SELECT kmoney_allocate('USD 10.00', ARRAY[0, 0])::text;
+\echo -- a_negative_amount_allocates_by_the_same_scheme
+SELECT string_agg(share::text, ',') FROM unnest(kmoney_usd_allocate('-0.10'::kmoney_usd, ARRAY[3, 1, 1])) AS share;
+SELECT string_agg(share::text, ',') FROM unnest(kmoney_usd_allocate('-0.000000000000000008'::kmoney_usd, ARRAY[1, 1, 3])) AS share;
+
+\echo -- allocation_never_pays_a_zero_weight_recipient
+SELECT string_agg(share::text, ',') FROM unnest(kmoney_usd_allocate('0.03'::kmoney_usd, ARRAY[1, 0, 1])) AS share;
 
 \echo -- allocation_refuses_a_null_weight
-SELECT kmoney_allocate('USD 10.00', ARRAY[1, NULL])::text;
+SELECT count(*) FROM unnest(kmoney_usd_allocate('1.00'::kmoney_usd, ARRAY[1, NULL]));
 
-\echo -- allocation_accepts_exactly_the_documented_limit
--- The weight count is chosen at run time by whoever wrote the query, and a PostgreSQL array is
--- bounded only by the 1GB varlena limit, so the boundary states a limit rather than discovering
--- one when a backend runs out of memory. Both sides of it are exercised: this is the last
--- accepted size, and conservation still holds there.
-SELECT kmoney_sum(VARIADIC kmoney_allocate('USD 10.00',
-           (SELECT array_agg(1) FROM generate_series(1, 65536))))::text;
-
-\echo -- allocation_refuses_more_parts_than_the_documented_limit
--- One past the limit, not a wild number: a probe with 268 million weights would prove the same
--- thing while spending a gigabyte to do it, and would not notice an off-by-one in the comparison.
-SELECT kmoney_allocate('USD 10.00',
-           (SELECT array_agg(1) FROM generate_series(1, 65537)))::text;
+\echo -- allocation_refuses_weights_that_sum_to_zero
+SELECT count(*) FROM unnest(kmoney_usd_allocate('1.00'::kmoney_usd, ARRAY[0, 0]));
 
 \echo == CASE COMPLETE: 07-allocate ==

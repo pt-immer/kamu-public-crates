@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# `kmoney` on a three-node YugabyteDB cluster with RF=3 and moving tablets.
+# The kmoney extension on a three-node YugabyteDB cluster with RF=3 and moving tablets.
 #
 #   kamu-money-pg/yb/run-yb-cluster.sh [yb-image] [artifact-dir]
 #
@@ -7,12 +7,13 @@
 #
 #   * the .so must exist on EVERY node at the same version, and a node that lacks it must fail
 #     loudly rather than diverge quietly;
-#   * CREATE EXTENSION is DDL issued on ONE node that has to reach all of them;
+#   * CREATE EXTENSION is DDL issued on ONE node that has to reach all of them -- including all
+#     178 per-currency type families;
 #   * a value written through node 0 is read back through node 2, having crossed the network in
 #     DocDB's encoding rather than PostgreSQL's;
-#   * tablets split and move between nodes while `kmoney` values sit in columns.
+#   * tablets split and move between nodes while money values sit in columns.
 #
-# Each probe asserts a value: pinned `kmoney_hash` results, the exact 18-byte payload, or the exact
+# Each probe asserts a value: pinned hash results, the exact 16-byte payload, or the exact
 # text form.
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
@@ -50,23 +51,23 @@ yb_sql 0 -c 'CREATE EXTENSION kmoney' >/dev/null
 ok "CREATE EXTENSION kmoney issued on ${YB_NODES[0]}"
 
 for i in $(seq 0 $((N - 1))); do
-    got="$(yb_sql "$i" -c "SELECT 'USD 10.50'::kmoney::text" | tr -d ' ')"
-    if [ "$got" = "USD10.50" ]; then
-        ok "node $i parses and renders kmoney"
+    got="$(yb_sql "$i" -c "SELECT 'USD 10.50'::kmoney_usd::text" | tr -d ' ')"
+    if [ "$got" = "10.50" ]; then
+        ok "node $i parses the tagged form and renders bare"
     else
-        bad "node $i returned '$got' for 'USD 10.50'::kmoney::text"
+        bad "node $i returned '$got' for 'USD 10.50'::kmoney_usd::text"
     fi
 done
 
 echo
-echo "=== 2. the pinned kmoney_hash values, from EVERY node ==="
+echo "=== 2. the pinned hash values, from EVERY node ==="
 # The sharpest ABI signal available, asked of each node separately. Identical values across nodes
 # is not the same claim as identical values across engines: it says every node loaded the same
-# library and reads the 18-byte payload at the same offsets. A single node with a stale .so shows
+# library and reads the 16-byte payload at the same offsets. A single node with a stale .so shows
 # up here and nowhere else.
 PINNED="702888007|-1388235877|-129968833|1671845669"
 for i in $(seq 0 $((N - 1))); do
-    got="$(yb_sql "$i" -c "SELECT kmoney_hash('USD 0.00'::kmoney) || '|' || kmoney_hash('USD 1.00'::kmoney) || '|' || kmoney_hash('IDR 1.00'::kmoney) || '|' || kmoney_hash('USD -1.00'::kmoney)" | tr -d ' ')"
+    got="$(yb_sql "$i" -c "SELECT kmoney_usd_hash('0.00'::kmoney_usd) || '|' || kmoney_usd_hash('1.00'::kmoney_usd) || '|' || kmoney_idr_hash('1.00'::kmoney_idr) || '|' || kmoney_usd_hash('-1.00'::kmoney_usd)" | tr -d ' ')"
     if [ "$got" = "$PINNED" ]; then
         ok "node $i: $got"
     else
@@ -76,8 +77,8 @@ done
 
 echo
 echo "=== 3. the whole case suite, from EVERY node ==="
-# Not a smoke test from one node and a shrug at the rest: all 54 ported assertions, run through
-# each node in turn, against the one hand-authored golden set that the stock-PG15 reference is
+# Not a smoke test from one node and a shrug at the rest: every ported assertion, run through
+# each node in turn, against the one blessed golden set that the stock-PG15 reference is
 # also checked against.
 for i in $(seq 0 $((N - 1))); do
     if ./kamu-money-pg/tests/pg_regress/run-suite.sh \
@@ -96,12 +97,12 @@ echo
 echo "=== 4. written on one node, read back byte-identically on the others ==="
 # A REPLICATED table, pre-split across tablets so the rows are genuinely distributed rather than
 # all sitting on the node that wrote them.
-yb_sql 0 -c "CREATE TABLE cross_node (id int PRIMARY KEY, amount kmoney('IDR')) SPLIT INTO 6 TABLETS" >/dev/null
+yb_sql 0 -c "CREATE TABLE cross_node (id int PRIMARY KEY, amount kmoney_idr) SPLIT INTO 6 TABLETS" >/dev/null
 yb_sql 0 -c "INSERT INTO cross_node
-             SELECT g, ('IDR ' || g || '.0' || (g % 10))::kmoney FROM generate_series(1, 200) g" >/dev/null
+             SELECT g, ('IDR ' || g || '.0' || (g % 10))::kmoney_idr FROM generate_series(1, 200) g" >/dev/null
 # The whole table as ONE string: the ordered text of every row, plus a hash fold over all of them.
 # Comparing a count or a sum would survive a single corrupted payload; this cannot.
-FINGERPRINT_SQL="SELECT md5(string_agg(amount::text, ',' ORDER BY id)) || '/' || sum(kmoney_hash(amount))::text || '/' || count(*)::text FROM cross_node"
+FINGERPRINT_SQL="SELECT md5(string_agg(amount::text, ',' ORDER BY id)) || '/' || sum(kmoney_idr_hash(amount))::text || '/' || count(*)::text FROM cross_node"
 ref="$(yb_sql 0 -c "$FINGERPRINT_SQL" | tr -d ' ')"
 ok "node 0 fingerprint $ref"
 for i in $(seq 1 $((N - 1))); do
@@ -113,15 +114,15 @@ for i in $(seq 1 $((N - 1))); do
     fi
 done
 
-# And the raw wire form, not just the text rendering: 18 bytes, the same 18 bytes, everywhere.
-WIRE_SQL="SELECT encode(kmoney_send(amount), 'hex') FROM cross_node WHERE id = 42"
+# And the raw wire form, not just the text rendering: 16 bytes, the same 16 bytes, everywhere.
+WIRE_SQL="SELECT encode(kmoney_idr_send(amount), 'hex') FROM cross_node WHERE id = 42"
 wref="$(yb_sql 0 -c "$WIRE_SQL" | tr -d ' ')"
 for i in $(seq 1 $((N - 1))); do
     got="$(yb_sql "$i" -c "$WIRE_SQL" | tr -d ' ')"
-    if [ "$got" = "$wref" ] && [ "${#wref}" -eq 36 ]; then
-        ok "node $i sends the identical 18-byte payload ($wref)"
+    if [ "$got" = "$wref" ] && [ "${#wref}" -eq 32 ]; then
+        ok "node $i sends the identical 16-byte payload ($wref)"
     else
-        bad "node $i payload $got != node 0 $wref (or not 18 bytes)"
+        bad "node $i payload $got != node 0 $wref (or not 16 bytes)"
     fi
 done
 
@@ -184,12 +185,12 @@ set +e
 # bytes -- so they must be the bytes ysqlsh produced, in that order.
 out="$(docker exec -i "${YB_NODES[2]}" bash -c \
         'exec bin/ysqlsh -h "$1" -U yugabyte -X -q -t -A -c "$2" 2>&1' \
-        ysqlsh "${YB_HOSTS[2]}" "SELECT 'USD 1.00'::kmoney::text")"
+        ysqlsh "${YB_HOSTS[2]}" "SELECT 'USD 1.00'::kmoney_usd::text")"
 set -e
 if printf '%s' "$out" | grep -qiE 'could not (access|open|load) file|No such file'; then
     ok "node 2 without kmoney.so refuses clearly: $(printf '%s' "$out" | head -1)"
-elif printf '%s' "$out" | grep -q 'USD 1.00'; then
-    bad "node 2 answered 'USD 1.00' with NO kmoney.so present -- either the removal did not take, or a stale backend served it, and every probe above is suspect"
+elif printf '%s' "$out" | grep -q '^1\.00$'; then
+    bad "node 2 answered '1.00' with NO kmoney.so present -- either the removal did not take, or a stale backend served it, and every probe above is suspect"
 else
     bad "node 2 failed, but not with a recognisable missing-library error: $(printf '%s' "$out" | head -2 | tr '\n' ' ')"
 fi
@@ -199,7 +200,7 @@ yb_restore_extension_on "${YB_NODES[2]}" "${YB_NODES[0]}"
 
 echo
 if [ "$fail" -eq 0 ]; then
-    echo "run-yb-cluster: OK -- kmoney behaves identically on every node of a ${N}-node RF=3 cluster,"
+    echo "run-yb-cluster: OK -- the money types behave identically on every node of a ${N}-node RF=3 cluster,"
     echo "                across a tablet split, and a node without the library fails loudly."
 else
     echo "run-yb-cluster: FAILED -- $fail probe(s)" >&2

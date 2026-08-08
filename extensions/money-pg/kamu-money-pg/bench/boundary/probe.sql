@@ -15,7 +15,7 @@
 
 SET max_parallel_workers_per_gather = 0;
 
-CREATE EXTENSION IF NOT EXISTS kmoney;
+CREATE EXTENSION IF NOT EXISTS kmoney_usd;
 
 -- The C control, compiled against THIS server's headers -- by in-container.sh on stock
 -- PostgreSQL, by the `boundary-build` Dockerfile stage on YugabyteDB. The path differs between
@@ -70,16 +70,16 @@ DECLARE
   floor_q text := format('SELECT count(*) FROM generate_series(1,%s) g WHERE g > 0', n);
   -- ONLY THE `bigint` PAIR, AND THE MISSING ROWS ARE THE POINT.
   --
-  -- Constant `kmoney` arguments would let PostgreSQL fold these immutable calls at plan time.
+  -- Constant `kmoney_usd` arguments would let PostgreSQL fold these immutable calls at plan time.
   --
   -- The two forms are a vice. An argument that varies with `g` has to be BUILT from `g`, and
   -- building an 18-byte currency-tagged value costs hundreds of nanoseconds -- swamping the few
   -- this probe exists to resolve. An argument that does not vary gets folded away. There is no
-  -- third option without a per-row source of `kmoney` values, which means a table, which puts
+  -- third option without a per-row source of `kmoney_usd` values, which means a table, which puts
   -- DocDB back in the path on YugabyteDB and reintroduces the variance the no-table design
   -- exists to escape.
   --
-  -- So the typed rows are NOT measured here. `sql-cost.sql` prices `kmoney_hash` over a real
+  -- So the typed rows are NOT measured here. `sql-cost.sql` prices `kmoney_usd_hash` over a real
   -- table, where a scan is the point rather than the obstacle; this file answers the narrower
   -- question the "why pgrx" argument actually rests on -- what does CROSSING cost -- and
   -- `bigint` answers it exactly, because both sides have identical signatures.

@@ -817,7 +817,7 @@ dependencies = [
 
 [[package]]
 name = "kamu-money-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "ethnum",
  "proc-macro2",
@@ -828,7 +828,7 @@ dependencies = [
 
 [[package]]
 name = "kamu-money-pg"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "kamu-money-core",
  "pgrx",

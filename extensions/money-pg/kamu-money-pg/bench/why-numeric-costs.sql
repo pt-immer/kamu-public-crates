@@ -1,12 +1,12 @@
--- WHY does `numeric` cost so much more than `kmoney` on YugabyteDB? NEVER a gate.
+-- WHY does `numeric` cost so much more than `kmoney_usd` on YugabyteDB? NEVER a gate.
 --
 -- Run through kamu-money-pg/bench/run-bench-sql-yb.sh (`just bench-why-yb`).
 --
 -- Distinguish two explanations for numeric cost. `bytea` is variable-length like `numeric` and
--- opaque like `kmoney`, so the predictions differ:
+-- opaque like `kmoney_usd`, so the predictions differ:
 --
---     varlena-vs-fixed  =>  bytea ~ numeric  >>  kmoney
---     numeric-specific  =>  bytea ~ kmoney   <<  numeric
+--     varlena-vs-fixed  =>  bytea ~ numeric  >>  kmoney_usd
+--     numeric-specific  =>  bytea ~ kmoney_usd   <<  numeric
 --
 -- The fixture establishes ordering and noise from each retained run. DocDB decimal translation
 -- remains an inference; this file measures numeric-specific cost, not DocDB internals.
@@ -25,9 +25,9 @@
 \echo '=== rows:' :rows ' passes:' :passes ' ==='
 
 SET max_parallel_workers_per_gather = 0;
-CREATE EXTENSION IF NOT EXISTS kmoney;
+CREATE EXTENSION IF NOT EXISTS kmoney_usd;
 
--- The SAME value in five representations. `b` is `kmoney_send` output, so it is the identical
+-- The SAME value in five representations. `b` is `kmoney_usd_send` output, so it is the identical
 -- 18 bytes as `m` -- the only difference between those two columns is that one is declared
 -- variable-length and the other fixed.
 -- IDEMPOTENT, like sql-cost.sql. A fixture that only runs once against a given database fails
@@ -36,9 +36,9 @@ CREATE EXTENSION IF NOT EXISTS kmoney;
 DROP TABLE IF EXISTS w;
 CREATE TABLE w AS
 SELECT g AS id,
-       ('USD ' || amt)::kmoney   AS m,
+       ('USD ' || amt)::kmoney_usd   AS m,
        amt::numeric(36,18)       AS n,
-       kmoney_send(('USD ' || amt)::kmoney) AS b,
+       kmoney_usd_send(('USD ' || amt)::kmoney_usd) AS b,
        amt                       AS t
 FROM (SELECT g, (g % 100000)::text || '.' || lpad((g % 97)::text, 2, '0') AS amt
       FROM generate_series(1, :rows) g) src;
@@ -124,7 +124,7 @@ DECLARE
   fq text := 'SELECT count(*) FROM w WHERE id > 0';
   labels text[] := ARRAY[
     'bigint  i = i (fixed 8B)',
-    'kmoney  m = m (fixed 18B, opaque to YB)',
+    'kmoney_usd  m = m (fixed 18B, opaque to YB)',
     'bytea   b = b (VARLENA, opaque to YB)',
     'text    t = t (VARLENA, YB-native)',
     'numeric n = n (VARLENA, YB-native Decimal)'];
@@ -182,7 +182,7 @@ END $$;
 \echo
 \echo '=== THE DISCRIMINATOR: bytea and numeric are BOTH varlenas. ==='
 \echo '=== If they land together, variable length is the cost.      ==='
-\echo '=== If bytea lands with kmoney, the cost is numeric-specific.==='
+\echo '=== If bytea lands with kmoney_usd, the cost is numeric-specific.==='
 SELECT op,
        round((percentile_cont(0.5) WITHIN GROUP (ORDER BY ms-(fb+fa)/2))::numeric*1000000/:rows,1) AS ns_per_row,
        round((percentile_cont(0.5) WITHIN GROUP (ORDER BY abs(fa-fb)))::numeric*1000000/:rows,1)   AS noise_ns_per_row,

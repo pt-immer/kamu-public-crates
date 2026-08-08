@@ -1,6 +1,8 @@
 -- the_persisted_hash_values_are_pinned_not_merely_consistent
-h_usd_0=702888007 h_usd_1=-1388235877 h_idr_1=-129968833 h_usd_neg1=1671845669
-native_equals_mixed=true
--- neither_type_has_an_operator_class
-kmoney_opclasses=0 mixed_opclasses=0
+702888007
+-1388235877
+-129968833
+1671845669
+-- a_pinned_value_hashes_as_the_erased_one_does
+pinned_hash=mixed_hash=true
 == CASE COMPLETE: 10-hash ==

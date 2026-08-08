@@ -62,8 +62,8 @@ echo "kmoney present ($YB_INSTALL_MODE, sha256 $YB_INSTALL_SHA); running the cas
 # run-suite.sh appends client flags.
 #
 # --server-exec is how 09-wire's crafted BINARY COPY payloads get onto the SERVER's filesystem:
-# kmoney_recv takes `internal`, so COPY (FORMAT BINARY) from a file is the only in-database route
-# to it, and SQL cannot write arbitrary bytes to a file.
+# the recv functions take `internal`, so COPY (FORMAT BINARY) from a file is the only in-database
+# route to them, and SQL cannot write arbitrary bytes to a file.
 mkdir -p "$ART"
 CLIENT_WRAPPER="$ART/client-$RUN_ID.sh"
 cat > "$CLIENT_WRAPPER" <<EOF

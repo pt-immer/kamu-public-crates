@@ -1,4 +1,4 @@
-//! Native `kmoney` columns through the Rust drivers.
+//! Native per-currency columns through the Rust drivers.
 //!
 //! The adapters do not negotiate a text representation for the native OID. They
 //! delegate `accepts`/`compatible` to `&str`, so they reject by **OID before any parsing**. The
@@ -6,16 +6,16 @@
 //!
 //! ```sql
 //! SELECT amount::text FROM ledger;   -- decodes into Money<C>
-//! SELECT amount        FROM ledger;  -- type error: kmoney is not text-family
+//! SELECT amount        FROM ledger;  -- type error: kmoney_usd is not text-family
 //! ```
 //!
-//! The suite covers reads, bound writes, SQL arithmetic, and typmod currency refusal.
+//! The suite covers reads, bound writes, SQL arithmetic, and per-currency type refusal.
 //!
 //! # Why this one is env-gated instead of using `testcontainers`
 //!
 //! Every other driver test owns its container as a value, so `Drop` tears it down through a
 //! panic or a `Ctrl-C`. That is the better pattern and it is kept everywhere it can be. It
-//! cannot be used here: this test needs a PostgreSQL with `kmoney` *installed*, which means
+//! cannot be used here: this test needs a PostgreSQL with the extension *installed*, which means
 //! the pgrx build image, and running the test inside that image would mean nesting a Docker
 //! daemon to spawn a sibling container.
 //!
@@ -35,7 +35,7 @@ use kamu_money_core::iso::{IDR, USD};
 // decodes separately, so that "rejected by OID" cannot be confused with a failed query.
 use sqlx::Row;
 
-/// The URL of a PostgreSQL that already has `kmoney` available to `CREATE EXTENSION`.
+/// The URL of a PostgreSQL that already has the extension available to `CREATE EXTENSION`.
 const URL_VAR: &str = "MONEY_PG_NATIVE_URL";
 
 fn native_url() -> Option<String> {
@@ -48,7 +48,7 @@ fn native_url() -> Option<String> {
     }
 }
 
-/// `CREATE EXTENSION` + a genuinely native column: `kmoney('USD')`, not `text`.
+/// `CREATE EXTENSION` + a genuinely native column: `kmoney_usd`, not `text`.
 ///
 // Setup is spelled out per driver, as `'static` statements, for two reasons that are both
 // enforced by the compiler rather than by discipline:
@@ -63,14 +63,14 @@ fn native_url() -> Option<String> {
 const SETUP_PT: [&str; 4] = [
     "CREATE EXTENSION IF NOT EXISTS kmoney",
     "DROP TABLE IF EXISTS native_pt",
-    "CREATE TABLE native_pt (id int primary key, amount kmoney('USD'))",
+    "CREATE TABLE native_pt (id int primary key, amount kmoney_usd)",
     "INSERT INTO native_pt VALUES (1, 'USD 10.50'), (2, 'USD -0.000000000000000001')",
 ];
 
 const SETUP_SQLX: [&str; 4] = [
     "CREATE EXTENSION IF NOT EXISTS kmoney",
     "DROP TABLE IF EXISTS native_sqlx",
-    "CREATE TABLE native_sqlx (id int primary key, amount kmoney('USD'))",
+    "CREATE TABLE native_sqlx (id int primary key, amount kmoney_usd)",
     "INSERT INTO native_sqlx VALUES (1, 'USD 10.50'), (2, 'USD -0.000000000000000001')",
 ];
 
@@ -79,13 +79,13 @@ const SETUP_SQLX: [&str; 4] = [
 const SETUP_PT_WRITE: [&str; 3] = [
     "CREATE EXTENSION IF NOT EXISTS kmoney",
     "DROP TABLE IF EXISTS write_pt",
-    "CREATE TABLE write_pt (id int primary key, amount kmoney('USD'))",
+    "CREATE TABLE write_pt (id int primary key, amount kmoney_usd)",
 ];
 
 const SETUP_SQLX_WRITE: [&str; 3] = [
     "CREATE EXTENSION IF NOT EXISTS kmoney",
     "DROP TABLE IF EXISTS write_sqlx",
-    "CREATE TABLE write_sqlx (id int primary key, amount kmoney('USD'))",
+    "CREATE TABLE write_sqlx (id int primary key, amount kmoney_usd)",
 ];
 
 /// The values a write has to survive, as `(id, amount)`.
@@ -112,7 +112,7 @@ fn postgres_types_reads_a_native_column_through_an_explicit_cast() {
         client.batch_execute(stmt).expect("extension installs and the native table is created");
     }
 
-    // Confirm the column really is `kmoney`, so a silent fallback to `text` cannot make this
+    // Confirm the column really is `kmoney_usd`, so a silent fallback to `text` cannot make this
     // test pass for the wrong reason.
     let typname: String = client
         .query_one(
@@ -122,7 +122,7 @@ fn postgres_types_reads_a_native_column_through_an_explicit_cast() {
         )
         .expect("catalog query")
         .get(0);
-    assert_eq!(typname, "kmoney('USD')", "the column must be native kmoney");
+    assert_eq!(typname, "kmoney_usd", "the column must be the native per-currency type");
 
     let row =
         client.query_one("SELECT amount::text FROM native_pt WHERE id = 1", &[]).expect("cast query runs");
@@ -146,7 +146,7 @@ fn postgres_types_reads_a_native_column_through_an_explicit_cast() {
     let direct: Result<Money<USD>, _> = row.try_get(0);
     assert!(
         direct.is_err(),
-        "a bare native kmoney column must NOT decode: the adapters accept text-family OIDs only, \
+        "a bare native column must NOT decode: the adapters accept text-family OIDs only, \
          so `SELECT amount::text` is required. If this succeeds, document and test the new \
          native codec."
     );
@@ -180,17 +180,17 @@ async fn sqlx_reads_a_native_column_through_an_explicit_cast() {
     assert!(
         direct.is_err(),
         "sqlx must refuse the bare native column too — the two adapters have to agree about \
-         which columns are money, and neither accepts the kmoney OID"
+         which columns are money, and neither accepts the native OID"
     );
 }
 
 // The adapters accept text-family OIDs, so the parameter travels as text and the server casts:
 //
-//     INSERT INTO ledger (amount) VALUES (($1::text)::kmoney);
-//     UPDATE ledger SET amount = amount + (($1::text)::kmoney) WHERE id = $2;
+//     INSERT INTO ledger (amount) VALUES (($1::text)::kmoney_usd);
+//     UPDATE ledger SET amount = amount + (($1::text)::kmoney_usd) WHERE id = $2;
 //
-// `$1::text` selects a supported parameter OID; `::kmoney` runs the extension parser, and the
-// column typmod checks the currency. No native-OID binary client codec is provided.
+// `$1::text` selects a supported parameter OID; `::kmoney_usd` runs the extension parser, which
+// refuses a foreign currency tag. No native-OID binary client codec is provided.
 
 /// `postgres-types`: bind, cast, update with SQL arithmetic, read back, and be refused on a
 /// currency the column does not accept.
@@ -205,7 +205,7 @@ fn postgres_types_writes_a_native_column_through_a_bound_parameter() {
     // WRITE: every value bound as a parameter, never as a literal.
     for (id, amount) in write_cases() {
         client
-            .execute("INSERT INTO write_pt (id, amount) VALUES ($1, ($2::text)::kmoney)", &[&id, &amount])
+            .execute("INSERT INTO write_pt (id, amount) VALUES ($1, ($2::text)::kmoney_usd)", &[&id, &amount])
             .expect("the canonical write shape must work");
     }
 
@@ -228,14 +228,17 @@ fn postgres_types_writes_a_native_column_through_a_bound_parameter() {
         )
         .expect("catalog query")
         .get(0);
-    assert_eq!(typname, "kmoney('USD')");
+    assert_eq!(typname, "kmoney_usd");
 
     // UPDATE with SQL-side arithmetic on a bound parameter. `+` here is the extension's
     // operator over the shared Rust kernel, not a client-side add — which is the reason the
     // native type exists at all.
     let ten = Money::<USD>::try_from_major(10).unwrap();
     client
-        .execute("UPDATE write_pt SET amount = amount + (($1::text)::kmoney) WHERE id = $2", &[&ten, &2i32])
+        .execute(
+            "UPDATE write_pt SET amount = amount + (($1::text)::kmoney_usd) WHERE id = $2",
+            &[&ten, &2i32],
+        )
         .expect("the canonical update shape must work");
     let row =
         client.query_one("SELECT amount::text FROM write_pt WHERE id = 2", &[]).expect("cast query runs");
@@ -246,11 +249,11 @@ fn postgres_types_writes_a_native_column_through_a_bound_parameter() {
         "the database added a bound parameter to a stored value and kept the unit"
     );
 
-    // NEGATIVE: the typmod refuses a foreign currency, and the DATABASE is what refuses it.
+    // NEGATIVE: the pinned type refuses a foreign currency, and the DATABASE is what refuses it.
     let idr = Money::<IDR>::try_from_major(1).unwrap();
     let refused =
-        client.execute("INSERT INTO write_pt (id, amount) VALUES (99, ($1::text)::kmoney)", &[&idr]);
-    let err = refused.expect_err("a Money<IDR> must not reach a kmoney('USD') column");
+        client.execute("INSERT INTO write_pt (id, amount) VALUES (99, ($1::text)::kmoney_usd)", &[&idr]);
+    let err = refused.expect_err("a Money<IDR> must not reach a kmoney_usd column");
     // Through the STRUCTURED error, not `Display`. `postgres::Error` renders as the string
     // "db error" and nothing else, so asserting on `to_string()` would have passed for any
     // failure at all — including a typo in the SQL above. Measured: it did, and this assertion
@@ -261,7 +264,7 @@ fn postgres_types_writes_a_native_column_through_a_bound_parameter() {
         .message()
         .to_owned();
     assert!(
-        message.contains("kmoney") && message.contains("USD"),
+        message.contains("expected USD, got IDR"),
         "the refusal must name the column's declared currency, got: {message}"
     );
 }
@@ -276,7 +279,7 @@ async fn sqlx_writes_a_native_column_through_a_bound_parameter() {
     }
 
     for (id, amount) in write_cases() {
-        sqlx::query("INSERT INTO write_sqlx (id, amount) VALUES ($1, ($2::text)::kmoney)")
+        sqlx::query("INSERT INTO write_sqlx (id, amount) VALUES ($1, ($2::text)::kmoney_usd)")
             .bind(id)
             .bind(amount)
             .execute(&pool)
@@ -294,7 +297,7 @@ async fn sqlx_writes_a_native_column_through_a_bound_parameter() {
     }
 
     let ten = Money::<USD>::try_from_major(10).unwrap();
-    sqlx::query("UPDATE write_sqlx SET amount = amount + (($1::text)::kmoney) WHERE id = $2")
+    sqlx::query("UPDATE write_sqlx SET amount = amount + (($1::text)::kmoney_usd) WHERE id = $2")
         .bind(ten)
         .bind(2i32)
         .execute(&pool)
@@ -306,14 +309,14 @@ async fn sqlx_writes_a_native_column_through_a_bound_parameter() {
         .expect("cast query decodes");
     assert_eq!(got, ten + Money::<USD>::try_from_units(1).unwrap());
 
-    // NEGATIVE, matching the sync driver: the typmod is the database's rule, so both drivers
+    // NEGATIVE, matching the sync driver: the pinned type is the database's rule, so both drivers
     // must hit it identically. A contract only one driver enforces is not a contract.
     let idr = Money::<IDR>::try_from_major(1).unwrap();
-    let refused = sqlx::query("INSERT INTO write_sqlx (id, amount) VALUES (99, ($1::text)::kmoney)")
+    let refused = sqlx::query("INSERT INTO write_sqlx (id, amount) VALUES (99, ($1::text)::kmoney_usd)")
         .bind(idr)
         .execute(&pool)
         .await;
-    let err = refused.expect_err("a Money<IDR> must not reach a kmoney('USD') column");
+    let err = refused.expect_err("a Money<IDR> must not reach a kmoney_usd column");
     // Structured here too, so the two drivers are asserted against the SAME server message
     // rather than against whatever each one's `Display` happens to include — the sync driver's
     // is "db error", and a test that accepted it proved nothing.
@@ -323,7 +326,7 @@ async fn sqlx_writes_a_native_column_through_a_bound_parameter() {
         .message()
         .to_owned();
     assert!(
-        message.contains("kmoney") && message.contains("USD"),
+        message.contains("expected USD, got IDR"),
         "the refusal must name the column's declared currency, got: {message}"
     );
 }

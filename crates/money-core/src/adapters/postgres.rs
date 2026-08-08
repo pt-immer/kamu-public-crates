@@ -11,7 +11,7 @@
 //! # One codec, four consumers
 //!
 //! Both Rust drivers encode through [`Display`](core::fmt::Display) and decode through
-//! [`FromStr`](core::str::FromStr). Serde and `kmoney` share the same parser and renderer.
+//! [`FromStr`](core::str::FromStr). Serde and `kamu-money-pg` share the same parser and renderer.
 //!
 //! ```no_run
 //! # use kamu_money_core::{Money, iso::USD};
@@ -26,29 +26,32 @@
 //! # Ok(()) }
 //! ```
 //!
-//! # The native `kmoney` column: one canonical projection, both directions
+//! # The native per-currency column: one canonical projection, both directions
 //!
 //! With `kamu-money-pg`, cast explicitly at the query boundary. These adapters accept
-//! text-family OIDs and reject the native `kmoney` OID before parsing.
+//! text-family OIDs and reject the native OIDs before parsing.
 //!
-//! Read `amount::text`; write `($1::text)::kmoney`. That is the whole contract:
+//! Read `amount::text`; write `($1::text)::kmoney_usd`. The read comes back **bare**
+//! (`10.50`) because the column's type carries the currency; the adapter accepts it
+//! because `Money<USD>` carries the same fact statically. A *tagged* read -- from a
+//! `kmoney_mixed` projection or portable text storage -- stays accepted and checked.
 //!
 //! ```no_run
 //! # use kamu_money_core::{Money, iso::USD};
 //! # fn f(client: &mut postgres::Client) -> Result<(), Box<dyn std::error::Error>> {
-//! // `kmoney('USD')` pins the column to one currency; the typmod coercion enforces it, so a
+//! // `kmoney_usd` IS the currency; there is no cross-currency operator to reach, so a
 //! // bound `Money<IDR>` is refused by the DATABASE rather than by a convention.
-//! client.execute("CREATE TABLE ledger_native (id int primary key, amount kmoney('USD'))", &[])?;
+//! client.execute("CREATE TABLE ledger_native (id int primary key, amount kmoney_usd)", &[])?;
 //!
 //! let paid = Money::<USD>::try_from_major(10).unwrap();
 //! client.execute(
-//!     "INSERT INTO ledger_native (id, amount) VALUES ($1, ($2::text)::kmoney)",
+//!     "INSERT INTO ledger_native (id, amount) VALUES ($1, ($2::text)::kmoney_usd)",
 //!     &[&1i32, &paid],
 //! )?;
 //!
 //! // Arithmetic happens in the database, over the same Rust kernel the client uses.
 //! client.execute(
-//!     "UPDATE ledger_native SET amount = amount + (($1::text)::kmoney) WHERE id = $2",
+//!     "UPDATE ledger_native SET amount = amount + (($1::text)::kmoney_usd) WHERE id = $2",
 //!     &[&paid, &1i32],
 //! )?;
 //!
@@ -61,7 +64,7 @@
 //! A view or named projection can centralize repeated casts. `just test-pg-driver` exercises
 //! both directions through both drivers against a live extension.
 
-use super::codec::{decode, encode};
+use super::codec::{decode, decode_money, encode};
 use crate::{Money, Rate, StaticCurrency};
 use bytes::BytesMut;
 use postgres_types::{FromSql, IsNull, ToSql, Type, to_sql_checked};
@@ -69,13 +72,13 @@ use std::error::Error;
 
 /// The column types these adapters will read and write: **exactly** what `&str` accepts.
 ///
-/// # Reading a native `kmoney` column requires an explicit cast
+/// # Reading a native column requires an explicit cast
 ///
-/// This rejects by OID before parsing, so a native `kmoney` column requires an explicit cast:
+/// This rejects by OID before parsing, so a native per-currency column requires an explicit cast:
 ///
 /// ```sql
 /// SELECT amount::text FROM ledger;   -- decodes into Money<C>
-/// SELECT amount        FROM ledger;  -- ERROR: the kmoney OID is not text-family
+/// SELECT amount        FROM ledger;  -- ERROR: the kmoney_usd OID is not text-family
 /// ```
 ///
 /// The server-side cast changes the OID; the client does not negotiate a native text format.
@@ -105,7 +108,7 @@ impl<C: StaticCurrency> ToSql for Money<C> {
 impl<'a, C: StaticCurrency> FromSql<'a> for Money<C> {
     fn from_sql(ty: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn Error + Sync + Send>> {
         let text = <&str as FromSql>::from_sql(ty, raw)?;
-        Ok(decode(text)?)
+        Ok(decode_money(text)?)
     }
 
     fn accepts(ty: &Type) -> bool {

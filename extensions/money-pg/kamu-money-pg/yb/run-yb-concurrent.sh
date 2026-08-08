@@ -52,21 +52,20 @@ mkdir -p "$WORKDIR"
 
 echo
 echo "=== setup: $ACCOUNTS accounts, seeded $SEED_EACH each ==="
-# The column is typmod-pinned. A wallet's amount column is pinned to one currency in real schemas,
+# The column is TYPE-pinned. A wallet's amount column is pinned to one currency in real schemas,
 # and pinning it here means a cross-currency write would be refused by the column rather than
 # quietly accepted and only noticed by the conservation check at the end.
-yb_sql 0 -c "CREATE TABLE account (id int PRIMARY KEY, balance kmoney('IDR')) SPLIT INTO 6 TABLETS" >/dev/null
-yb_sql 0 -c "INSERT INTO account SELECT g, '$SEED_EACH'::kmoney FROM generate_series(1, $ACCOUNTS) g" >/dev/null
+yb_sql 0 -c "CREATE TABLE account (id int PRIMARY KEY, balance kmoney_idr) SPLIT INTO 6 TABLETS" >/dev/null
+yb_sql 0 -c "INSERT INTO account SELECT g, '$SEED_EACH'::kmoney_idr FROM generate_series(1, $ACCOUNTS) g" >/dev/null
 # A ledger of every leg, so conservation can be checked a second, independent way: the debits and
 # credits must cancel to exactly zero regardless of what the balances say.
-yb_sql 0 -c "CREATE TABLE ledger (seq bigserial PRIMARY KEY, account_id int NOT NULL, delta kmoney('IDR') NOT NULL)" >/dev/null
+yb_sql 0 -c "CREATE TABLE ledger (seq bigserial PRIMARY KEY, account_id int NOT NULL, delta kmoney_idr NOT NULL)" >/dev/null
 
-# The ROW AGGREGATE, not `kmoney_sum(VARIADIC array_agg(...))`. This is the path an application
-# actually writes to total a ledger column, so it is the path that should be under concurrent load
-# here. The array_agg form materialises every row first.
-#
-# The ledger-leg check further down deliberately KEEPS the variadic form, so conservation is
-# cross-checked by two different entry points rather than by one function agreeing with itself.
+# The ROW AGGREGATE -- the path an application actually writes to total a
+# ledger column, so it is the path that should be under concurrent load here.
+# The ledger-leg check further down runs the same aggregate over a DIFFERENT
+# table and access path, so conservation is still cross-checked rather than one
+# query agreeing with itself. (0.2.0 has no variadic sum form to diversify with.)
 TOTAL_SQL="SELECT sum(balance)::text FROM account"
 opening="$(yb_sql 0 -c "$TOTAL_SQL" | tr -d ' ' | sed 's/IDR/IDR /')"
 ok "opening total $opening"
@@ -96,7 +95,7 @@ worker() {
         # rounding bug anywhere in the path shows up as a conservation failure.
         #
         # The negative literal is built as `IDR -0.x`, NOT `-IDR 0.x`. The sign belongs to the
-        # amount, not to the money: kmoney's input function refuses the latter, and correctly --
+        # amount, not to the money: the input function refuses the latter, and correctly --
         # a leading `-` before the ISO code is not a money literal in any dialect. Caught by this
         # harness's first real run, which is the right place for a harness bug to surface.
         frac="$(printf '%02d' $(( (i * 13 + w) % 97 + 1 )))000000000000001"
@@ -112,8 +111,8 @@ worker() {
                     'exec bin/ysqlsh -h "$1" -U yugabyte -X -q -t -A -v ON_ERROR_STOP=1 2>&1' \
                     ysqlsh "${YB_HOSTS[$node]}" <<SQL
 BEGIN;
-UPDATE account SET balance = balance - '$amt'::kmoney WHERE id = $from;
-UPDATE account SET balance = balance + '$amt'::kmoney WHERE id = $to;
+UPDATE account SET balance = balance - '$amt'::kmoney_idr WHERE id = $from;
+UPDATE account SET balance = balance + '$amt'::kmoney_idr WHERE id = $to;
 INSERT INTO ledger (account_id, delta) VALUES ($from, '$neg'), ($to, '$amt');
 COMMIT;
 SQL
@@ -181,8 +180,8 @@ fi
 
 # The independent second check. Balances could conserve while individual legs were lost; the
 # ledger's debits and credits cancelling to exactly zero says the legs themselves are all there.
-legs="$(yb_sql 0 -c "SELECT kmoney_sum(VARIADIC array_agg(delta))::text FROM ledger" | tr -d ' ' | sed 's/IDR/IDR /')"
-if [ "$legs" = "IDR 0.00" ]; then
+legs="$(yb_sql 0 -c "SELECT sum(delta)::text FROM ledger" | tr -d ' ')"
+if [ "$legs" = "0.00" ]; then
     ok "every debit has its credit: the ledger sums to $legs"
 else
     bad "the ledger legs do not cancel: $legs"
@@ -195,13 +194,13 @@ else
 fi
 
 echo
-echo "=== 3. no torn payload: every balance is still a well-formed IDR value ==="
-# A torn 18-byte write would most likely survive as a value whose currency code is wrong or whose
-# units are out of domain. Re-parsing every rendered balance through the input function catches
-# both, and pins the currency at the same time.
-torn="$(yb_sql 0 -c "SELECT count(*) FROM account WHERE balance::text::kmoney <> balance OR balance::text NOT LIKE 'IDR %'" | tr -d ' ')"
+echo "=== 3. no torn payload: every balance is still a well-formed value ==="
+# A torn 16-byte write would most likely survive as units that are out of domain
+# or simply wrong. Re-parsing every rendered balance through the input function
+# catches both; the currency cannot be wrong -- the column's type carries it.
+torn="$(yb_sql 0 -c "SELECT count(*) FROM account WHERE balance::text::kmoney_idr <> balance" | tr -d ' ')"
 if [ "$torn" = "0" ]; then
-    ok "all $ACCOUNTS balances re-parse to themselves and are IDR"
+    ok "all $ACCOUNTS balances re-parse to themselves"
 else
     bad "$torn balance(s) do not survive a text round trip"
 fi
@@ -211,7 +210,7 @@ echo "=== 4. ABORT leaves nothing behind ==="
 before="$(yb_sql 0 -c "SELECT balance::text FROM account WHERE id = 1" | tr -d ' ')"
 yb_sql 0 <<'SQL' >/dev/null
 BEGIN;
-UPDATE account SET balance = balance + 'IDR 999.00'::kmoney WHERE id = 1;
+UPDATE account SET balance = balance + 'IDR 999.00'::kmoney_idr WHERE id = 1;
 ROLLBACK;
 SQL
 after="$(yb_sql 0 -c "SELECT balance::text FROM account WHERE id = 1" | tr -d ' ')"
@@ -227,7 +226,7 @@ echo "=== 5. POSITIVE CONTROL: a forced conflict MUST produce a retryable error 
 # would report "conservation held under concurrency" while never having exercised the conflict
 # path at all. Two SERIALIZABLE sessions are made to contend on one row on purpose, and NOT
 # getting an error is the failure.
-yb_sql 0 -c "CREATE TABLE contended (id int PRIMARY KEY, balance kmoney('IDR'))" >/dev/null
+yb_sql 0 -c "CREATE TABLE contended (id int PRIMARY KEY, balance kmoney_idr)" >/dev/null
 yb_sql 0 -c "INSERT INTO contended VALUES (1, 'IDR 100.00'), (2, 'IDR 100.00')" >/dev/null
 
 # WRITE SKEW, which is the one shape that cannot be resolved by waiting.
@@ -264,7 +263,7 @@ for round in 1 2 3; do
 BEGIN ISOLATION LEVEL SERIALIZABLE;
 SELECT balance::text FROM contended WHERE id = 1;
 SELECT pg_sleep(2);
-UPDATE contended SET balance = balance + 'IDR 1.00'::kmoney WHERE id = 2;
+UPDATE contended SET balance = balance + 'IDR 1.00'::kmoney_idr WHERE id = 2;
 COMMIT;
 SQL
     ) &
@@ -275,7 +274,7 @@ SQL
 BEGIN ISOLATION LEVEL SERIALIZABLE;
 SELECT balance::text FROM contended WHERE id = 2;
 SELECT pg_sleep(2);
-UPDATE contended SET balance = balance + 'IDR 1.00'::kmoney WHERE id = 1;
+UPDATE contended SET balance = balance + 'IDR 1.00'::kmoney_idr WHERE id = 1;
 COMMIT;
 SQL
     ) &
@@ -302,8 +301,8 @@ fi
 # NO money, and an accepted one must have moved exactly its own. The two rows together must hold
 # exactly one dollar per session that did not report an error -- so a transaction that was aborted
 # after its UPDATE but before its COMMIT shows up here as a total that is too high.
-expect="IDR$((200 + applied)).00"
-cval="$(yb_sql 0 -c "SELECT kmoney_sum(VARIADIC array_agg(balance))::text FROM contended" | tr -d ' ')"
+expect="$((200 + applied)).00"
+cval="$(yb_sql 0 -c "SELECT sum(balance)::text FROM contended" | tr -d ' ')"
 if [ "$cval" = "$expect" ]; then
     ok "the contended rows total $cval -- exactly the $applied session(s) that committed, no more"
 else
