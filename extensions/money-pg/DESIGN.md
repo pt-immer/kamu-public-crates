@@ -44,11 +44,12 @@ pgrx patch needed by its `yb-pg15` feature.
 | Cargo package and directory | `kamu-money-pg` | Repository and release identity |
 | Control file and SQL extension | `kmoney` | Unquoted PostgreSQL identifier |
 | Library, shared object, `module_pathname` | `kmoney` | One SQL-side artifact name |
-| Strict SQL type | `kmoney('USD')` | Currency pinned through typmod |
+| Per-currency SQL types | `kmoney_usd` … (178, generated) | The type IS the currency; no cross-currency operator exists |
 | Heterogeneous SQL type | `kmoney_mixed` | Currency carried per value; no arithmetic |
 
 The control-file stem determines the extension name. Treat SQL type names and
-the 18-byte storage layout as migration-sensitive public interfaces.
+both storage layouts (16-byte pinned, 18-byte mixed) as migration-sensitive
+public interfaces.
 
 ## Layering
 
@@ -59,7 +60,7 @@ PostgreSQL / pgrx ABI
 src/ffi/       raw datum access, memory contexts, C-visible symbols
         |
         v
-src/safe/      payload, validation, typmod, rendering, operations
+src/safe/      payloads, validation, pinned contract, rendering
         |
         v
 kamu-money-core exact arithmetic and canonical text
@@ -69,11 +70,15 @@ All unsafe syntax is confined to `src/ffi/` and enforced by a Syn-based hygiene
 test. `src/safe/` owns semantics and accepts ordinary values or fixed byte
 arrays, not unproved raw pointers.
 
-## Payload and unsafe warranty
+## Payloads and unsafe warranty
 
-Both SQL types use the same fixed payload:
+The two families use different fixed payloads:
 
 ```text
+pinned (kmoney_<code>, 16 bytes):
+bytes  0..16   signed i128 canonical units, little-endian
+
+mixed (kmoney_mixed, 18 bytes):
 bytes  0..16   signed i128 canonical units, little-endian
 bytes 16..18   ISO 4217 numeric code, little-endian
 ```
@@ -82,17 +87,17 @@ The Rust payload is byte-backed and has alignment 1. It does not create an
 `&i128` from PostgreSQL memory, whose alignment is weaker than Rust requires for
 `i128`.
 
-Before semantic use, one validator checks:
+Before semantic use, each family's validator checks:
 
 - exact payload width;
-- assigned ISO numeric code;
-- expected typmod currency where one exists;
-- canonical money domain.
+- the canonical money domain;
+- for the mixed payload only, an assigned ISO numeric code. A pinned payload
+  stores no code, so there is nothing else that could be wrong with it.
 
 The ABI warranty is intentionally narrow:
 
-- catalog entries for both SQL types report `typlen = 18`, pass-by-reference,
-  byte alignment, and plain storage;
+- catalog entries report each type's own fixed `typlen` (16 pinned, 18 mixed),
+  pass-by-reference, byte alignment, and plain storage;
 - pgrx calls the conversion traits only for their registered OIDs;
 - non-null scalar and array datums expose the registered fixed width;
 - FFI allocation uses the active PostgreSQL memory context;
@@ -105,21 +110,72 @@ Miri cannot model.
 
 ## SQL semantics
 
-- `kmoney('USD')` checks its currency at input/coercion and again in each
-  operation, because PostgreSQL does not pass typmod to operators.
-- `kmoney_mixed` supports equality and checked conversion to a named currency.
-  It has no ordering, arithmetic, or `sum`, so unsupported computation fails at
-  planning rather than after reading rows.
-- `sum(kmoney)` uses a 256-bit transition state and checks the money domain only
-  when finalizing. Partial aggregation therefore remains order-independent.
+- A pinned type checks no currency anywhere: `kmoney_usd + kmoney_idr` has no
+  operator to resolve and fails while the query is parsed. Input accepts the
+  bare amount and the tagged form, refusing a tag that names another currency;
+  output is bare, because the column's type carries the currency.
+- `kmoney_mixed` supports equality only. It has no ordering, arithmetic, or
+  `sum`, so unsupported computation fails at planning rather than after reading
+  rows. Conversion to a pinned type goes through text, whose input check proves
+  the tag.
+- Each `sum(kmoney_<code>)` uses a 256-bit transition state and checks the money
+  domain only when finalizing. Partial aggregation therefore remains
+  order-independent.
 - Division returns quotient and residue together.
 - Allocation borrows the pgrx array, checks its length before iterating, and
   caps the number of parts before materializing weights.
 - Text input/output, arithmetic, allocation, and stable hashing delegate to
   `kamu-money-core`.
-- Binary send/receive use exactly the validated 18-byte payload.
+- Binary send uses each type's validated payload. Binary receive exists on
+  BOTH families: one shared raw symbol serves every pinned declaration — the
+  payload is currency-less, so the `RETURNS` clause of each generated
+  `CREATE FUNCTION` is what types the result — and every recv validates
+  exactly as its type's text input does. Without RECEIVE, a binary `COPY`
+  dump would be write-only and a `binary = true` logical-replication
+  subscription could never complete its initial sync, and PostgreSQL offers
+  no `ALTER TYPE ... RECEIVE` to add it later.
+- Every refusal carries its SQLSTATE: `22P02` for refused text (including a
+  wrong tag), `22003` for a magnitude outside the domain, `22P03` for bytes
+  that denote no value (including a forged aggregate state), `22012`/`22023`
+  for impossible division and allocation arguments, and `XX001` when bytes
+  already stored in a column fail validation on the way out — the one class
+  that genuinely is "should never happen". The codes are frozen contract,
+  pinned by the `12-errors` suite.
 
 There is deliberately no cast to PostgreSQL `numeric`.
+
+### What a schema designer must know
+
+No money type carries a btree or hash operator class. The absent
+default-opclass ordering is the one surface YugabyteDB's planner would not
+resolve for a custom type, and its absence is what keeps stored values
+byte-exact there. The consequences are loud, never silent — each fails at plan
+time:
+
+- no `ORDER BY`, `min()`/`max()`, `DISTINCT`, `GROUP BY`, `UNION`
+  deduplication, merge join, value index, `PRIMARY KEY`, or `UNIQUE` on a
+  money column;
+- comparisons work as sequential-scan predicates only and never push down to
+  DocDB, so every candidate row ships to the backend — a performance cliff,
+  not a wrongness;
+- money is a VALUE, not a KEY. Top-N and percentile reporting belong on a
+  numeric projection the application maintains, or in the application itself.
+
+`kmoney_<code>_hash` is `IMMUTABLE` and returns `int4`, so a functional index
+on it is creatable — and would go silently stale if a release ever bumped
+`STABLE_HASH_VERSION`, because an existing index is not recomputed. Treat the
+hash as a reconciliation checksum; do not index it.
+
+### What a binary client must know
+
+A pinned column's binary form is 16 **little-endian** bytes — the byte order
+is fixed by the codec, not the platform, and it is the opposite of
+PostgreSQL's network-order convention for built-in types. The currency is
+resolved from the type OID in `RowDescription`; custom-type OIDs are assigned
+per database, so a client maps OID → currency by querying `pg_type` by
+`typname` at connection start, never by hardcoding an OID observed in one
+environment. The bundled Rust adapters sidestep all of this deliberately:
+they reject native OIDs and read through `::text`.
 
 ## Verification ladder
 

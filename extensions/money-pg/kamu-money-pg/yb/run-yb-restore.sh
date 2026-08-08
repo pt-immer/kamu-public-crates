@@ -14,7 +14,7 @@
 #   * a dump of a schema using `kmoney` reproduces the extension through `CREATE EXTENSION`, and
 #     restores against a clean catalog;
 #   * the 18-byte payloads survive byte-for-byte, at the domain edges as well as in the middle;
-#   * typmod-pinned columns come back still pinned, and still refusing the wrong currency;
+#   * type-pinned columns come back still pinned, and still refusing the wrong currency;
 #   * totals computed after the restore agree with totals computed before it;
 #   * and a destination WITHOUT the extension files fails loudly at `CREATE EXTENSION` rather than
 #     restoring a table whose column type does not exist.
@@ -105,16 +105,16 @@ SRC_HOST="$(node_up "$SRC" "$YB_IMAGE")"
 yb_ensure_extension "$SRC" "$ART"
 echo "restore: source ready at $SRC_HOST (kmoney $YB_INSTALL_MODE)"
 
-# A CONSUMING schema, not a toy: a typmod-pinned column (which the dump must carry as a type
-# modifier, not merely as `kmoney`), an unpinned one, and a NOT NULL constraint. Values include
+# A CONSUMING schema, not a toy: a type-pinned column (which the dump must carry as the
+# per-currency type name), a currency-erased one, and a NOT NULL constraint. Values include
 # both domain edges and a currency the pinned column must refuse, so the restored constraint can
 # be tested rather than assumed.
 sql_on "$SRC" "$SRC_HOST" "
 CREATE EXTENSION kmoney;
 CREATE TABLE account (
     id      bigint PRIMARY KEY,
-    balance kmoney('USD') NOT NULL,
-    fee     kmoney
+    balance kmoney_usd NOT NULL,
+    fee     kmoney_mixed
 );
 INSERT INTO account VALUES
     (1, 'USD 0.00',   'USD 0.000000000000000001'),
@@ -126,22 +126,22 @@ INSERT INTO account VALUES
 # THE FINGERPRINT, taken before the dump and re-taken after the restore. Hashing `kmoney_send`'s
 # output rather than the text form is deliberate: text goes through the output function, so a
 # renderer that changed identically on both sides would agree while the STORED BYTES had moved.
-# The 18-byte payload is what the dump has to preserve.
+# The raw payloads (16-byte pinned, 18-byte mixed) are what the dump has to preserve.
 fingerprint_of() {
     local name="$1" host="$2"
     sql_on "$name" "$host" "
-        SELECT id || '|' || encode(kmoney_send(balance), 'hex')
-                  || '|' || coalesce(encode(kmoney_send(fee), 'hex'), 'NULL')
+        SELECT id || '|' || encode(kmoney_usd_send(balance), 'hex')
+                  || '|' || coalesce(encode(kmoney_mixed_send(fee), 'hex'), 'NULL')
         FROM account ORDER BY id;"
 }
 BEFORE="$WORK/fingerprint-before.txt"
 fingerprint_of "$SRC" "$SRC_HOST" > "$BEFORE"
 
 # The total checks aggregate behavior across the restore, not an independent implementation.
-# Storage integrity comes from the byte fingerprint above: `kmoney_send` renders each raw
-# 18-byte payload, and `diff` compares those bytes without interpreting them.
+# Storage integrity comes from the byte fingerprint above: the send functions render each raw
+# payload, and `diff` compares those bytes without interpreting them.
 TOTAL_BEFORE="$(sql_on "$SRC" "$SRC_HOST" "SELECT sum(balance)::text FROM account")"
-TYPMOD_BEFORE="$(sql_on "$SRC" "$SRC_HOST" "
+COLTYPE_BEFORE="$(sql_on "$SRC" "$SRC_HOST" "
     SELECT format_type(atttypid, atttypmod) FROM pg_attribute
     WHERE attrelid = 'account'::regclass AND attname = 'balance'")"
 VERSION_BEFORE="$(sql_on "$SRC" "$SRC_HOST" "SELECT extversion FROM pg_extension WHERE extname='kmoney'")"
@@ -168,10 +168,10 @@ if grep -qE '^CREATE (TYPE|FUNCTION) (public\.)?kmoney' "$DUMP"; then
 else
     ok "the dump does NOT emit member objects individually -- they come back with the extension"
 fi
-if grep -q "kmoney('USD')\|kmoney(USD)" "$DUMP"; then
-    ok "the typmod-pinned column keeps its modifier in the dump"
+if grep -qE 'balance (public\.)?kmoney_usd' "$DUMP"; then
+    ok "the type-pinned column keeps its per-currency type in the dump"
 else
-    bad "the pinned column lost its type modifier in the dump: $(grep -m1 balance "$DUMP" || true)"
+    bad "the pinned column lost its per-currency type in the dump: $(grep -m1 balance "$DUMP" || true)"
 fi
 
 # --- 3. restore into a CLEAN instance on the same image -----------------------------------------
@@ -192,7 +192,7 @@ fi
 AFTER="$WORK/fingerprint-after.txt"
 fingerprint_of "$DST" "$DST_HOST" > "$AFTER"
 if diff -q "$BEFORE" "$AFTER" >/dev/null; then
-    ok "every 18-byte payload survived, domain edges included ($(wc -l < "$BEFORE") rows, byte-exact)"
+    ok "every payload survived, domain edges included ($(wc -l < "$BEFORE") rows, byte-exact)"
 else
     bad "payloads changed across the restore:"
     diff "$BEFORE" "$AFTER" | sed 's/^/          /' >&2
@@ -212,17 +212,17 @@ else
     bad "extension version was '$VERSION_BEFORE', is now '$VERSION_AFTER'"
 fi
 
-TYPMOD_AFTER="$(sql_on "$DST" "$DST_HOST" "
+COLTYPE_AFTER="$(sql_on "$DST" "$DST_HOST" "
     SELECT format_type(atttypid, atttypmod) FROM pg_attribute
     WHERE attrelid = 'account'::regclass AND attname = 'balance'")"
-if [ "$TYPMOD_BEFORE" = "$TYPMOD_AFTER" ]; then
-    ok "the pinned column's typmod survived ($TYPMOD_AFTER)"
+if [ "$COLTYPE_BEFORE" = "$COLTYPE_AFTER" ]; then
+    ok "the pinned column's type survived ($COLTYPE_AFTER)"
 else
-    bad "typmod was '$TYPMOD_BEFORE', is now '$TYPMOD_AFTER'"
+    bad "the column type was '$COLTYPE_BEFORE', is now '$COLTYPE_AFTER'"
 fi
 
-# A typmod that came back as TEXT but not as a CONSTRAINT would pass the check above and still be
-# broken. Prove it still refuses.
+# A type name that came back in the catalog but not as a working input function would pass the
+# check above and still be broken. Prove it still refuses.
 #
 # STATUS AND OUTPUT CAPTURED SEPARATELY, not piped into `grep`. Written as
 # `sql_on ... | grep -qi error`, this reported FAILURE on a CORRECT refusal: under
@@ -231,15 +231,15 @@ fi
 # job. The negative control has to distinguish "refused" from "the command could not run", and a
 # pipeline collapses both into one status.
 set +e
-typmod_out="$(sql_on "$DST" "$DST_HOST" "INSERT INTO account VALUES (99, 'IDR 1.00', NULL)" 2>&1)"
-typmod_rc=$?
+refusal_out="$(sql_on "$DST" "$DST_HOST" "INSERT INTO account VALUES (99, 'IDR 1.00', NULL)" 2>&1)"
+refusal_rc=$?
 set -e
-if [ "$typmod_rc" -eq 0 ]; then
-    bad "the restored kmoney('USD') column accepted an IDR value -- the typmod is decorative"
-elif printf '%s' "$typmod_out" | grep -qi 'error'; then
-    ok "the restored pinned column still REFUSES the wrong currency: $(printf '%s' "$typmod_out" | grep -i error | head -1)"
+if [ "$refusal_rc" -eq 0 ]; then
+    bad "the restored kmoney_usd column accepted an IDR value -- the type refusal is decorative"
+elif printf '%s' "$refusal_out" | grep -qi 'error'; then
+    ok "the restored pinned column still REFUSES the wrong currency: $(printf '%s' "$refusal_out" | grep -i error | head -1)"
 else
-    bad "the insert failed, but not with an error message: $(printf '%s' "$typmod_out" | head -2 | tr '\n' ' ')"
+    bad "the insert failed, but not with an error message: $(printf '%s' "$refusal_out" | head -2 | tr '\n' ' ')"
 fi
 
 # --- 5. the negative control: a destination without the extension files -------------------------

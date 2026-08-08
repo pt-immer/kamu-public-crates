@@ -34,7 +34,7 @@ use kamu_money_core::Iso4217;
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
-    let mut shells = String::from("CREATE TYPE kmoney;\nCREATE TYPE kmoney_mixed;\n");
+    let mut shells = String::from("CREATE TYPE kmoney_mixed;\n");
     let mut types = String::new();
 
     for code in Iso4217::EVERY {
@@ -46,6 +46,7 @@ fn main() {
         let f_in = format!("{ty}_in");
         let f_out = format!("{ty}_out");
         let f_send = format!("{ty}_send");
+        let f_recv = format!("{ty}_recv");
         let f_hash = format!("{ty}_hash");
         let (eq, ne) = (format!("{ty}_eq"), format!("{ty}_ne"));
         let (lt, le) = (format!("{ty}_lt"), format!("{ty}_le"));
@@ -79,11 +80,16 @@ pinned_money_type! {{
 
 extension_sql!(
     r"
+CREATE FUNCTION {f_recv}(internal) RETURNS {ty}
+    AS 'MODULE_PATHNAME', 'kmoney_pinned_recv'
+    LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+
 CREATE TYPE {ty} (
     INTERNALLENGTH = 16,
     INPUT          = {f_in},
     OUTPUT         = {f_out},
     SEND           = {f_send},
+    RECEIVE        = {f_recv},
     ALIGNMENT      = char,
     STORAGE        = plain
 );
@@ -121,9 +127,4 @@ CREATE AGGREGATE sum({ty}) (
 
     let out = PathBuf::from(env::var("OUT_DIR").expect("cargo sets OUT_DIR")).join("pinned_types.rs");
     fs::write(&out, manifest).expect("the manifest must be writable");
-
-    // The count is a contract rather than a coincidence: every code in the
-    // register gets a type. A register that changed size must be noticed, not
-    // silently generate fewer.
-    println!("cargo:rustc-env=KMONEY_PINNED_TYPE_COUNT={}", Iso4217::EVERY.len());
 }

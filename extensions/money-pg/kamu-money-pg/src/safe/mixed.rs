@@ -1,23 +1,25 @@
 //! I/O, equality, and checked conversion for `kmoney_mixed`.
 //!
 //! The type has no arithmetic or ordering surface. `sum(kmoney_mixed)` fails
-//! during query planning; `kmoney_from_mixed` proves the currency before
-//! returning `kmoney`.
+//! during query planning; conversion to a per-currency type goes through the
+//! text form, whose pinned input function proves the tag before accepting it.
 
-use super::payload::{ValidationError, validate_payload};
-use super::{kmoney, kmoney_mixed, validated_or_error};
-use kamu_money_core::{Iso4217, text};
+use super::{kmoney_mixed, raise, validated_or_error};
+use kamu_money_core::{ParseMoneyError, text};
 use pgrx::prelude::*;
 
 #[pg_extern(immutable, parallel_safe, requires = ["money_shell_types"])]
 fn kmoney_mixed_in(input: &core::ffi::CStr) -> kmoney_mixed {
     let text = match input.to_str() {
         Ok(t) => t,
-        Err(e) => error!("kmoney_mixed: input is not valid UTF-8: {e}"),
+        Err(e) => raise::invalid_text(format!("kmoney_mixed: input is not valid UTF-8: {e}")),
     };
     match text::parse(text) {
         Ok((currency, units)) => kmoney_mixed::new(units, currency.numeric()),
-        Err(e) => error!("kmoney_mixed: {e}, in {text:?}"),
+        // The same SQLSTATE split as the pinned parser: out-of-domain
+        // magnitudes are `22003`, everything the grammar refuses is `22P02`.
+        Err(e @ ParseMoneyError::Amount(_)) => raise::out_of_range(format!("kmoney_mixed: {e}, in {text:?}")),
+        Err(e) => raise::invalid_text(format!("kmoney_mixed: {e}, in {text:?}")),
     }
 }
 
@@ -25,8 +27,9 @@ fn kmoney_mixed_in(input: &core::ffi::CStr) -> kmoney_mixed {
 #[pg_extern(immutable, parallel_safe, requires = ["money_shell_types"])]
 fn kmoney_mixed_out(value: kmoney_mixed) -> alloc::ffi::CString {
     let amount = validated_or_error(value.payload(), "kmoney_mixed");
-    let rendered = text::render(amount.units(), amount.currency())
-        .unwrap_or_else(|e| error!("kmoney_mixed: stored amount cannot be rendered: {e}"));
+    let rendered = text::render(amount.units(), amount.currency()).unwrap_or_else(|e| {
+        raise::data_corrupted(format!("kmoney_mixed: stored amount cannot be rendered: {e}"))
+    });
     alloc::ffi::CString::new(rendered)
         .unwrap_or_else(|e| error!("kmoney_mixed: rendered form contains a NUL byte: {e}"))
 }
@@ -88,31 +91,10 @@ fn kmoney_mixed_hash(value: kmoney_mixed) -> i32 {
     ))
 }
 
-/// Convert `kmoney_mixed` to `kmoney` after checking the expected currency.
-///
-/// This is not an implicit cast; callers must make the proof visible.
-#[pg_extern(immutable, parallel_safe, requires = ["kmoney_concrete", "kmoney_mixed_concrete"])]
-fn kmoney_from_mixed(value: kmoney_mixed, expected: &str) -> kmoney {
-    let Some(want) = Iso4217::from_alpha3(expected) else {
-        error!("kmoney: {expected:?} is not an ISO 4217 code kamu_money_core knows");
-    };
-    let amount = validate_payload(value.payload(), Some(want)).unwrap_or_else(|error| match error {
-        ValidationError::OutOfDomain { currency, .. } => error!(
-            "kmoney: stored {} value is outside the domain |units| <= 10^36 - 1 \
-             and cannot be converted from kmoney_mixed",
-            currency.alpha3()
-        ),
-        ValidationError::UnexpectedCurrency { .. } | ValidationError::UnknownCurrency { .. } => {
-            error!("kmoney: {error}")
-        }
-    });
-    kmoney::from_payload(amount.payload())
-}
-
 #[cfg(any(test, feature = "pg_test"))]
 #[pg_schema]
 mod tests {
-    use super::{kmoney_from_mixed, kmoney_mixed};
+    use super::kmoney_mixed;
     use pgrx::prelude::*;
 
     /// Equality is currency-aware and remains a non-indexed predicate.
@@ -162,21 +144,27 @@ mod tests {
     /// Conversion succeeds when the expected currency matches.
     #[pg_test]
     fn the_conversion_out_of_mixed_proves_the_currency() {
-        let got = Spi::get_one::<String>("SELECT kmoney_from_mixed('USD 2.50'::kmoney_mixed, 'USD')::text")
+        // Through text: the mixed type renders its tag, and the pinned input
+        // function accepts the tagged form only when the tag matches its type.
+        let got = Spi::get_one::<String>("SELECT ('USD 2.50'::kmoney_mixed)::text::kmoney_usd::text")
             .expect("query ran")
             .expect("not null");
-        assert_eq!(got, "USD 2.50");
+        assert_eq!(got, "2.50", "the pinned form needs no tag; the column's type is the currency");
     }
 
-    #[pg_test(error = "kmoney: expected USD, found IDR")]
+    #[pg_test(error = "kmoney_usd: expected USD, got IDR")]
     fn the_conversion_out_of_mixed_refuses_the_wrong_currency() {
-        Spi::get_one::<String>("SELECT kmoney_from_mixed('IDR 2.50'::kmoney_mixed, 'USD')::text").ok();
+        Spi::get_one::<String>("SELECT ('IDR 2.50'::kmoney_mixed)::text::kmoney_usd::text").ok();
     }
 
+    /// Corrupt stored units cannot escape through the text conversion path:
+    /// the mixed OUTPUT function validates before rendering, so the pinned
+    /// input function never sees them.
     #[pg_test(
-        error = "kmoney: stored USD value is outside the domain |units| <= 10^36 - 1 and cannot be converted from kmoney_mixed"
+        error = "kmoney_mixed: stored USD amount with 1000000000000000000000000000000000000 units is outside the domain |units| <= 10^36 - 1"
     )]
     fn the_conversion_out_of_mixed_refuses_corrupt_units() {
-        kmoney_from_mixed(kmoney_mixed::new(kamu_money_core::DOMAIN_MAX + 1, 840), "USD");
+        let corrupt = kmoney_mixed::new(kamu_money_core::DOMAIN_MAX + 1, 840);
+        let _ = super::kmoney_mixed_out(corrupt);
     }
 }

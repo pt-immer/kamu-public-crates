@@ -8,6 +8,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- The `postgres` and `sqlx` adapters decode a **bare** money literal —
+  `10.50`, no currency tag — alongside the tagged form. A per-currency
+  `kmoney_<code>` column renders bare because its type carries the currency;
+  the adapters accept it because `Money<C>` carries the same fact statically.
+  The tagged form remains accepted and remains checked.
+
 - `text::render_amount` is public and no longer gated on `serde`. It renders the
   amount with no currency prefix, for a boundary that carries the currency out
   of band — a structured wire form whose sibling field names it, or a database

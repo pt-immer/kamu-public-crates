@@ -1,4 +1,4 @@
-comment = 'kmoney: exact fixed-point money as a native type, i128 units at scale 18'
+comment = 'kmoney: exact fixed-point money as native per-currency types, i128 units at scale 18'
 default_version = '@CARGO_VERSION@'
 module_pathname = 'kmoney'
 relocatable = false

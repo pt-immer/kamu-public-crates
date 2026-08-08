@@ -6,8 +6,8 @@
 #     cargo pgrx init --pg18 $(which pg_config)
 [package]
 name = "kamu-money-pg"
-version = "0.1.0"
-description = "PostgreSQL extension providing kmoney: money as a native fixed-size type, 18 bytes."
+version = "0.2.0"
+description = "PostgreSQL extension providing kmoney: one native fixed-size money type per ISO 4217 currency."
 # Package identity and `publish = false` are inherited from the lane root.
 authors.workspace = true
 edition.workspace = true

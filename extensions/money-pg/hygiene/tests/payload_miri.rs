@@ -31,29 +31,26 @@ fn payload_slice_conversion_requires_exact_width() {
 }
 
 #[test]
-fn validation_checks_expected_code_assignment_and_domain() {
+fn validation_checks_code_assignment_and_domain() {
+    // No expected-currency parameter: a type with an expectation carries it in
+    // the catalog and stores no code, so only the erased payload reaches here.
     let usd = Iso4217::from_alpha3("USD").expect("USD is assigned");
-    let idr = Iso4217::from_alpha3("IDR").expect("IDR is assigned");
 
-    let valid = validate_payload(Payload::from_parts(1, usd.numeric()), Some(usd)).expect("valid USD");
+    let valid = validate_payload(Payload::from_parts(1, usd.numeric())).expect("valid USD");
     assert_eq!(valid.payload(), Payload::from_parts(1, usd.numeric()));
     assert_eq!(valid.units(), 1);
     assert_eq!(valid.currency(), usd);
 
     assert_eq!(
-        validate_payload(Payload::from_parts(1, idr.numeric()), Some(usd)),
-        Err(ValidationError::UnexpectedCurrency { expected: usd, found_code: idr.numeric() })
-    );
-    assert_eq!(
-        validate_payload(Payload::from_parts(1, 0), None),
+        validate_payload(Payload::from_parts(1, 0)),
         Err(ValidationError::UnknownCurrency { code: 0 })
     );
     assert!(matches!(
-        validate_payload(Payload::from_parts(DOMAIN_MAX + 1, usd.numeric()), None),
+        validate_payload(Payload::from_parts(DOMAIN_MAX + 1, usd.numeric())),
         Err(ValidationError::OutOfDomain { units, currency }) if units == DOMAIN_MAX + 1 && currency == usd
     ));
     assert!(matches!(
-        validate_payload(Payload::from_parts(-DOMAIN_MAX - 1, usd.numeric()), None),
+        validate_payload(Payload::from_parts(-DOMAIN_MAX - 1, usd.numeric())),
         Err(ValidationError::OutOfDomain { units, currency }) if units == -DOMAIN_MAX - 1 && currency == usd
     ));
 }

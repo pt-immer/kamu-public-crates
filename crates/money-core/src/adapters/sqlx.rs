@@ -12,7 +12,7 @@
 //! PostgreSQL `numeric` rounds over-precise input before constraints can inspect it. Its sqlx
 //! representation also has a narrower decimal range than this crate.
 
-use super::codec::{decode, encode};
+use super::codec::{decode, decode_money, encode};
 use crate::{Money, Rate, StaticCurrency};
 use sqlx::encode::IsNull;
 use sqlx::error::BoxDynError;
@@ -22,7 +22,7 @@ use sqlx::{Decode, Encode, Type};
 /// Money is carried as `text`. Declaring the type this way — rather than by OID — is what makes
 /// `compatible` accept `varchar` and `bpchar` too.
 ///
-/// It also means a native `kamu-money-pg` `kmoney` column is **not** readable directly: `compatible`
+/// It also means a native `kamu-money-pg` per-currency column is **not** readable directly: `compatible`
 /// is consulted against the column's OID before any parsing, so the query must cast —
 /// `SELECT amount::text`, never a bare `SELECT amount`. See
 /// `adapters::postgres` for the full note; the two adapters share this boundary
@@ -55,7 +55,7 @@ impl<C: StaticCurrency> Encode<'_, Postgres> for Money<C> {
 impl<C: StaticCurrency> Decode<'_, Postgres> for Money<C> {
     fn decode(value: PgValueRef<'_>) -> Result<Self, BoxDynError> {
         let text = <&str as Decode<Postgres>>::decode(value)?;
-        Ok(decode(text)?)
+        Ok(decode_money(text)?)
     }
 }
 

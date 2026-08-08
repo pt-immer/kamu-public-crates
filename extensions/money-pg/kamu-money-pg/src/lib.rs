@@ -1,14 +1,18 @@
-//! `kmoney`: money as a native PostgreSQL type.
+//! `kmoney`: money as native PostgreSQL types, one per currency.
 //!
-//! The value is an 18-byte, fixed-width, byte-aligned payload with no varlena header. It carries
-//! canonical units and an ISO 4217 numeric code. `numeric(36,18)` is often smaller, but can round
+//! Every ISO 4217 code gets its own fixed-width type -- `kmoney_usd`,
+//! `kmoney_idr`, and the rest -- 16 bytes of canonical units with the currency
+//! in the catalog rather than the value. Cross-currency arithmetic has no
+//! operator to resolve and fails while the query is parsed. `kmoney_mixed`
+//! remains the one deliberately currency-erased type (18 bytes, units plus the
+//! ISO numeric code) for a column that must hold several currencies; it has no
+//! arithmetic. `numeric(36,18)` is often smaller than either, but can round
 //! excess precision before constraints inspect it.
 //!
 //! Text parsing, rendering, currency lookup, and arithmetic delegate to `kamu_money_core`.
 
 // Match money-core's named restriction/nursery lints without enabling either
-// unstable group wholesale. FFI casts are denied globally; the two required
-// typmod reinterpretations carry statement-local exceptions and rationale.
+// unstable group wholesale. FFI casts are denied globally.
 #![deny(clippy::all, clippy::pedantic)]
 #![deny(unsafe_op_in_unsafe_fn, clippy::undocumented_unsafe_blocks)]
 #![deny(
@@ -23,8 +27,6 @@
     clippy::missing_const_for_fn,
     clippy::use_self
 )]
-
-use kamu_money_core::text;
 
 extern crate alloc;
 use pgrx::prelude::*;
@@ -181,10 +183,10 @@ macro_rules! pinned_money_type {
         fn $in(input: &core::ffi::CStr) -> $t {
             match input.to_str() {
                 Ok(text) => safe::pinned::parse_pinned(text),
-                Err(e) => error!(
+                Err(e) => safe::raise::invalid_text(format!(
                     "{}: input is not valid UTF-8: {e}",
                     <$t as safe::pinned::PinnedCurrency>::SQL_NAME
-                ),
+                )),
             }
         }
 
@@ -296,10 +298,10 @@ macro_rules! pinned_money_type {
             let Some(units) =
                 kamu_money_core::advanced::arithmetic::add_units(a.units(), b.units())
             else {
-                error!(
+                safe::raise::out_of_range(format!(
                     "{}: the result of + is outside the domain |units| <= 10^36 - 1",
                     <$t as safe::pinned::PinnedCurrency>::SQL_NAME
-                );
+                ));
             };
             $t::from_payload(PinnedPayload::from_units(units))
         }
@@ -310,10 +312,10 @@ macro_rules! pinned_money_type {
             let Some(units) =
                 kamu_money_core::advanced::arithmetic::sub_units(a.units(), b.units())
             else {
-                error!(
+                safe::raise::out_of_range(format!(
                     "{}: the result of - is outside the domain |units| <= 10^36 - 1",
                     <$t as safe::pinned::PinnedCurrency>::SQL_NAME
-                );
+                ));
             };
             $t::from_payload(PinnedPayload::from_units(units))
         }
@@ -330,12 +332,21 @@ macro_rules! pinned_money_type {
         /// btree one.
         #[pg_extern(immutable, parallel_safe, requires = [$concrete])]
         fn $hash(value: $t) -> i32 {
+            // Validate before hashing, exactly as `kmoney_mixed_hash` does: a
+            // corrupt stored value must raise here, not silently yield a stable
+            // hash that downstream systems then persist.
+            let amount = safe::payload::validate_pinned(value.payload()).unwrap_or_else(|e| {
+                safe::raise::data_corrupted(format!(
+                    "{}: {e}",
+                    <$t as safe::pinned::PinnedCurrency>::SQL_NAME
+                ))
+            });
             kamu_money_core::advanced::stable_hash::fold_to_i32(
                 kamu_money_core::advanced::stable_hash::stable_hash(
                     <<$t as safe::pinned::PinnedCurrency>::Currency
                         as kamu_money_core::StaticCurrency>::CODE
                         .numeric(),
-                    value.units(),
+                    amount.units(),
                 ),
             )
         }
@@ -354,20 +365,22 @@ macro_rules! pinned_money_type {
         // Non-strict, which is required rather than incidental: with no
         // `INITCOND` the state arrives NULL for the first row, and a strict
         // function would never be called to establish it.
-        #[allow(clippy::needless_pass_by_value)]
         #[pg_extern(immutable, parallel_safe, requires = [$concrete])]
-        fn $accum(state: Option<Vec<u8>>, value: Option<$t>) -> Option<Vec<u8>> {
+        fn $accum(state: Option<&[u8]>, value: Option<$t>) -> Option<Vec<u8>> {
             // A NULL row leaves the state as it was, so an all-NULL group
             // finishes NULL rather than a zero in a currency it never saw.
             let Some(value) = value else {
-                return state;
+                return state.map(<[u8]>::to_vec);
             };
             let acc = match state {
                 None => kamu_money_core::advanced::arithmetic::UnitSum::ZERO,
-                Some(bytes) => safe::pinned::sum_state_decode::<$t>(&bytes),
+                Some(bytes) => safe::pinned::sum_state_decode::<$t>(bytes),
             };
             let acc = acc.add_units(value.units()).unwrap_or_else(|e| {
-                error!("sum({}): {e}", <$t as safe::pinned::PinnedCurrency>::SQL_NAME)
+                safe::raise::out_of_range(format!(
+                    "sum({}): {e}",
+                    <$t as safe::pinned::PinnedCurrency>::SQL_NAME
+                ))
             });
             Some(safe::pinned::sum_state_encode(acc))
         }
@@ -378,17 +391,19 @@ macro_rules! pinned_money_type {
         /// state -- so this is non-strict too. `UnitSum::merge` is associative
         /// and commutative, so which worker finished first cannot change the
         /// total.
-        #[allow(clippy::needless_pass_by_value)]
         #[pg_extern(immutable, parallel_safe, requires = [$concrete])]
-        fn $combine(left: Option<Vec<u8>>, right: Option<Vec<u8>>) -> Option<Vec<u8>> {
+        fn $combine(left: Option<&[u8]>, right: Option<&[u8]>) -> Option<Vec<u8>> {
             let (left, right) = match (left, right) {
-                (None, other) | (other, None) => return other,
+                (None, other) | (other, None) => return other.map(<[u8]>::to_vec),
                 (Some(l), Some(r)) => (l, r),
             };
-            let acc = safe::pinned::sum_state_decode::<$t>(&left)
-                .merge(safe::pinned::sum_state_decode::<$t>(&right))
+            let acc = safe::pinned::sum_state_decode::<$t>(left)
+                .merge(safe::pinned::sum_state_decode::<$t>(right))
                 .unwrap_or_else(|e| {
-                    error!("sum({}): {e}", <$t as safe::pinned::PinnedCurrency>::SQL_NAME)
+                    safe::raise::out_of_range(format!(
+                        "sum({}): {e}",
+                        <$t as safe::pinned::PinnedCurrency>::SQL_NAME
+                    ))
                 });
             Some(safe::pinned::sum_state_encode(acc))
         }
@@ -397,13 +412,15 @@ macro_rules! pinned_money_type {
         ///
         /// The erased counterpart also resolves a stored ISO code here and
         /// treats an unknown one as corruption. There is no code to resolve.
-        #[allow(clippy::needless_pass_by_value)]
         #[pg_extern(immutable, parallel_safe, requires = [$concrete])]
-        fn $final(state: Option<Vec<u8>>) -> Option<$t> {
+        fn $final(state: Option<&[u8]>) -> Option<$t> {
             // No rows, or every row NULL: NULL, never a zero.
-            let acc = safe::pinned::sum_state_decode::<$t>(&state?);
+            let acc = safe::pinned::sum_state_decode::<$t>(state?);
             let total = acc.finish().unwrap_or_else(|e| {
-                error!("sum({}): {e}", <$t as safe::pinned::PinnedCurrency>::SQL_NAME)
+                safe::raise::out_of_range(format!(
+                    "sum({}): {e}",
+                    <$t as safe::pinned::PinnedCurrency>::SQL_NAME
+                ))
             });
             Some($t::from_payload(PinnedPayload::from_units(total)))
         }
@@ -427,6 +444,10 @@ macro_rules! pinned_money_type {
         #[allow(clippy::needless_pass_by_value)]
         #[pg_extern(immutable, parallel_safe, requires = [$concrete])]
         fn $allocate(amount: $t, weights: Array<'_, i32>) -> Vec<$t> {
+            // The size cap reads the borrowed Array's len() BEFORE any element
+            // is collected, so an array-bomb argument is refused before it can
+            // allocate. Pinned by the unsafe_boundary hygiene test.
+            safe::pinned::allocate_len_guard::<$t>(weights.len());
             let weights: Vec<Option<i32>> = weights.iter().collect();
             safe::pinned::allocate_pinned(amount, &weights)
         }
@@ -435,8 +456,8 @@ macro_rules! pinned_money_type {
 
 // One per-currency type for every ISO 4217 code, derived from the register by
 // `build.rs`. It also owns the single `bootstrap` block: pgrx permits only one,
-// and every shell type -- including `kmoney` and `kmoney_mixed`, which are not
-// per-currency -- must be declared before the I/O functions that name it.
+// and every shell type -- including `kmoney_mixed`, which is not per-currency
+// -- must be declared before the I/O functions that name it.
 //
 // Nothing is decided in the expansion. `build.rs` says what is derived and
 // `pinned_money_type!` above says what is generated; between them there is no
@@ -444,64 +465,27 @@ macro_rules! pinned_money_type {
 include!(concat!(env!("OUT_DIR"), "/pinned_types.rs"));
 
 fixed_length_money_type! {
-    /// Money, on disk: 18 bytes, fixed width, currency carried in the value.
-    ///
-    /// The currency lives in the value because PostgreSQL does not pass typmod
-    /// to operators: `kmoney(USD) + kmoney(IDR)` arrives as `kmoney + kmoney`.
-    ///
-    /// # Why this type is `snake_case`
-    ///
-    /// The Rust name matches the permanent SQL name and lets
-    /// `rust_regtypein::<Self>()` resolve its OID without a mapping table.
-    kmoney
-}
-
-#[doc(hidden)]
-#[pg_extern(immutable, parallel_safe, requires = ["money_shell_types"])]
-fn kmoney_in(input: &core::ffi::CStr) -> kmoney {
-    let text = match input.to_str() {
-        Ok(t) => t,
-        Err(e) => error!("kmoney: input is not valid UTF-8: {e}"),
-    };
-    // The type input function refuses excess precision before PostgreSQL coercion can round it.
-    match text::parse(text) {
-        Ok((currency, units)) => kmoney::new(units, currency.numeric()),
-        Err(e) => error!("kmoney: {e}, in {text:?}"),
-    }
-}
-
-#[doc(hidden)]
-#[pg_extern(immutable, parallel_safe, requires = ["money_shell_types"])]
-fn kmoney_out(value: kmoney) -> alloc::ffi::CString {
-    // Reject unknown or corrupt currency codes instead of rendering a
-    // plausible amount under the wrong currency.
-    let amount = safe::validated_or_error(value.payload(), "kmoney");
-    let rendered = text::render(amount.units(), amount.currency())
-        .unwrap_or_else(|e| error!("kmoney: stored amount cannot be rendered: {e}"));
-    alloc::ffi::CString::new(rendered)
-        .unwrap_or_else(|e| error!("kmoney: rendered form contains a NUL byte: {e}"))
-}
-
-fixed_length_money_type! {
     /// Money whose currency is **not** fixed by the column.
     ///
-    /// Byte-identical to [`kmoney`] on disk but without arithmetic or ordering
-    /// operators. A column may hold several currencies, and
+    /// 18 bytes on disk -- the pinned payload plus the ISO numeric code, because
+    /// here the value is the only place the currency can live. A column may
+    /// hold several currencies, and
     /// `SELECT sum(amount)` fails while the query is planned:
     ///
     /// ```text
     /// ERROR:  function sum(kmoney_mixed) does not exist
     /// ```
     ///
-    /// Convert a value with the SQL function `kmoney_from_mixed`, which checks
-    /// the expected currency before returning [`kmoney`].
+    /// Convert a value to its per-currency type through text: the pinned input
+    /// function accepts the tagged form this type renders and refuses it when
+    /// the tag names another currency.
     kmoney_mixed
 }
 
 // No `kmoney -> numeric` cast: egress keeps the exact currency-tagged text form
 // instead of exposing PostgreSQL numeric arithmetic.
 
-// Benchmark-only no-ops isolate pgrx wrapper cost (`rs_noop`) and the 18-byte
+// Benchmark-only no-ops isolate pgrx wrapper cost (`rs_noop`) and the 16-byte
 // `FromDatum` cost (`rs_noop_kmoney`) from function-body work.
 #[cfg(feature = "boundary-probe")]
 #[pg_extern(immutable, parallel_safe)]
@@ -510,8 +494,8 @@ fn rs_noop(x: i64) -> i64 {
 }
 
 #[cfg(feature = "boundary-probe")]
-#[pg_extern(immutable, parallel_safe, requires = ["kmoney_concrete"])]
-fn rs_noop_kmoney(m: kmoney) -> i64 {
+#[pg_extern(immutable, parallel_safe, requires = ["kmoney_usd_concrete"])]
+fn rs_noop_kmoney(m: kmoney_usd) -> i64 {
     // Returns a constant, not a property of `m`: the cost being measured is getting `m` across
     // the boundary at all. Reading a field would add a load to one side of the comparison.
     let _ = m;
@@ -526,13 +510,13 @@ mod tests {
     /// The payload is 18 bytes both in a tuple and as an expression, proving there is no
     /// varlena header.
     #[pg_test]
-    fn kmoney_is_eighteen_bytes_with_no_header() {
-        Spi::run("CREATE TABLE sized (v kmoney)").expect("table created");
+    fn kmoney_mixed_is_eighteen_bytes_with_no_header() {
+        Spi::run("CREATE TABLE sized (v kmoney_mixed)").expect("table created");
         Spi::run("INSERT INTO sized VALUES ('USD 10.50')").expect("row inserted");
 
         let stored =
             Spi::get_one::<i32>("SELECT pg_column_size(v) FROM sized").expect("query ran").expect("not null");
-        let in_memory = Spi::get_one::<i32>("SELECT pg_column_size('USD 10.50'::kmoney)")
+        let in_memory = Spi::get_one::<i32>("SELECT pg_column_size('USD 10.50'::kmoney_mixed)")
             .expect("query ran")
             .expect("not null");
 
@@ -545,7 +529,7 @@ mod tests {
 
     /// PostgreSQL agrees it is fixed-length — the catalog, not just `pg_column_size`.
     ///
-    /// `typlen = 18` (not `-1`), `typbyval = false` (18 > 8, so pass-by-reference is forced),
+    /// `typlen` 18 and 16 (not `-1`), `typbyval = false` (both exceed 8, forcing pass-by-reference),
     /// `typalign = 'c'` and `typstorage = 'p'`. Exactly `uuid`'s shape, two bytes wider.
     #[pg_test]
     fn the_catalog_says_fixed_length_plain_and_byte_aligned() {
@@ -554,12 +538,12 @@ mod tests {
                  format('%s=%s/%s/%s/%s', typname, typlen, typbyval, typalign, typstorage),
                  ',' ORDER BY typname
              )
-               FROM pg_type WHERE typname IN ('kmoney', 'kmoney_mixed')",
+               FROM pg_type WHERE typname IN ('kmoney_mixed', 'kmoney_usd')",
         )
         .expect("query ran")
         .expect("not null");
         // PostgreSQL renders booleans as t/f, so typbyval = false prints as "f".
-        assert_eq!(row, "kmoney=18/f/c/p,kmoney_mixed=18/f/c/p");
+        assert_eq!(row, "kmoney_mixed=18/f/c/p,kmoney_usd=16/f/c/p");
     }
 
     /// **`kmoney` is NOT smaller than `numeric(36,18)` for typical amounts.** Measured:
@@ -579,11 +563,11 @@ mod tests {
     /// The type optimizes representation stability and exact ingress, not typical-value size.
     #[pg_test]
     fn the_size_tradeoff_against_numeric_is_measured_not_assumed() {
-        Spi::run("CREATE TABLE compared (r kmoney, n numeric(36,18))").expect("table created");
+        Spi::run("CREATE TABLE compared (r kmoney_usd, n numeric(36,18))").expect("table created");
         Spi::run(
             "INSERT INTO compared VALUES
-                 ('USD 10.50', 10.50),
-                 ('IDR 999999999999999999.999999999999999999',
+                 ('10.50', 10.50),
+                 ('999999999999999999.999999999999999999',
                   999999999999999999.999999999999999999)",
         )
         .expect("rows inserted");
@@ -600,8 +584,8 @@ mod tests {
         let (typical_r, typical_n) = (typical_r.expect("not null"), typical_n.expect("not null"));
         let (top_r, top_n) = (top_r.expect("not null"), top_n.expect("not null"));
 
-        assert_eq!(typical_r, 18, "fixed width, whatever the value");
-        assert_eq!(top_r, 18, "fixed width, whatever the value");
+        assert_eq!(typical_r, 16, "fixed width, whatever the value");
+        assert_eq!(top_r, 16, "fixed width, whatever the value");
 
         assert!(
             typical_n < typical_r,
@@ -619,7 +603,7 @@ mod tests {
     /// it is the entire economic argument for a native type over `numeric`.
     #[pg_test]
     fn the_size_does_not_depend_on_the_value() {
-        Spi::run("CREATE TABLE varied (v kmoney)").expect("table created");
+        Spi::run("CREATE TABLE varied (v kmoney_mixed)").expect("table created");
         Spi::run(
             "INSERT INTO varied VALUES
                  ('USD 0.00'),
@@ -646,7 +630,7 @@ mod tests {
             ("KWD 10.5", "KWD 10.500"), // settles at 3dp
             ("USD -0.000000000000000001", "USD -0.000000000000000001"),
         ] {
-            let got = Spi::get_one::<String>(&format!("SELECT '{input}'::kmoney::text"))
+            let got = Spi::get_one::<String>(&format!("SELECT '{input}'::kmoney_mixed::text"))
                 .expect("query ran")
                 .expect("not null");
             assert_eq!(got, expected, "input {input}");
@@ -675,34 +659,34 @@ mod tests {
     // the literal's source text and running it through an `unescape` pass, so a `\`-newline
     // continuation is not reliably folded away and would be compared verbatim.
     #[pg_test(
-        error = "kmoney: 19 fractional digits exceeds the supported scale of 18, in \"USD 0.0000000000000000004\""
+        error = "kmoney_usd: 19 fractional digits exceeds the supported scale of 18, in \"0.0000000000000000004\""
     )]
     fn kmoney_refuses_what_numeric_silently_rounds() {
-        Spi::get_one::<String>("SELECT 'USD 0.0000000000000000004'::kmoney::text").ok();
+        Spi::get_one::<String>("SELECT '0.0000000000000000004'::kmoney_usd::text").ok();
     }
 
     /// The top of the domain is representable — the bound is `<=`, not `<`.
     #[pg_test]
     fn the_domain_top_round_trips() {
-        let top = Spi::get_one::<String>("SELECT 'IDR 999999999999999999.999999999999999999'::kmoney::text")
+        let top = Spi::get_one::<String>("SELECT '999999999999999999.999999999999999999'::kmoney_idr::text")
             .expect("query ran")
             .expect("not null");
-        assert_eq!(top, "IDR 999999999999999999.999999999999999999");
+        assert_eq!(top, "999999999999999999.999999999999999999");
     }
 
     /// One major unit past the domain is refused by the same check `kamu_money_core` applies.
     #[pg_test(
-        error = "kmoney: 1000000000000000000000000000000000000 canonical units is outside the supported range -999999999999999999999999999999999999..=999999999999999999999999999999999999, in \"IDR 1000000000000000000\""
+        error = "kmoney_idr: 1000000000000000000000000000000000000 canonical units is outside the supported range -999999999999999999999999999999999999..=999999999999999999999999999999999999, in \"1000000000000000000\""
     )]
     fn one_unit_past_the_domain_is_refused() {
-        Spi::get_one::<String>("SELECT 'IDR 1000000000000000000'::kmoney::text").ok();
+        Spi::get_one::<String>("SELECT '1000000000000000000'::kmoney_idr::text").ok();
     }
 
     /// A currency `kamu_money_core` does not know is refused at input, not stored and guessed at
     /// later. There is exactly one currency table, in `kamu_money_core`.
-    #[pg_test(error = "kmoney: invalid money literal, in \"ZWL 1.00\"")]
+    #[pg_test(error = "kmoney_mixed: invalid money literal, in \"ZWL 1.00\"")]
     fn an_unknown_currency_is_refused_at_the_boundary() {
-        Spi::get_one::<String>("SELECT 'ZWL 1.00'::kmoney::text").ok();
+        Spi::get_one::<String>("SELECT 'ZWL 1.00'::kmoney_mixed::text").ok();
     }
 
     /// Native and text storage must expose the same canonical representation.
@@ -715,12 +699,12 @@ mod tests {
         Spi::run(
             "CREATE TABLE both_forms (
                  portable text  NOT NULL,
-                 native kmoney  NOT NULL
+                 native kmoney_mixed NOT NULL
              )",
         )
         .expect("table created");
 
-        // One literal, both columns. The text column takes it verbatim; the kmoney column
+        // One literal, both columns. The text column takes it verbatim; the mixed column
         // parses it through this extension's input function.
         for literal in [
             "USD 10.50",
@@ -743,16 +727,16 @@ mod tests {
 
         // And the reverse direction: text parsed into the native type equals the native value.
         let mismatches = Spi::get_one::<i64>(
-            "SELECT count(*) FROM both_forms WHERE portable::kmoney::text <> native::text",
+            "SELECT count(*) FROM both_forms WHERE portable::kmoney_mixed::text <> native::text",
         )
         .expect("query ran")
         .expect("not null");
-        assert_eq!(mismatches, 0, "text -> kmoney -> text must be the identity");
+        assert_eq!(mismatches, 0, "text -> kmoney_mixed -> text must be the identity");
     }
 
-    #[pg_test(error = "cannot cast type kmoney to numeric")]
+    #[pg_test(error = "cannot cast type kmoney_usd to numeric")]
     fn there_is_no_cast_to_numeric() {
-        Spi::get_one::<String>("SELECT ('USD 1.00'::kmoney)::numeric::text").ok();
+        Spi::get_one::<String>("SELECT ('1.00'::kmoney_usd)::numeric::text").ok();
     }
 
     // ---------------------------------------------------------------------
@@ -876,9 +860,11 @@ mod tests {
     /// every currency at once, so the assertion covers all of them.
     #[pg_test]
     fn no_generated_type_carries_an_operator_class() {
+        // BOTH families: a mixed-type opclass would cost byte-exactness the
+        // same way, so the 18-byte type is inspected alongside the 178.
         let classes = Spi::get_one::<i64>(
             "SELECT count(*) FROM pg_opclass WHERE opcintype IN \
-             (SELECT oid FROM pg_type WHERE typname LIKE 'kmoney\\_%' AND typlen = 16)",
+             (SELECT oid FROM pg_type WHERE typname LIKE 'kmoney\\_%' AND typlen IN (16, 18))",
         )
         .expect("query ran")
         .expect("not null");
@@ -887,17 +873,32 @@ mod tests {
         // matches nothing, so an escaping slip in the LIKE pattern would
         // silently disarm this test -- which is exactly what happened once.
         let inspected = Spi::get_one::<i64>(
-            "SELECT count(*) FROM pg_type WHERE typname LIKE 'kmoney\\_%' AND typlen = 16",
+            "SELECT count(*) FROM pg_type WHERE typname LIKE 'kmoney\\_%' AND typlen IN (16, 18)",
         )
         .expect("query ran")
         .expect("not null");
         assert_eq!(
             usize::try_from(inspected).expect("a count fits usize"),
-            kamu_money_core::Iso4217::EVERY.len(),
-            "the opclass count below means nothing unless this matched every generated type"
+            kamu_money_core::Iso4217::EVERY.len().saturating_add(1),
+            "the opclass count below means nothing unless this matched every generated type \
+             plus kmoney_mixed"
         );
 
         assert_eq!(classes, 0, "an operator class here would cost YugabyteDB byte-exactness");
+
+        // An opclass is not the only door: a loose `pg_amop` operator-family
+        // member is enough to hand the planner a merge or hash strategy. The
+        // catalog must hold no strategy row that names a money type on either
+        // side.
+        let amops = Spi::get_one::<i64>(
+            "SELECT count(*) FROM pg_amop WHERE amoplefttype IN \
+             (SELECT oid FROM pg_type WHERE typname LIKE 'kmoney\\_%' AND typlen IN (16, 18)) \
+             OR amoprighttype IN \
+             (SELECT oid FROM pg_type WHERE typname LIKE 'kmoney\\_%' AND typlen IN (16, 18))",
+        )
+        .expect("query ran")
+        .expect("not null");
+        assert_eq!(amops, 0, "a loose operator-family member would enable planner strategies");
     }
 
     /// `sum()` totals a pinned column.
@@ -983,6 +984,335 @@ mod tests {
         .expect("query ran")
         .expect("not null");
         assert_eq!(total, "10.00", "every unit lands in exactly one share");
+    }
+
+    // ---------------------------------------------------------------------
+    // Ported from the erased type's battery. Same properties, no currency
+    // checks left to exercise -- those questions are no longer askable.
+    // ---------------------------------------------------------------------
+
+    /// The stable hash pinned to exact numbers -- the on-disk contract.
+    ///
+    /// These are the SAME constants the erased type pinned: the hash feeds
+    /// `stable_hash(code, units)`, and the pinned type supplies the code from
+    /// its type where the erased one read it from its payload. A change here
+    /// needs a `STABLE_HASH_VERSION` bump and a re-hash of any store that
+    /// persisted these values, not a re-blessed constant.
+    #[pg_test]
+    fn the_persisted_hash_values_are_pinned_not_merely_consistent() {
+        for (expression, expected) in [
+            ("kmoney_usd_hash('0.00'::kmoney_usd)", 702_888_007_i32),
+            ("kmoney_usd_hash('1.00'::kmoney_usd)", -1_388_235_877),
+            ("kmoney_idr_hash('1.00'::kmoney_idr)", -129_968_833),
+            ("kmoney_usd_hash('-1.00'::kmoney_usd)", 1_671_845_669),
+        ] {
+            let got = Spi::get_one::<i32>(&format!("SELECT {expression}")).expect("query ran").expect("row");
+            assert_eq!(got, expected, "{expression} changed; that breaks every persisted use");
+        }
+    }
+
+    /// Addition is exact at one unit of the eighteenth decimal.
+    #[pg_test]
+    fn addition_is_exact_at_one_unit_of_the_eighteenth_decimal() {
+        let sum = Spi::get_one::<String>(
+            "SELECT ('0.000000000000000001'::kmoney_usd + '0.000000000000000002'::kmoney_usd)::text",
+        )
+        .expect("query ran")
+        .expect("row");
+        assert_eq!(sum, "0.000000000000000003");
+    }
+
+    /// One unit past the domain top is refused by the same kernel Rust uses.
+    #[pg_test(error = "kmoney_idr: the result of + is outside the domain |units| <= 10^36 - 1")]
+    fn addition_past_the_domain_top_is_refused() {
+        Spi::get_one::<String>(
+            "SELECT ('999999999999999999.999999999999999999'::kmoney_idr
+                   + '0.000000000000000001'::kmoney_idr)::text",
+        )
+        .ok();
+    }
+
+    /// `[top, top, -top]` totals correctly whatever order rows arrive in: the
+    /// wide accumulator makes the transient excursion representable.
+    #[pg_test]
+    fn the_sum_aggregate_is_plan_independent_across_a_domain_edge_transient() {
+        Spi::run("CREATE TABLE edge (position int, amount kmoney_usd)").expect("table created");
+        Spi::run(
+            "INSERT INTO edge VALUES
+                 (1, '999999999999999999.999999999999999999'),
+                 (2, '999999999999999999.999999999999999999'),
+                 (3, '-999999999999999999.999999999999999999')",
+        )
+        .expect("rows inserted");
+        for order in ["position", "position DESC"] {
+            let total = Spi::get_one::<String>(&format!(
+                "SELECT sum(amount)::text FROM (SELECT amount FROM edge ORDER BY {order}) ordered",
+            ))
+            .expect("query ran")
+            .expect("row");
+            assert_eq!(total, "999999999999999999.999999999999999999", "order {order}");
+        }
+    }
+
+    /// A partial from a worker that scanned no rows merges as the identity.
+    #[pg_test]
+    fn the_sum_aggregate_combines_an_empty_partial() {
+        let total = Spi::get_one::<String>(
+            "SELECT kmoney_usd_sum_final(
+                 kmoney_usd_sum_combine(NULL, kmoney_usd_sum_accum(NULL, '1.25'::kmoney_usd))
+             )::text",
+        )
+        .expect("query ran")
+        .expect("row");
+        assert_eq!(total, "1.25");
+    }
+
+    /// The state type is `bytea`, so the functions are callable by hand with
+    /// arbitrary bytes. A forged state must be an error, not a misread.
+    #[pg_test(error = "sum(kmoney_usd): transition state must be exactly 32 bytes, got 5")]
+    fn the_sum_aggregate_rejects_a_forged_transition_state() {
+        Spi::get_one::<String>("SELECT kmoney_usd_sum_final('\\x0102030405'::bytea)::text").ok();
+    }
+
+    /// A total past the domain is refused at `finish`, not stored.
+    #[pg_test(
+        error = "sum(kmoney_usd): 1000000000000000000000000000000000000 canonical units is outside the supported range -999999999999999999999999999999999999..=999999999999999999999999999999999999"
+    )]
+    fn the_sum_aggregate_rejects_a_total_that_leaves_the_domain() {
+        Spi::run("CREATE TABLE overflowing (amount kmoney_usd)").expect("table created");
+        Spi::run(
+            "INSERT INTO overflowing VALUES
+                 ('999999999999999999.999999999999999999'),
+                 ('0.000000000000000001')",
+        )
+        .expect("rows inserted");
+        Spi::get_one::<String>("SELECT sum(amount)::text FROM overflowing").ok();
+    }
+
+    /// The mixed type still has no aggregate: a column of several currencies
+    /// has no total, and the refusal is at plan time.
+    #[pg_test(error = "function sum(kmoney_mixed) does not exist")]
+    fn sum_on_a_mixed_column_fails_at_plan_time() {
+        Spi::run("CREATE TABLE mixed_sum (amount kmoney_mixed)").expect("table created");
+        Spi::get_one::<String>("SELECT sum(amount)::text FROM mixed_sum").ok();
+    }
+
+    /// Every rounding mode satisfies `parts x quotient + residue = input`.
+    #[pg_test]
+    fn the_division_identity_holds_for_every_rounding_mode() {
+        for mode in [
+            "half_even",
+            "half_away_from_zero",
+            "half_toward_zero",
+            "toward_zero",
+            "away_from_zero",
+            "floor",
+            "ceil",
+        ] {
+            let holds = Spi::get_one::<bool>(&format!(
+                "SELECT q.quotient + q.quotient + q.quotient + q.residue = '-10.00'::kmoney_usd
+                   FROM kmoney_usd_div('-10.00'::kmoney_usd, 3, '{mode}') q",
+            ))
+            .expect("query ran")
+            .expect("row");
+            assert!(holds, "identity failed under {mode}");
+        }
+    }
+
+    /// Under a round-up mode the residue of a positive amount is NEGATIVE: the
+    /// identity `q*n + residue = amount` fixes its sign, and a ledger posting
+    /// "leftover" as a nonnegative line item would mis-sign the entry.
+    #[pg_test]
+    fn the_residue_is_negative_under_round_up_modes() {
+        let row = Spi::get_one::<String>(
+            "SELECT quotient::text || ' | ' || residue::text \
+               FROM kmoney_usd_div('10.00'::kmoney_usd, 3, 'ceil')",
+        )
+        .expect("query ran")
+        .expect("row");
+        assert_eq!(row, "3.333333333333333334 | -0.000000000000000002");
+    }
+
+    #[pg_test(
+        error = "kmoney_usd_div: \"bankers\" is not a rounding mode; expected one of: half_even, half_away_from_zero, half_toward_zero, toward_zero, away_from_zero, floor, ceil"
+    )]
+    fn division_refuses_an_unknown_rounding_mode() {
+        Spi::get_one::<String>(
+            "SELECT quotient::text FROM kmoney_usd_div('10.00'::kmoney_usd, 3, 'bankers')",
+        )
+        .ok();
+    }
+
+    /// Uneven weights conserve the total; leftover units land on the FIRST
+    /// positive-weight shares, not on the largest remainders.
+    ///
+    /// That distinction is frozen contract: 8 units over `[1, 1, 3]` is
+    /// `[2, 2, 4]` here, while Hamilton/largest-remainder would say
+    /// `[2, 1, 5]`. A reconciler implementing the wrong scheme flags a
+    /// phantom one-unit leak, so the scheme itself must be pinned by an
+    /// inexact division -- the exact case below cannot tell them apart.
+    #[pg_test]
+    fn allocation_honours_weights_and_still_conserves() {
+        let shares = Spi::get_one::<String>(
+            "SELECT string_agg(share::text, ',')
+               FROM unnest(kmoney_usd_allocate('0.10'::kmoney_usd, ARRAY[3, 1, 1])) AS share",
+        )
+        .expect("query ran")
+        .expect("row");
+        assert_eq!(shares, "0.06,0.02,0.02");
+
+        let first_positive = Spi::get_one::<String>(
+            "SELECT string_agg(share::text, ',')
+               FROM unnest(kmoney_usd_allocate('0.000000000000000008'::kmoney_usd, ARRAY[1, 1, 3])) \
+               AS share",
+        )
+        .expect("query ran")
+        .expect("row");
+        assert_eq!(
+            first_positive, "0.000000000000000002,0.000000000000000002,0.000000000000000004",
+            "leftover units go to the first positive-weight shares"
+        );
+    }
+
+    /// A refund allocates by the same scheme: every share carries the amount's
+    /// sign, and the leftover (negative) units land on the same first
+    /// positive-weight shares.
+    #[pg_test]
+    fn a_negative_amount_allocates_by_the_same_scheme() {
+        let exact = Spi::get_one::<String>(
+            "SELECT string_agg(share::text, ',')
+               FROM unnest(kmoney_usd_allocate('-0.10'::kmoney_usd, ARRAY[3, 1, 1])) AS share",
+        )
+        .expect("query ran")
+        .expect("row");
+        assert_eq!(exact, "-0.06,-0.02,-0.02");
+
+        let inexact = Spi::get_one::<String>(
+            "SELECT string_agg(share::text, ',')
+               FROM unnest(kmoney_usd_allocate('-0.000000000000000008'::kmoney_usd, ARRAY[1, 1, 3])) \
+               AS share",
+        )
+        .expect("query ran")
+        .expect("row");
+        assert_eq!(inexact, "-0.000000000000000002,-0.000000000000000002,-0.000000000000000004");
+    }
+
+    /// A zero weight receives an explicit zero share, never a unit.
+    ///
+    /// Allocation is exact at canonical units, not at the display scale: 0.03
+    /// over weights [1, 0, 1] splits into two shares of 0.015 with no
+    /// remainder, and the zero-weight recipient still appears, at zero.
+    #[pg_test]
+    fn allocation_never_pays_a_zero_weight_recipient() {
+        let shares = Spi::get_one::<String>(
+            "SELECT string_agg(share::text, ',')
+               FROM unnest(kmoney_usd_allocate('0.03'::kmoney_usd, ARRAY[1, 0, 1])) AS share",
+        )
+        .expect("query ran")
+        .expect("row");
+        assert_eq!(shares, "0.015,0.00,0.015");
+    }
+
+    #[pg_test(error = "kmoney_usd_allocate: NULL weight -- a share of nothing is not a share of zero")]
+    fn allocation_refuses_a_null_weight() {
+        Spi::get_one::<String>(
+            "SELECT count(*)::text FROM unnest(kmoney_usd_allocate('1.00'::kmoney_usd, ARRAY[1, NULL]))",
+        )
+        .ok();
+    }
+
+    #[pg_test(error = "kmoney_usd_allocate: weights sum to zero -- the amount would have nowhere to go")]
+    fn allocation_refuses_weights_that_sum_to_zero() {
+        Spi::get_one::<String>(
+            "SELECT count(*)::text FROM unnest(kmoney_usd_allocate('1.00'::kmoney_usd, ARRAY[0, 0]))",
+        )
+        .ok();
+    }
+
+    // -------------------------------------------------------------------
+    // The SQLSTATE contract. `#[pg_test(error = ...)]` pins message TEXT;
+    // these pin the CODE a client dispatches on -- retry and classification
+    // layers read SQLSTATE, not prose, and a refusal that arrived as XX000
+    // would page internal-error monitoring for a data error. The regress
+    // twin (12-errors) pins the same codes as psql-visible output.
+    // -------------------------------------------------------------------
+
+    /// True only when `sql` fails with exactly `code`; any other error
+    /// propagates and fails the test.
+    fn refused_with(sql: &str, code: pgrx::pg_sys::errcodes::PgSqlErrorCode) -> bool {
+        pgrx::PgTryBuilder::new(|| {
+            Spi::run(sql).ok();
+            false
+        })
+        .catch_when(code, |_| true)
+        .execute()
+    }
+
+    #[pg_test]
+    fn a_wrong_tag_refusal_is_invalid_text_representation() {
+        assert!(
+            refused_with(
+                "SELECT 'IDR 1.00'::kmoney_usd",
+                pgrx::pg_sys::errcodes::PgSqlErrorCode::ERRCODE_INVALID_TEXT_REPRESENTATION
+            ),
+            "a wrong currency tag must be SQLSTATE 22P02, and must be refused at all"
+        );
+    }
+
+    #[pg_test]
+    fn an_out_of_domain_literal_refusal_is_numeric_value_out_of_range() {
+        assert!(
+            refused_with(
+                "SELECT '1000000000000000000.00'::kmoney_usd",
+                pgrx::pg_sys::errcodes::PgSqlErrorCode::ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE
+            ),
+            "a magnitude past the domain top must be SQLSTATE 22003, matching numeric's class"
+        );
+    }
+
+    #[pg_test]
+    fn a_forged_sum_state_refusal_is_invalid_binary_representation() {
+        assert!(
+            refused_with(
+                "SELECT kmoney_usd_sum_final('\\x0102030405'::bytea)",
+                pgrx::pg_sys::errcodes::PgSqlErrorCode::ERRCODE_INVALID_BINARY_REPRESENTATION
+            ),
+            "a transition state of the wrong width must be SQLSTATE 22P03"
+        );
+    }
+
+    #[pg_test]
+    fn a_zero_parts_division_refusal_is_division_by_zero() {
+        assert!(
+            refused_with(
+                "SELECT quotient::text FROM kmoney_usd_div('1.00'::kmoney_usd, 0, 'floor')",
+                pgrx::pg_sys::errcodes::PgSqlErrorCode::ERRCODE_DIVISION_BY_ZERO
+            ),
+            "dividing into zero parts must be SQLSTATE 22012"
+        );
+    }
+
+    #[pg_test]
+    fn an_invalid_weights_refusal_is_invalid_parameter_value() {
+        assert!(
+            refused_with(
+                "SELECT kmoney_usd_allocate('1.00'::kmoney_usd, ARRAY[]::int4[])",
+                pgrx::pg_sys::errcodes::PgSqlErrorCode::ERRCODE_INVALID_PARAMETER_VALUE
+            ),
+            "an empty weight vector must be SQLSTATE 22023"
+        );
+    }
+
+    #[pg_test]
+    fn a_cross_currency_expression_refusal_is_undefined_function() {
+        assert!(
+            refused_with(
+                "SELECT '1.00'::kmoney_usd + '1.00'::kmoney_idr",
+                pgrx::pg_sys::errcodes::PgSqlErrorCode::ERRCODE_UNDEFINED_FUNCTION
+            ),
+            "a cross-currency expression must fail to parse as SQLSTATE 42883 -- PostgreSQL's \
+             code, raised because no operator exists to resolve"
+        );
     }
 }
 

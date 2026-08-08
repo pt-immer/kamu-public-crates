@@ -1,4 +1,4 @@
--- kamu-money-pg kmoney: byte-exact ABI battery. Run IDENTICALLY on YugabyteDB 2025.2.x
+-- kamu-money-pg: byte-exact ABI battery. Run IDENTICALLY on YugabyteDB 2025.2.x
 -- (patched pgrx 0.19.1) and on stock PostgreSQL 15, then diff the two outputs.
 -- Both are PG15, so any divergence is a pure YB-fork-ABI effect on kamu-money-pg's
 -- custom-type code path -- the part the exp-pgrx-yb uuid probe could not cover.
@@ -8,45 +8,48 @@
 -- ON_ERROR_STOP=0: several probes below EXPECT an error, and the error TEXT is
 -- part of what must match A/B. Deterministic output only (no timestamps/oids).
 --
--- SCOPE: kmoney is an amount SCALAR for OLTP wallet/ledger schemas -- native storage +
--- arithmetic + equality. It is a column type, not a store: this extension implements no
--- account, transaction or balance. Amount columns are assumed not to be ordered/ranged/
--- indexed by value (that is OLAP, and a custom type's default-opclass ordering was the sole
--- YugabyteDB edge), so there is no btree or hash opclass, no ORDER BY amount, and no value
--- index anywhere in this battery.
+-- SCOPE: the per-currency types are amount SCALARS for OLTP wallet/ledger schemas --
+-- native storage + arithmetic + equality. A column type, not a store: this extension
+-- implements no account, transaction or balance. Amount columns are assumed not to be
+-- ordered/ranged/indexed by value (that is OLAP, and a custom type's default-opclass
+-- ordering was the sole YugabyteDB edge), so there is no btree or hash opclass, no
+-- ORDER BY amount, and no value index anywhere in this battery.
 
 \pset pager off
 \pset footer off
 \set ECHO none
 CREATE EXTENSION IF NOT EXISTS kmoney;
 
--- Normalize infrastructure chatter so the A/B diff compares kmoney's behavior, not the
--- server's: YugabyteDB emits a WARNING about ROWS_PER_TRANSACTION batching when COPY targets
--- a temp table (case 2b), which stock PG15 has no notion of. Neither is a kmoney effect. ERRORs
--- (which the refusal probes assert) are level ERROR and still print.
+-- Normalize infrastructure chatter so the A/B diff compares the extension's behavior, not
+-- the server's: YugabyteDB emits a WARNING about ROWS_PER_TRANSACTION batching when COPY
+-- targets a temp table (case 2b), which stock PG15 has no notion of. Neither is an
+-- extension effect. ERRORs (which the refusal probes assert) are level ERROR and still print.
 SET client_min_messages = error;
 
-\echo == 1. send/recv + text round-trip (custom FromDatum/IntoDatum over 18 bytes) ==
-SELECT 'USD 10.50'::kmoney::text AS usd,
-       'IDR 16000.01'::kmoney::text AS idr,
-       'JPY 10.5'::kmoney::text AS jpy,
-       'KWD 10.500'::kmoney::text AS kwd,
-       ('USD -0.000000000000000001'::kmoney)::text AS tiny_neg,
-       ('USD 999999999999999999.999999999999999999'::kmoney)::text AS domain_top;
+\echo == 1. text round-trip (custom FromDatum/IntoDatum over 16 bytes) ==
+SELECT '10.50'::kmoney_usd::text AS usd,
+       'USD 10.50'::kmoney_usd::text AS usd_tagged,
+       '16000.01'::kmoney_idr::text AS idr,
+       '10.5'::kmoney_jpy::text AS jpy,
+       '10.500'::kmoney_kwd::text AS kwd,
+       ('-0.000000000000000001'::kmoney_usd)::text AS tiny_neg,
+       ('999999999999999999.999999999999999999'::kmoney_usd)::text AS domain_top;
 SELECT typname, typlen, typbyval, typalign, typstorage
-  FROM pg_type WHERE typname IN ('kmoney', 'kmoney_mixed') ORDER BY typname;
+  FROM pg_type WHERE typname IN ('kmoney_usd', 'kmoney_mixed') ORDER BY typname;
 
-\echo == 2. binary send() width + bytea (raw SEND path) ==
-SELECT length(kmoney_send('USD 10.50'::kmoney)) AS send_len,
-       encode(kmoney_send('USD 1.00'::kmoney), 'hex') AS usd_one_hex;
+\echo == 2. binary send() widths + bytea (raw SEND path) ==
+SELECT length(kmoney_usd_send('10.50'::kmoney_usd)) AS pinned_send_len,
+       length(kmoney_mixed_send('USD 10.50'::kmoney_mixed)) AS mixed_send_len,
+       encode(kmoney_usd_send('1.00'::kmoney_usd), 'hex') AS usd_one_hex;
 
-\echo == 2b. COPY (FORMAT BINARY) round trip: send out, recv back in ==
--- COPY is the in-database path that invokes kmoney_recv; its argument is `internal` and cannot
--- be provided by a SQL literal. Server-side file; single ysqlsh session, fixed name.
-CREATE TEMP TABLE wire_src (amount kmoney);
-INSERT INTO wire_src VALUES ('IDR -16000.50'),
-                            ('USD 0.000000000000000001'),
-                            ('USD 999999999999999999.999999999999999999');
+\echo == 2b. COPY (FORMAT BINARY) round trip on BOTH families: send out, recv back in ==
+-- COPY is the in-database path that invokes the recv functions; their argument is `internal`
+-- and cannot be provided by a SQL literal. Server-side file; single session, fixed names.
+-- The pinned recv is ONE shared symbol behind 178 declarations, so one type proves the path.
+CREATE TEMP TABLE wire_src (amount kmoney_usd);
+INSERT INTO wire_src VALUES ('-16000.50'),
+                            ('0.000000000000000001'),
+                            ('999999999999999999.999999999999999999');
 COPY wire_src TO '/tmp/kmoney_abi_wire.bin' (FORMAT BINARY);
 CREATE TEMP TABLE wire_dst (LIKE wire_src);
 COPY wire_dst FROM '/tmp/kmoney_abi_wire.bin' (FORMAT BINARY);
@@ -54,70 +57,74 @@ SELECT (SELECT count(*) FROM wire_dst) AS rows_recv,
        (SELECT array_agg(amount::text ORDER BY amount::text) FROM wire_src)
          = (SELECT array_agg(amount::text ORDER BY amount::text) FROM wire_dst)
          AS roundtrip_exact;
+CREATE TEMP TABLE wire_src_mixed (amount kmoney_mixed);
+INSERT INTO wire_src_mixed VALUES ('IDR -16000.50'), ('USD 0.000000000000000001');
+COPY wire_src_mixed TO '/tmp/kmoney_abi_wire_mixed.bin' (FORMAT BINARY);
+CREATE TEMP TABLE wire_dst_mixed (LIKE wire_src_mixed);
+COPY wire_dst_mixed FROM '/tmp/kmoney_abi_wire_mixed.bin' (FORMAT BINARY);
+SELECT (SELECT array_agg(amount::text ORDER BY amount::text) FROM wire_src_mixed)
+         = (SELECT array_agg(amount::text ORDER BY amount::text) FROM wire_dst_mixed)
+         AS mixed_roundtrip_exact;
 
-\echo == 3. arithmetic: + - and cross-currency refusal ==
-SELECT ('USD 10.50'::kmoney + 'USD 0.25'::kmoney)::text AS sum,
-       ('USD 10.50'::kmoney - 'USD 0.25'::kmoney)::text AS diff;
-\echo -- cross-currency + must ERROR (message must match A/B):
-SELECT ('USD 1.00'::kmoney + 'IDR 1.00'::kmoney)::text AS must_error;
+\echo == 3. arithmetic: + - within a type; cross-currency has NO OPERATOR ==
+SELECT ('10.50'::kmoney_usd + '0.25'::kmoney_usd)::text AS sum,
+       ('10.50'::kmoney_usd - '0.25'::kmoney_usd)::text AS diff;
+\echo -- cross-currency + must fail at PARSE time, 42883 (message must match A/B):
+SELECT ('1.00'::kmoney_usd + '1.00'::kmoney_idr)::text AS must_error;
 
-\echo == 4. kmoney_sum (VariadicArray + UnboxDatum) incl the domain-edge transient ==
-SELECT kmoney_sum('USD 10.50','USD 0.25','USD 0.25')::text AS s;
-SELECT kmoney_sum('USD 999999999999999999.999999999999999999',
-                  'USD 999999999999999999.999999999999999999',
-                  'USD -999999999999999999.999999999999999999')::text AS transient;
-SELECT kmoney_sum(VARIADIC ARRAY[]::kmoney[])::text AS empty_is_null;
-\echo -- mixed-currency variadic must ERROR:
-SELECT kmoney_sum('USD 1.00','IDR 1.00')::text AS must_error;
+\echo == 4. sum() aggregate (bytea transition state) incl the domain-edge transient ==
+-- Partial sums leave the domain while the total does not: the I256 transition
+-- state crosses the fmgr boundary on every row, which nothing else here does.
+SELECT sum(a)::text AS agg_across_a_domain_edge
+  FROM (VALUES ('999999999999999999.999999999999999999'::kmoney_usd),
+               ('999999999999999999.999999999999999999'::kmoney_usd),
+               ('-999999999999999999.999999999999999999'::kmoney_usd)) t(a);
+SELECT sum(a)::text IS NULL AS empty_is_null
+  FROM (SELECT '1.00'::kmoney_usd WHERE false) t(a);
 
-\echo == 5. kmoney_allocate including the zero-weight guard ==
+\echo == 5. allocate including the zero-weight guard and the remainder scheme ==
 SELECT string_agg(part::text, ' | ') AS even
-  FROM unnest(kmoney_allocate('USD 10.00', ARRAY[1,1,1])) part;
+  FROM unnest(kmoney_usd_allocate('10.00', ARRAY[1,1,1])) part;
 SELECT string_agg(part::text, ' | ') AS zero_weight
-  FROM unnest(kmoney_allocate('USD 0.000000000000000001', ARRAY[0,1,1])) part;
-SELECT kmoney_sum(VARIADIC array_agg(part))::text AS conserves
-  FROM unnest(kmoney_allocate('IDR 16000.01', ARRAY[7,2,1])) part;
+  FROM unnest(kmoney_usd_allocate('0.000000000000000001', ARRAY[0,1,1])) part;
+-- Leftover units land on the FIRST positive-weight shares (not largest remainder).
+SELECT string_agg(part::text, ' | ') AS first_positive
+  FROM unnest(kmoney_usd_allocate('0.000000000000000008', ARRAY[1,1,3])) part;
+SELECT sum(part)::text AS conserves
+  FROM unnest(kmoney_idr_allocate('16000.01', ARRAY[7,2,1])) part;
 
-\echo == 6. comparison operators as PREDICATES (same-currency orders; cross-currency refuses) ==
-SELECT ('USD 1.00'::kmoney <  'USD 2.00'::kmoney) AS lt,
-       ('USD 2.00'::kmoney >= 'USD 2.00'::kmoney) AS ge,
-       ('USD 1.00'::kmoney =  'IDR 1.00'::kmoney) AS cross_eq_false;
--- `=` is TOTAL, so it filters a mixed column without raising; ordering filters same-currency.
-CREATE TEMP TABLE pred (amount kmoney);
-INSERT INTO pred VALUES ('USD 1.00'),('USD 2.00'),('IDR 1.00'),('USD 1.00');
-SELECT count(*) AS usd_ones FROM pred WHERE amount = 'USD 1.00'::kmoney;
-\echo -- cross-currency ORDERING must ERROR (message must match A/B):
-SELECT ('IDR 1.00'::kmoney > 'USD 1.00'::kmoney) AS must_error;
+\echo == 6. comparison operators as PREDICATES (within a type; cross-type cannot parse) ==
+SELECT ('1.00'::kmoney_usd <  '2.00'::kmoney_usd) AS lt,
+       ('2.00'::kmoney_usd >= '2.00'::kmoney_usd) AS ge;
+CREATE TEMP TABLE pred (amount kmoney_usd);
+INSERT INTO pred VALUES ('1.00'),('2.00'),('1.00');
+SELECT count(*) AS usd_ones FROM pred WHERE amount = '1.00'::kmoney_usd;
+\echo -- cross-currency ORDERING must fail at PARSE time, 42883 (message must match A/B):
+SELECT ('1.00'::kmoney_idr > '1.00'::kmoney_usd) AS must_error;
 
 \echo == 7. PINNED hash values (the sharpest custom-type ABI signal) ==
--- These i32 come from kamu_money_core::stable_hash golden vectors. If the 18-byte
+-- These i32 come from kamu_money_core::stable_hash golden vectors. If the 16-byte
 -- payload is read at a wrong offset on YB, these diverge -- silently-wrong money
--- made visible. kmoney_hash is a plain function now (no hash opclass/index).
-SELECT kmoney_hash('USD 0.00'::kmoney)  AS h_usd_0,
-       kmoney_hash('USD 1.00'::kmoney)  AS h_usd_1,
-       kmoney_hash('IDR 1.00'::kmoney)  AS h_idr_1,
-       kmoney_hash('USD -1.00'::kmoney) AS h_usd_neg1;
-SELECT kmoney_hash('USD 1.00'::kmoney) = kmoney_mixed_hash('USD 1.00'::kmoney_mixed) AS same_payload_same_hash;
+-- made visible. The hash is a plain function (no hash opclass/index).
+SELECT kmoney_usd_hash('0.00'::kmoney_usd)  AS h_usd_0,
+       kmoney_usd_hash('1.00'::kmoney_usd)  AS h_usd_1,
+       kmoney_idr_hash('1.00'::kmoney_idr)  AS h_idr_1,
+       kmoney_usd_hash('-1.00'::kmoney_usd) AS h_usd_neg1;
+SELECT kmoney_usd_hash('1.00'::kmoney_usd) = kmoney_mixed_hash('USD 1.00'::kmoney_mixed) AS same_logical_same_hash;
 
-\echo == 8. the sum aggregate on kmoney, and its absence on kmoney_mixed ==
+\echo == 8. the mixed type: total equality, no arithmetic, no sum ==
 SELECT ('USD 1.00'::kmoney_mixed = 'IDR 1.00'::kmoney_mixed) AS mixed_cross_eq_false;
-\echo -- sum(kmoney) exists with a wide transition state:
--- Two rows whose partial sum leaves the domain while the total does not. This aggregate uses
--- I256 and
--- checks the domain once. On the ABI surface this also exercises a bytea transition state
--- crossing the fmgr boundary on every row, which nothing else in this battery does.
-SELECT sum(a)::text AS agg_across_a_domain_edge
-  FROM (VALUES ('USD 999999999999999999.999999999999999999'::kmoney),
-               ('USD 999999999999999999.999999999999999999'::kmoney),
-               ('USD -999999999999999999.999999999999999999'::kmoney)) t(a);
+CREATE TEMP TABLE pred_mixed (amount kmoney_mixed);
+INSERT INTO pred_mixed VALUES ('USD 1.00'),('USD 2.00'),('IDR 1.00'),('USD 1.00');
+SELECT count(*) AS mixed_usd_ones FROM pred_mixed WHERE amount = 'USD 1.00'::kmoney_mixed;
 \echo -- sum(kmoney_mixed) must remain unavailable because mixed rows have no single currency:
 SELECT sum(a) FROM (VALUES ('USD 1.00'::kmoney_mixed)) t(a);
 
-\echo == 9. domain + precision refusals (parse path) ==
--- The ISO prefix is REQUIRED here. Without it this dies in the literal parser
--- ("invalid money literal") and the domain branch is never reached -- the probe would then
--- claim domain coverage it does not actually have.
-SELECT 'USD 1000000000000000000.00'::kmoney;             -- one past the domain: ERROR
-SELECT 'USD 0.0000000000000000005'::kmoney;              -- 19dp: ERROR, never rounded
+\echo == 9. domain + precision + wrong-tag refusals (parse path) ==
+-- Bare literals reach the pinned domain branch directly; the tagged probe is the
+-- wire-correctness heart: a well-formed value of the WRONG currency is refused.
+SELECT '1000000000000000000.00'::kmoney_usd;              -- one past the domain: ERROR
+SELECT '0.0000000000000000005'::kmoney_usd;               -- 19dp: ERROR, never rounded
+SELECT 'IDR 1.00'::kmoney_usd;                            -- wrong tag: ERROR
 
 \echo == BATTERY COMPLETE ==

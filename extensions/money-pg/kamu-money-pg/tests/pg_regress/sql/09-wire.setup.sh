@@ -39,7 +39,8 @@ printf 'KMONEY_SUITE_DIR=%s\n' "$D"
 # 11-byte signature, then flags and header-extension, both int32 zero.
 HDR='\x50\x47\x43\x4f\x50\x59\x0a\xff\x0d\x0a\x00\x00\x00\x00\x00\x00\x00\x00\x00'
 FIELDS='\x00\x01'          # one field in this tuple
-LEN18='\x00\x00\x00\x12'   # field length 18
+LEN18='\x00\x00\x00\x12'   # field length 18 -- the mixed payload
+LEN16='\x00\x00\x00\x10'   # field length 16 -- the pinned payload
 LEN10='\x00\x00\x00\x0a'   # field length 10 -- the truncated probe
 LEN26='\x00\x00\x00\x1a'   # field length 26 -- the trailing-bytes probe
 TRAILER='\xff\xff'
@@ -61,6 +62,9 @@ write() { printf "$2" > "$D/$1"; chmod 0600 "$D/$1"; }
 
 # Valid framing, units one past the domain top, currency left valid -> the DOMAIN check fires.
 write kmoney_suite_bad_domain.bin "$HDR$FIELDS$LEN18$UNITS_OVER$USD$TRAILER"
+# The PINNED variant: 16 currency-less bytes, one past the domain top -> the shared
+# pinned recv's domain check fires, and its message names the per-type SQL function.
+write kmoney_suite_bad_pin_domain.bin "$HDR$FIELDS$LEN16$UNITS_OVER$TRAILER"
 # Valid framing, valid units, currency code 0 -> the CURRENCY check fires.
 write kmoney_suite_bad_nocur.bin  "$HDR$FIELDS$LEN18$UNITS_ONE$NOCUR$TRAILER"
 # Field length AND payload both cut to 10, so the file stays self-consistent and it is recv --
@@ -72,7 +76,7 @@ write kmoney_suite_bad_long.bin   "$HDR$FIELDS$LEN26$UNITS_ONE$USD$PAD8$TRAILER"
 # Fail closed on the one thing printf can get wrong: a mis-typed escape silently shortens a file.
 # Without this, a 44-byte "good" payload would be refused for the WRONG reason and the case would
 # still pass, because the expected output is an error either way.
-for f in bad_domain:45 bad_nocur:45 bad_short:37 bad_long:53; do
+for f in bad_domain:45 bad_pin_domain:43 bad_nocur:45 bad_short:37 bad_long:53; do
     name="${f%%:*}"; want="${f##*:}"
     got=$(wc -c < "$D/kmoney_suite_$name.bin")
     [ "$got" -eq "$want" ] || {
@@ -80,4 +84,4 @@ for f in bad_domain:45 bad_nocur:45 bad_short:37 bad_long:53; do
         exit 1
     }
 done
-echo "09-wire.setup: wrote 4 crafted payloads"
+echo "09-wire.setup: wrote 5 crafted payloads"

@@ -81,10 +81,39 @@ To move to a newer edition:
    digest against the file, so a half-done step 2 cannot pass as complete.
 4. Update the pinned count in `src/iso.rs`'s
    `the_register_matches_the_edition_it_was_generated_from`.
+5. If `tests/register_lifecycle.rs` fails, a currency's IDENTITY moved — apply
+   the append-only policy below before re-blessing its digest.
 
 Each failure is the intended prompt for the next step, not an obstacle to route
 around. The ordering matters: step 1 breaks the build rather than the tests, so
 a replaced file cannot reach a green suite by way of a forgotten edit.
+
+## Identity facts are append-only
+
+Persisted data outlives register editions. Stored `kmoney_mixed` payloads
+resolve their 2-byte numeric against the compiled register at every read,
+`kamu-money-pg` derives one SQL type per code, and
+`stable_hash(code.numeric(), units)` values are persisted by downstream
+systems. So the `(alpha3, numeric)` mapping is a persistence contract, not
+reference data:
+
+- **Codes are never removed.** When ISO withdraws a currency, the register
+  keeps it. Removing a code deletes its derived SQL type and its recv/out
+  symbols while production catalogs still reference them, and makes stored
+  mixed rows of that currency unreadable — including by `pg_dump`, which is
+  the only migration path.
+- **Numeric codes never change.** A changed numeric silently re-labels stored
+  mixed money as another currency and moves every persisted hash without a
+  `STABLE_HASH_VERSION` bump. If ISO ever reuses or renumbers a code, that is
+  a `STABLE_HASH_VERSION` decision, not a register refresh.
+- **Additions are ordinary.** A new code adds a new type and disturbs nothing
+  stored. Exponent and name changes are also ordinary for STORAGE — canonical
+  units are scale-18 regardless of exponent — but an exponent change shifts
+  rendered text (trailing zeros), which moves goldens and any `::text`
+  expression index, and deserves its own release note.
+
+`tests/register_lifecycle.rs` pins the digest of the full mapping so none of
+this can happen as a side effect of step 1.
 
 ## What the build script checks, as it reads
 

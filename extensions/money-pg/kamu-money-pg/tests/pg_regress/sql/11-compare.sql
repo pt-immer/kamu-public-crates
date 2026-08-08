@@ -1,8 +1,7 @@
--- 11-compare: equality is TOTAL, ordering REFUSES across currencies, and there is no way out to
--- `numeric`.
+-- 11-compare: total ordering within a currency; none across, and no numeric bridge.
 --
--- Ports: equality_is_currency_aware_and_never_raises, ordering_refuses_cross_currency,
--- there_is_no_cast_to_numeric.
+-- Ports: there_is_no_cast_to_numeric, pinned_ordering_needs_no_currency_check,
+-- cross_currency_ordering_has_no_operator.
 \pset pager off
 \pset footer off
 \pset format unaligned
@@ -12,25 +11,13 @@
 SET client_min_messages = error;
 CREATE EXTENSION IF NOT EXISTS kmoney;
 
-\echo -- equality_is_currency_aware_and_never_raises
-CREATE TEMP TABLE cmp (amount kmoney);
-INSERT INTO cmp VALUES ('USD 1.00'), ('USD 2.00'), ('IDR 1.00'), ('USD 1.00');
--- `=` never raises across currencies, so it is safe as a predicate everywhere -- including on a
--- column holding several. Ordering within ONE currency filters normally, which is all a wallet
--- whose columns are typmod-pinned ever asks of it.
-SELECT 'cross_eq=' || ('USD 1.00'::kmoney = 'IDR 1.00'::kmoney)
-    || ' same_eq=' || ('USD 1.00'::kmoney = 'USD 1.00'::kmoney)
-    || ' usd_ones=' || (SELECT count(*) FROM cmp WHERE amount = 'USD 1.00'::kmoney)
-    || ' gt_within_one_currency=' || ('USD 2.00'::kmoney > 'USD 1.00'::kmoney);
+\echo -- pinned_ordering_needs_no_currency_check
+SELECT 'ordered=' || ('1.00'::kmoney_usd < '2.00'::kmoney_usd);
 
-\echo -- ordering_refuses_cross_currency
--- Comparing < / > across currencies would order by ISO numeric code, so `WHERE amount > 'USD
--- 1.00'` on a column that happens to hold several could report a tiny foreign amount as GREATER
--- THAN a dollar. Ordering therefore errors exactly like `+`; equality stays total.
-SELECT 'IDR 1.00'::kmoney > 'USD 1.00'::kmoney;
+\echo -- cross_currency_ordering_has_no_operator
+SELECT '1.00'::kmoney_usd < '1.00'::kmoney_idr;
 
 \echo -- there_is_no_cast_to_numeric
--- A numeric cast would expose PostgreSQL's silently rounding operators. Text is the egress.
-SELECT ('USD 1.00'::kmoney)::numeric::text;
+SELECT ('1.00'::kmoney_usd)::numeric::text;
 
 \echo == CASE COMPLETE: 11-compare ==

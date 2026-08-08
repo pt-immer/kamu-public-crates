@@ -44,15 +44,15 @@ yb_cluster_up "$N" "$YB_IMAGE"
 yb_install_extension_on_all "$ART"
 yb_sql 0 -c 'CREATE EXTENSION kmoney' >/dev/null
 
-yb_sql 0 -c "CREATE TABLE account (id int PRIMARY KEY, balance kmoney('IDR')) SPLIT INTO 6 TABLETS" >/dev/null
-yb_sql 0 -c "INSERT INTO account SELECT g, '$SEED_EACH'::kmoney FROM generate_series(1, $ACCOUNTS) g" >/dev/null
+yb_sql 0 -c "CREATE TABLE account (id int PRIMARY KEY, balance kmoney_idr) SPLIT INTO 6 TABLETS" >/dev/null
+yb_sql 0 -c "INSERT INTO account SELECT g, '$SEED_EACH'::kmoney_idr FROM generate_series(1, $ACCOUNTS) g" >/dev/null
 
 # Exercise the row aggregate every fifteen seconds against a table under concurrent writes, matching
 # the shape of a reconciliation query.
 TOTAL_SQL="SELECT sum(balance)::text FROM account"
 OPENING="$(yb_sql 0 -c "$TOTAL_SQL" | tr -d ' ')"
 
-say "kmoney soak on YugabyteDB"
+say "kmoney_idr soak on YugabyteDB"
 say "image     $YB_IMAGE"
 say "cluster   $N nodes RF=3, $WORKERS workers, $ACCOUNTS accounts"
 say "duration  ${MINUTES} minute(s)"
@@ -96,8 +96,8 @@ soak_worker() {
                     'exec bin/ysqlsh -h "$1" -U yugabyte -X -q -t -A -v ON_ERROR_STOP=1 2>&1' \
                     ysqlsh "${YB_HOSTS[$node]}" <<SQL
 BEGIN;
-UPDATE account SET balance = balance - '$amt'::kmoney WHERE id = $from;
-UPDATE account SET balance = balance + '$amt'::kmoney WHERE id = $to;
+UPDATE account SET balance = balance - '$amt'::kmoney_idr WHERE id = $from;
+UPDATE account SET balance = balance + '$amt'::kmoney_idr WHERE id = $to;
 COMMIT;
 SQL
             ); rc=$?
@@ -135,10 +135,10 @@ while [ "$(now_epoch)" -lt "$DEADLINE" ]; do
     round=$((round + 1))
     total="$(yb_sql 0 -c "$TOTAL_SQL" 2>/dev/null | tr -d ' ' || echo UNREADABLE)"
     rows="$(yb_sql 0 -c "SELECT count(*) FROM account" 2>/dev/null | tr -d ' ' || echo '?')"
-    # Every balance must still re-parse to itself: a torn 18-byte payload is the failure mode a
+    # Every balance must still re-parse to itself: a torn 16-byte payload is the failure mode a
     # long run is most likely to surface, and a total that happens to still add up would not
     # necessarily reveal it.
-    torn="$(yb_sql 0 -c "SELECT count(*) FROM account WHERE balance::text::kmoney <> balance" 2>/dev/null | tr -d ' ' || echo '?')"
+    torn="$(yb_sql 0 -c "SELECT count(*) FROM account WHERE balance::text::kmoney_idr <> balance" 2>/dev/null | tr -d ' ' || echo '?')"
     if [ "$total" = "$OPENING" ] && [ "$rows" = "$ACCOUNTS" ] && [ "$torn" = "0" ]; then
         say "round $round  $(( $(now_epoch) - START ))s  total=$total rows=$rows torn=0  OK"
     else

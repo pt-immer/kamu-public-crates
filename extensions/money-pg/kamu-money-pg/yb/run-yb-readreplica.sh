@@ -70,7 +70,7 @@ done
 echo
 echo "=== 2. ONE CREATE EXTENSION on the primary is visible to the replica ==="
 yb_sql 0 -c 'CREATE EXTENSION kmoney' >/dev/null
-yb_sql 0 -c "CREATE TABLE rr_ledger (id int PRIMARY KEY, amount kmoney('IDR'))" >/dev/null
+yb_sql 0 -c "CREATE TABLE rr_ledger (id int PRIMARY KEY, amount kmoney_idr)" >/dev/null
 yb_sql 0 -c "INSERT INTO rr_ledger VALUES (1, 'IDR 16000.000000000000000001'), \
                                           (2, 'IDR -0.000000000000000001')" >/dev/null
 
@@ -91,7 +91,7 @@ fi
 echo
 echo "=== 3. values read on the replica are BYTE-IDENTICAL to the primary ==="
 # The rendering is the codec, so identical text means the replica's own copy of the extension
-# decoded the stored 18 bytes exactly as the primary's did. A currency or a digit lost in transit
+# decoded the stored 16 bytes exactly as the primary's did. A digit lost in transit
 # would show here and nowhere else.
 p="$(yb_sql    0 -c "SELECT string_agg(amount::text, ' | ' ORDER BY id) FROM rr_ledger" | tr -d ' ' )"
 r="$(yb_rr_sql 0 -c "SELECT string_agg(amount::text, ' | ' ORDER BY id) FROM rr_ledger" | tr -d ' ' )"
@@ -103,12 +103,12 @@ fi
 
 echo
 echo "=== 4. the pinned hashes agree -- the sharpest ABI signal, on replica hardware ==="
-HASHES="SELECT kmoney_hash('USD 0.00'::kmoney) || ' ' || kmoney_hash('USD 1.00'::kmoney) \
-        || ' ' || kmoney_hash('IDR 1.00'::kmoney) || ' ' || kmoney_hash('USD -1.00'::kmoney)"
+HASHES="SELECT kmoney_usd_hash('0.00'::kmoney_usd) || ' ' || kmoney_usd_hash('1.00'::kmoney_usd) \
+        || ' ' || kmoney_idr_hash('1.00'::kmoney_idr) || ' ' || kmoney_usd_hash('-1.00'::kmoney_usd)"
 ph="$(yb_sql 0 -c "$HASHES" | tr -d ' ')"
 rh="$(yb_rr_sql 0 -c "$HASHES" | tr -d ' ')"
 if [ "$ph" = "$rh" ]; then
-    ok "kmoney_hash agrees across the placement boundary: $ph"
+    ok "the pinned hashes agree across the placement boundary: $ph"
 else
     bad "primary hashes '$ph' != replica '$rh'"
 fi
@@ -120,12 +120,12 @@ echo "=== 5. NEGATIVE CONTROL: a replica without the library must FAIL LOUDLY ==
 # about the replica at all.
 docker exec -u 0 "${YB_RR_NODES[0]}" bash -c "rm -f $YB_LIB"
 set +e
-out="$(yb_rr_sql 0 -c "SELECT 'USD 1.00'::kmoney::text" 2>&1)"
+out="$(yb_rr_sql 0 -c "SELECT 'USD 1.00'::kmoney_usd::text" 2>&1)"
 set -e
 if printf '%s' "$out" | grep -qiE 'could not (access|open|load) file|No such file'; then
     ok "the replica refuses clearly: $(printf '%s' "$out" | head -1)"
-elif printf '%s' "$out" | grep -q 'USD 1.00'; then
-    bad "the replica answered 'USD 1.00' with NO kmoney.so -- every probe above is suspect"
+elif printf '%s' "$out" | grep -q '^1\.00$'; then
+    bad "the replica answered '1.00' with NO kmoney.so -- every probe above is suspect"
 else
     bad "the replica failed, but not with a missing-library error: $(printf '%s' "$out" | head -2 | tr '\n' ' ')"
 fi
@@ -135,7 +135,7 @@ yb_restore_extension_on "${YB_RR_NODES[0]}" "${YB_NODES[0]}"
 
 echo
 if [ "$fail" -eq 0 ]; then
-    echo "run-yb-readreplica: OK -- kmoney behaves identically on a read-replica placement,"
+    echo "run-yb-readreplica: OK -- the money types behave identically on a read-replica placement,"
     echo "                    and a replica without the library fails loudly rather than diverging."
 else
     echo "run-yb-readreplica: FAILED -- $fail probe(s)" >&2

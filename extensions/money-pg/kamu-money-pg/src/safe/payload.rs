@@ -154,7 +154,7 @@ pub(crate) const fn validate_pinned(payload: PinnedPayload) -> Result<PinnedAmou
 // The mixed payload: units plus a stored ISO code.
 // ---------------------------------------------------------------------------
 
-/// A payload whose currency, optional expected currency, and amount domain are valid.
+/// A payload whose stored currency and amount domain are valid.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ValidatedAmount {
     payload: Payload,
@@ -176,16 +176,11 @@ impl ValidatedAmount {
 }
 
 /// Validate one raw payload at every mixed, wire, and datum-to-operation edge.
-pub(crate) fn validate_payload(
-    payload: Payload,
-    expected: Option<Iso4217>,
-) -> Result<ValidatedAmount, ValidationError> {
-    if let Some(expected) = expected
-        && payload.code() != expected.numeric()
-    {
-        return Err(ValidationError::UnexpectedCurrency { expected, found_code: payload.code() });
-    }
-
+///
+/// There is no `expected` currency parameter. The erased type stores a code
+/// precisely because no expectation exists for it, and every type that HAS an
+/// expectation carries it in the catalog and stores no code at all.
+pub(crate) fn validate_payload(payload: Payload) -> Result<ValidatedAmount, ValidationError> {
     let currency = Iso4217::from_numeric(payload.code())
         .ok_or(ValidationError::UnknownCurrency { code: payload.code() })?;
     if !domain::in_domain(payload.units()) {
@@ -208,7 +203,6 @@ impl fmt::Display for PayloadLengthError {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ValidationError {
-    UnexpectedCurrency { expected: Iso4217, found_code: u16 },
     UnknownCurrency { code: u16 },
     OutOfDomain { units: i128, currency: Iso4217 },
 }
@@ -216,14 +210,6 @@ pub(crate) enum ValidationError {
 impl fmt::Display for ValidationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            Self::UnexpectedCurrency { expected, found_code } => {
-                write!(f, "expected {}, found ", expected.alpha3())?;
-                if let Some(found) = Iso4217::from_numeric(found_code) {
-                    f.write_str(found.alpha3())
-                } else {
-                    write!(f, "<unknown code {found_code}>")
-                }
-            }
             Self::UnknownCurrency { code } => {
                 write!(f, "stored ISO 4217 numeric code {code} is not in kamu_money_core's table")
             }

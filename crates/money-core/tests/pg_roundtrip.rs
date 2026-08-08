@@ -67,7 +67,7 @@ fn money_round_trips_through_a_text_column() {
 
 /// **The stored bytes are the canonical form**, readable as text by anything — including a
 /// database that has never heard of this crate. Pinning the literal is the point: it is also
-/// what `kmoney`'s output function emits and what the serde wire carries.
+/// what `kamu-money-pg`'s output functions emit and what the serde wire carries.
 #[test]
 fn the_stored_text_is_the_canonical_form() {
     let mut pg = start();

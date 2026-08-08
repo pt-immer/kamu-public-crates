@@ -11,8 +11,8 @@
 #
 # The target this project actually claims -- a Rust service talking to native `kmoney` on
 # YugabyteDB -- is the intersection, and nothing executed it. That intersection is where YSQL's
-# parameter inference, prepared statements, the explicit `($1::text)::kmoney` cast, typmod error
-# propagation, result-format selection and driver decoding all meet the FORKED backend. Passing
+# parameter inference, prepared statements, the explicit `($1::text)::kmoney_usd` cast, wrong-tag
+# error propagation, result-format selection and driver decoding all meet the FORKED backend. Passing
 # the same client query against stock PostgreSQL is evidence about PostgreSQL.
 #
 # HOW IT CONNECTS, and why not a published port. Every other harness here talks to YugabyteDB

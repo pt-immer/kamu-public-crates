@@ -2,8 +2,8 @@
 
 use pgrx::datum::{FromDatum, IntoDatum};
 
+use crate::kmoney_mixed;
 use crate::safe::payload::{PAYLOAD_BYTES, Payload};
-use crate::{kmoney, kmoney_mixed};
 
 macro_rules! impl_fixed_length_datum {
     ($t:ident) => {
@@ -119,7 +119,6 @@ macro_rules! impl_fixed_length_datum {
     };
 }
 
-impl_fixed_length_datum!(kmoney);
 impl_fixed_length_datum!(kmoney_mixed);
 
 /// The same ABI surface for a per-currency type, over the 16-byte payload.

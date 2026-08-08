@@ -96,8 +96,8 @@ impl<C: StaticCurrency> Money<C> {
 /// Add two canonical unit counts. `None` if **either operand** or the result is outside the
 /// domain.
 ///
-/// This is the shared `Money`/`kmoney` addition kernel: both
-/// [`Money::checked_add`] and `kamu-money-pg`'s `kmoney_add` delegate here.
+/// This is the shared `Money`/`kamu-money-pg` addition kernel: both
+/// [`Money::checked_add`] and `kamu-money-pg`'s generated `<type>_add` functions delegate here.
 #[inline]
 #[must_use]
 pub const fn add_units(a: i128, b: i128) -> Option<i128> {
@@ -120,7 +120,7 @@ pub const fn add_units(a: i128, b: i128) -> Option<i128> {
 
 /// Subtract two canonical unit counts. `None` if **either operand** or the result is outside
 /// the domain. The units-level kernel behind both [`Money::checked_sub`] and `kamu-money-pg`'s
-/// `kmoney_sub`.
+/// the generated `<type>_sub` functions.
 #[inline]
 #[must_use]
 pub const fn sub_units(a: i128, b: i128) -> Option<i128> {
@@ -143,7 +143,7 @@ pub const fn sub_units(a: i128, b: i128) -> Option<i128> {
 
 /// Sum canonical units exactly, checking the domain **once**, at the end.
 ///
-/// Shared by [`Money::try_sum`] and `kamu-money-pg`'s `kmoney_sum`.
+/// Shared by [`Money::try_sum`] and `kamu-money-pg`'s `sum()` aggregates.
 ///
 /// Accumulating in [`I256`] and narrowing once avoids an `i128` fold whose transient partial
 /// sum leaves the domain before the final total returns to it. That behavior would make
@@ -161,7 +161,7 @@ pub fn sum_units<I: IntoIterator<Item = i128>>(units: I) -> Result<i128, AmountE
     acc.finish()
 }
 
-/// Wide accumulator behind [`sum_units`] and PostgreSQL's `sum(kmoney)` aggregate.
+/// Wide accumulator behind [`sum_units`] and `kamu-money-pg`'s per-currency `sum()` aggregates.
 ///
 /// * every **term** is domain-checked as it enters ([`Self::add_units`]) — a total computed from
 ///   a term that was never money is not a total;

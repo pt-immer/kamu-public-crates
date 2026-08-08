@@ -37,26 +37,29 @@ set -euo pipefail
 # ---------------------------------------------------------------------------------------------
 assertion_table() {
     cat <<'TABLE'
-F%%%USD 10.50 | IDR 16000.01 | JPY 10.5 | KWD 10.500 | USD -0.000000000000000001 | USD 999999999999999999.999999999999999999%%%%%%s1 text round-trip across every exponent class, incl. the domain top and one canonical unit
-F%%%18 | 000064a7b3b6e00d00000000000000004803%%%%%%s2 send() width AND the exact 18 payload bytes for USD 1.00
-E%%%^ +3 \| t *$%%%%%%s2b COPY BINARY round trip: rows_recv = 3, roundtrip_exact = t
-F%%%USD 10.75 | USD 10.25%%%%%%s3 same-currency + and - results
-F%%%USD 11.00%%%%%%s4 kmoney_sum result
-E%%%^ *USD 3\.333333333333333334 \| USD 3\.333333333333333333 \| USD 3\.333333333333333333 *$%%%%%%s5 allocate even split, odd unit on the first share
-E%%%^ *USD 0\.00 \| USD 0\.000000000000000001 \| USD 0\.00 *$%%%%%%s5 allocate zero-weight guard
-H%%%conserves%%%IDR 16000.01%%%s5 allocation conserves the total exactly
-E%%%^ t  \| t  \| f *$%%%%%%s6 comparison predicates: lt, ge, cross-currency eq is false
-H%%%usd_ones%%%2%%%s6 equality predicate selectivity over a mixed column
-E%%%^ *702888007 \| -1388235877 \| -129968833 \| 1671845669 *$%%%%%%s7 pinned kmoney_hash values -- the sharpest ABI signal
-H%%%same_payload_same_hash%%%t%%%s7 kmoney_hash and kmoney_mixed_hash agree on one payload
+F%%%10.50 | 10.50 | 16000.01 | 10.5 | 10.500 | -0.000000000000000001 | 999999999999999999.999999999999999999%%%%%%s1 text round-trip across every exponent class, incl. the tagged form, the domain top and one canonical unit
+F%%%16 | 18 | 000064a7b3b6e00d0000000000000000%%%%%%s2 send() widths AND the exact 16 payload bytes for USD 1.00
+E%%%^ +3 \| t *$%%%%%%s2b pinned COPY BINARY round trip: rows_recv = 3, roundtrip_exact = t
+H%%%mixed_roundtrip_exact%%%t%%%s2b mixed COPY BINARY round trip survives send -> recv
+F%%%10.75 | 10.25%%%%%%s3 same-currency + and - results
+H%%%agg_across_a_domain_edge%%%999999999999999999.999999999999999999%%%s4 sum() totals a column across a partial sum outside the stored-value domain
+H%%%empty_is_null%%%t%%%s4 sum() over no rows is NULL, never a zero
+E%%%^ *3\.333333333333333334 \| 3\.333333333333333333 \| 3\.333333333333333333 *$%%%%%%s5 allocate even split, odd unit on the first share
+E%%%^ *0\.00 \| 0\.000000000000000001 \| 0\.00 *$%%%%%%s5 allocate zero-weight guard
+E%%%^ *0\.000000000000000002 \| 0\.000000000000000002 \| 0\.000000000000000004 *$%%%%%%s5 allocate remainder scheme: leftover units to the FIRST positive-weight shares
+H%%%conserves%%%16000.01%%%s5 allocation conserves the total exactly
+E%%%^ t  \| t *$%%%%%%s6 comparison predicates: lt, ge
+H%%%usd_ones%%%2%%%s6 equality predicate selectivity over a pinned column
+E%%%^ *702888007 \| -1388235877 \| -129968833 \| 1671845669 *$%%%%%%s7 pinned hash values -- the sharpest ABI signal
+H%%%same_logical_same_hash%%%t%%%s7 the pinned and mixed hashes agree on one logical amount
 H%%%mixed_cross_eq_false%%%f%%%s8 kmoney_mixed cross-currency equality is false, not an error
-F%%%kmoney: cannot compute USD + IDR: different currencies%%%%%%refusal: cross-currency addition
-F%%%kmoney: cannot sum USD and IDR: different currencies%%%%%%refusal: cross-currency variadic sum
-F%%%kmoney: cannot compute IDR > USD: different currencies%%%%%%refusal: cross-currency ordering
-H%%%agg_across_a_domain_edge%%%USD 999999999999999999.999999999999999999%%%s8 sum(kmoney) totals a column across a partial sum outside the stored-value domain
+H%%%mixed_usd_ones%%%2%%%s8 equality predicate selectivity over a mixed column
+F%%%operator does not exist: kmoney_usd + kmoney_idr%%%%%%refusal: cross-currency addition cannot parse, 42883
+F%%%operator does not exist: kmoney_idr > kmoney_usd%%%%%%refusal: cross-currency ordering cannot parse, 42883
 F%%%function sum(kmoney_mixed) does not exist%%%%%%refusal: no sum(kmoney_mixed) aggregate
 F%%%canonical units is outside the supported range%%%%%%refusal: one past the domain top
 F%%%fractional digits exceeds the supported scale of 18%%%%%%refusal: excess precision, refused not rounded
+F%%%kmoney_usd: expected USD, got IDR%%%%%%refusal: a well-formed value of the WRONG currency is refused at input
 TABLE
 }
 

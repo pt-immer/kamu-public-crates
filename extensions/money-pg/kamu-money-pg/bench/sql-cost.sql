@@ -1,4 +1,4 @@
--- What `kmoney` costs in SQL, against `numeric(36,18)`, and WHERE the cost is. NEVER a gate.
+-- What `kmoney_usd` costs in SQL, against `numeric(36,18)`, and WHERE the cost is. NEVER a gate.
 --
 -- Driven by kamu-money-pg/bench/run-bench-pg.sh (`just bench-pg`). Timed inside the server with
 -- clock_timestamp rather than psql's \timing, so client round-trip and formatting are excluded.
@@ -29,7 +29,7 @@
 \endif
 \echo '=== rows:' :rows ' passes:' :passes ' ==='
 
-CREATE EXTENSION IF NOT EXISTS kmoney;
+CREATE EXTENSION IF NOT EXISTS kmoney_usd;
 
 -- Set before measurement and assert below.
 SET max_parallel_workers_per_gather = 0;
@@ -43,7 +43,7 @@ SET max_parallel_workers_per_gather = 0;
 DROP TABLE IF EXISTS t;
 CREATE TABLE t AS
 SELECT g AS id,
-       ('USD ' || amt)::kmoney       AS m,
+       ('USD ' || amt)::kmoney_usd       AS m,
        amt::numeric(36,18)           AS n,
        'USD'::char(3)                AS cur,
        ('USD ' || amt)               AS canon
@@ -66,12 +66,12 @@ BEGIN
     -- disagreed with `m` would make the two parse rows measure different work.
     SELECT count(*) INTO disagreements
     FROM t
-    WHERE m <> ('USD ' || n::text)::kmoney
-       OR m <> canon::kmoney
+    WHERE m <> ('USD ' || n::text)::kmoney_usd
+       OR m <> canon::kmoney_usd
        OR cur <> 'USD';
     IF disagreements <> 0 THEN
         RAISE EXCEPTION
-            'kmoney and numeric disagree on % of % rows. Nothing below this line is worth '
+            'kmoney_usd and numeric disagree on % of % rows. Nothing below this line is worth '
             'measuring: a benchmark of a wrong implementation is an argument for shipping the '
             'wrong thing.', disagreements, (SELECT count(*) FROM t);
     END IF;
@@ -84,27 +84,27 @@ BEGIN
     WHERE cur || ' ' || to_char(n, 'FM99999999999999999990.00') <> m::text;
     IF render_diffs <> 0 THEN
         RAISE EXCEPTION
-            'the numeric render and the kmoney render disagree on % of % rows (e.g. %). Timing '
+            'the numeric render and the kmoney_usd render disagree on % of % rows (e.g. %). Timing '
             'them against each other would compare two different outputs and call the difference '
             'a cost.', render_diffs, (SELECT count(*) FROM t), example;
     END IF;
-    RAISE NOTICE 'correctness: the numeric+cur render is byte-equal to kmoney''s over % rows',
+    RAISE NOTICE 'correctness: the numeric+cur render is byte-equal to kmoney_usd''s over % rows',
         (SELECT count(*) FROM t);
 END $$;
 
 -- These SQL-language controls measure SQL call overhead, not bytea-state plumbing. Keep them
 -- labelled as invalid controls so they are not mistaken for aggregate baselines.
-CREATE OR REPLACE FUNCTION noop_accum(state bytea, v kmoney) RETURNS bytea
+CREATE OR REPLACE FUNCTION noop_accum(state bytea, v kmoney_usd) RETURNS bytea
   AS $$ SELECT COALESCE($1, repeat(E'\\000', 34)::bytea) $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 CREATE OR REPLACE FUNCTION noop_final(state bytea) RETURNS bigint
   AS $$ SELECT length($1)::bigint $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
-DROP AGGREGATE IF EXISTS noop_sum(kmoney);
-CREATE AGGREGATE noop_sum(kmoney) (
+DROP AGGREGATE IF EXISTS noop_sum(kmoney_usd);
+CREATE AGGREGATE noop_sum(kmoney_usd) (
     SFUNC = noop_accum, STYPE = bytea, FINALFUNC = noop_final, PARALLEL = SAFE);
-CREATE OR REPLACE FUNCTION cnt_accum(state bigint, v kmoney) RETURNS bigint
+CREATE OR REPLACE FUNCTION cnt_accum(state bigint, v kmoney_usd) RETURNS bigint
   AS $$ SELECT COALESCE($1,0) + 1 $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
-DROP AGGREGATE IF EXISTS cnt_sum(kmoney);
-CREATE AGGREGATE cnt_sum(kmoney) (SFUNC = cnt_accum, STYPE = bigint, PARALLEL = SAFE);
+DROP AGGREGATE IF EXISTS cnt_sum(kmoney_usd);
+CREATE AGGREGATE cnt_sum(kmoney_usd) (SFUNC = cnt_accum, STYPE = bigint, PARALLEL = SAFE);
 
 -- One measured execution. Its own function so the sampling loop below reads as the SCHEME it is
 -- rather than as four copies of clock_timestamp arithmetic.
@@ -140,55 +140,55 @@ DECLARE
   labels text[] := ARRAY[
     -- APPLES TO APPLES: `numeric+cur` is the pairing a schema actually chooses between.
     -- Bare `numeric` is kept beside it, and the gap between them is the price of the currency
-    -- discipline that `kmoney` gets by construction.
-    'kmoney:      a + b',
+    -- discipline that `kmoney_usd` gets by construction.
+    'kmoney_usd:      a + b',
     'numeric+cur: a + b (currency checked)',
     'numeric:     a + b (BARE -- no currency anywhere)',
-    'kmoney:      a - b',
+    'kmoney_usd:      a - b',
     'numeric+cur: a - b (currency checked)',
     'numeric:     a - b (BARE)',
-    'kmoney:      render canonical ::text',
+    'kmoney_usd:      render canonical ::text',
     'numeric+cur: render canonical (to_char + concat, asserted equal)',
     'numeric:     render ::text (BARE, 18 decimals, not canonical)',
-    'kmoney:      parse from stored text',
+    'kmoney_usd:      parse from stored text',
     'numeric+cur: parse from stored text (split + check)',
     'native C: hashint8(id)', 'native C: abs(numeric)', 'native C: n = n',
-    'pgrx:     kmoney_hash(m)', 'pgrx:     kmoney_sum_accum(NULL, m)',
-    'sum(numeric)  [internal state, in place]', 'sum(kmoney)   [bytea state, I256 math]',
+    'pgrx:     kmoney_usd_hash(m)', 'pgrx:     kmoney_usd_sum_accum(NULL, m)',
+    'sum(numeric)  [internal state, in place]', 'sum(kmoney_usd)   [bytea state, I256 math]',
     'noop_sum      [LANGUAGE sql, NO math]',   'cnt_sum       [LANGUAGE sql, by value]'];
   qs text[] := ARRAY[
-    'SELECT count(*) FROM t WHERE (m + m) > ''USD -1000000000.00''::kmoney',
+    'SELECT count(*) FROM t WHERE (m + m) > ''USD -1000000000.00''::kmoney_usd',
     -- `CASE WHEN cur = cur` is not ceremony: adding two money values correctly means refusing
     -- when the currencies differ. Within a row both operands are this row's, so this is the
-    -- cheapest form of the check a correct schema must perform -- and `kmoney` performs it
+    -- cheapest form of the check a correct schema must perform -- and `kmoney_usd` performs it
     -- inside the operator, on every one of these adds, already counted in the row above.
     'SELECT count(*) FROM t WHERE (CASE WHEN cur = cur THEN n + n END) > -1000000000',
     'SELECT count(*) FROM t WHERE (n + n) > -1000000000',
-    'SELECT count(*) FROM t WHERE (m - m) > ''USD -1000000000.00''::kmoney',
+    'SELECT count(*) FROM t WHERE (m - m) > ''USD -1000000000.00''::kmoney_usd',
     'SELECT count(*) FROM t WHERE (CASE WHEN cur = cur THEN n - n END) > -1000000000',
     'SELECT count(*) FROM t WHERE (n - n) > -1000000000',
     'SELECT count(*) FROM t WHERE length(m::text) > 0',
-    -- numeric(36,18) renders ALL 18 decimals, so producing the canonical form `kmoney` renders
+    -- numeric(36,18) renders ALL 18 decimals, so producing the canonical form `kmoney_usd` renders
     -- natively costs a settlement-exponent pad as well as the currency concat. The bare row below
     -- understates the render by exactly this much.
     --
-    -- `to_char` emits the same settlement-width form as `kmoney`; the correctness block checks it.
+    -- `to_char` emits the same settlement-width form as `kmoney_usd`; the correctness block checks it.
     --
     -- THE `.00` IS USD'S EXPONENT, HARDCODED, AND THAT FAVOURS NUMERIC. A schema that stores money
     -- in `numeric` has to look the exponent up per currency to render it; this row pays nothing
     -- for that, so it is the cheapest version of the numeric render rather than a fair one.
-    -- `kmoney` carries the currency in its 18 bytes and gets the exponent for free.
+    -- `kmoney_usd` carries the currency in its 18 bytes and gets the exponent for free.
     'SELECT count(*) FROM t WHERE length(cur || '' '' || to_char(n, ''FM99999999999999999990.00'')) > 0',
     'SELECT count(*) FROM t WHERE length(n::text) > 0',
     -- Parse a stored column, not a string assembled inside the measured predicate.
-    'SELECT count(*) FROM t WHERE canon::kmoney > ''USD -1000000000.00''::kmoney',
+    'SELECT count(*) FROM t WHERE canon::kmoney_usd > ''USD -1000000000.00''::kmoney_usd',
     'SELECT count(*) FROM t WHERE substr(canon, 5)::numeric(36,18) > -1000000000
                               AND substr(canon, 1, 3) = ''USD''',
     'SELECT count(*) FROM t WHERE hashint8(id) <> 0',
     'SELECT count(*) FROM t WHERE abs(n) >= 0',
     'SELECT count(*) FROM t WHERE n = n',
-    'SELECT count(*) FROM t WHERE kmoney_hash(m) <> 0',
-    'SELECT count(*) FROM t WHERE length(kmoney_sum_accum(NULL, m)) > 0',
+    'SELECT count(*) FROM t WHERE kmoney_usd_hash(m) <> 0',
+    'SELECT count(*) FROM t WHERE length(kmoney_usd_sum_accum(NULL, m)) > 0',
     'SELECT sum(n) FROM t', 'SELECT sum(m) FROM t',
     'SELECT noop_sum(m) FROM t', 'SELECT cnt_sum(m) FROM t'];
   n int := array_length(qs, 1);
@@ -227,8 +227,8 @@ DO $$
 DECLARE q text; p text;
 BEGIN
     FOREACH q IN ARRAY ARRAY[
-        'SELECT count(*) FROM t WHERE (m + m) > ''USD -1000000000.00''::kmoney',
-        'SELECT count(*) FROM t WHERE kmoney_hash(m) <> 0',
+        'SELECT count(*) FROM t WHERE (m + m) > ''USD -1000000000.00''::kmoney_usd',
+        'SELECT count(*) FROM t WHERE kmoney_usd_hash(m) <> 0',
         'SELECT sum(m) FROM t',
         'SELECT sum(n) FROM t'] LOOP
         p := plan_of(q);
@@ -325,7 +325,7 @@ GROUP BY d.op ORDER BY 3;
 \echo
 \echo '=== the plans, so nothing above is a statement about a plan nobody looked at ==='
 EXPLAIN (ANALYZE, BUFFERS, COSTS OFF, TIMING OFF, SUMMARY OFF)
-    SELECT count(*) FROM t WHERE (m + m) > 'USD -1000000000.00'::kmoney;
+    SELECT count(*) FROM t WHERE (m + m) > 'USD -1000000000.00'::kmoney_usd;
 EXPLAIN (ANALYZE, BUFFERS, COSTS OFF, TIMING OFF, SUMMARY OFF) SELECT sum(m) FROM t;
 
 \echo
@@ -341,6 +341,6 @@ FROM t LIMIT 1;
 \echo 'Read numeric+cur as the schema comparison. Bare numeric remains a component-cost floor.'
 \echo 'No duration has a pass/fail threshold.'
 \echo
-\echo 'WHAT IS NOT IN ANY ROW: kmoney REFUSES a cross-currency add, numeric+cur returns NULL for'
+\echo 'WHAT IS NOT IN ANY ROW: kmoney_usd REFUSES a cross-currency add, numeric+cur returns NULL for'
 \echo 'it, and bare numeric returns a wrong number. That is a correctness difference, and timing'
 \echo 'it would be timing three different operations.'

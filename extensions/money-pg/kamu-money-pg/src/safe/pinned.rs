@@ -12,10 +12,10 @@
 //! trust.
 
 use kamu_money_core::advanced::arithmetic::UnitSum;
-use kamu_money_core::{Money, StaticCurrency, text};
-use pgrx::prelude::*;
+use kamu_money_core::{Money, ParseMoneyError, StaticCurrency, text};
 
 use super::payload::{PinnedPayload, validate_pinned};
+use super::raise;
 
 /// Seals [`PinnedCurrency`] against implementations this crate did not generate.
 ///
@@ -68,18 +68,32 @@ pub(crate) fn parse_pinned<T: PinnedCurrency>(input: &str) -> T {
     let units = if input.contains(' ') {
         match text::parse(input) {
             Ok((found, units)) if found == expected => units,
-            Ok((found, _)) => {
-                error!("{}: expected {}, got {}", T::SQL_NAME, expected.alpha3(), found.alpha3())
-            }
-            Err(e) => error!("{}: {e}, in {input:?}", T::SQL_NAME),
+            Ok((found, _)) => raise::invalid_text(format!(
+                "{}: expected {}, got {}",
+                T::SQL_NAME,
+                expected.alpha3(),
+                found.alpha3()
+            )),
+            Err(e) => refuse_parse::<T>(&e, input),
         }
     } else {
         match text::parse_amount(input) {
             Ok(units) => units,
-            Err(e) => error!("{}: {e}, in {input:?}", T::SQL_NAME),
+            Err(e) => refuse_parse::<T>(&e, input),
         }
     };
     T::from_units(units)
+}
+
+/// Route a parse refusal to its SQLSTATE: a magnitude outside the domain is
+/// `22003` (matching what `numeric` raises for `1e1000`), everything the
+/// grammar refuses is `22P02`.
+fn refuse_parse<T: PinnedCurrency>(e: &ParseMoneyError, input: &str) -> ! {
+    let message = format!("{}: {e}, in {input:?}", T::SQL_NAME);
+    match e {
+        ParseMoneyError::Amount(_) => raise::out_of_range(message),
+        _ => raise::invalid_text(message),
+    }
 }
 
 /// Render a pinned value as bare digits.
@@ -89,8 +103,9 @@ pub(crate) fn parse_pinned<T: PinnedCurrency>(input: &str) -> T {
 /// disagree with it. Goes through `Money<C>` so the digits come from the same
 /// renderer the Rust type uses, rather than an adapter-local rule.
 pub(crate) fn render_pinned<T: PinnedCurrency>(value: T) -> String {
-    let money = Money::<T::Currency>::try_from_units(value.units())
-        .unwrap_or_else(|e| error!("{}: stored amount cannot be rendered: {e}", T::SQL_NAME));
+    let money = Money::<T::Currency>::try_from_units(value.units()).unwrap_or_else(|e| {
+        raise::data_corrupted(format!("{}: stored amount cannot be rendered: {e}", T::SQL_NAME))
+    });
     text::render_amount(money)
 }
 
@@ -101,7 +116,7 @@ pub(crate) fn render_pinned<T: PinnedCurrency>(value: T) -> String {
 /// binary protocol instead.
 pub(crate) fn send_pinned<T: PinnedCurrency>(value: T) -> Vec<u8> {
     let amount = validate_pinned(PinnedPayload::from_units(value.units()))
-        .unwrap_or_else(|e| error!("{}: {e}", T::SQL_NAME));
+        .unwrap_or_else(|e| raise::data_corrupted(format!("{}: {e}", T::SQL_NAME)));
     PinnedPayload::from_units(amount.units()).to_bytes().to_vec()
 }
 
@@ -129,11 +144,11 @@ pub(crate) fn sum_state_encode(acc: UnitSum) -> Vec<u8> {
 /// whatever was passed -- the same reasoning as the binary `RECEIVE` path.
 pub(crate) fn sum_state_decode<T: PinnedCurrency>(state: &[u8]) -> UnitSum {
     let Ok(bytes) = <[u8; SUM_STATE_BYTES]>::try_from(state) else {
-        error!(
+        raise::invalid_binary(format!(
             "sum({}): transition state must be exactly {SUM_STATE_BYTES} bytes, got {}",
             T::SQL_NAME,
             state.len()
-        );
+        ));
     };
     UnitSum::from_le_bytes(bytes)
 }
@@ -154,27 +169,29 @@ const MAX_ALLOCATE_PARTS: usize = 1 << 16;
 /// The domain check on the stored amount stays: those bytes came from a column.
 pub(crate) fn divide_pinned<T: PinnedCurrency>(amount: T, parts: i32, rounding: &str) -> (T, T) {
     let units = validate_pinned(PinnedPayload::from_units(amount.units()))
-        .unwrap_or_else(|e| error!("{}_div: {e}", T::SQL_NAME))
+        .unwrap_or_else(|e| raise::data_corrupted(format!("{}_div: {e}", T::SQL_NAME)))
         .units();
 
     let Ok(parts) = u32::try_from(parts) else {
-        error!("{}_div: cannot divide into {parts} parts", T::SQL_NAME);
+        raise::invalid_parameter(format!("{}_div: cannot divide into {parts} parts", T::SQL_NAME));
     };
     let Some(parts) = core::num::NonZeroU32::new(parts) else {
-        error!("{}_div: cannot divide into zero parts", T::SQL_NAME);
+        raise::division_by_zero(format!("{}_div: cannot divide into zero parts", T::SQL_NAME));
     };
 
     // The caller selects the rounding policy; there is no default worth guessing.
     let Some(mode) = kamu_money_core::Rounding::from_name(rounding) else {
-        error!(
+        raise::invalid_parameter(format!(
             "{}_div: {rounding:?} is not a rounding mode; expected one of: {}",
             T::SQL_NAME,
             kamu_money_core::Rounding::names()
-        );
+        ));
     };
 
     let (quotient, residue) = kamu_money_core::advanced::arithmetic::div_int_units(units, parts, mode)
-        .unwrap_or_else(|e| error!("{}_div: stored amount cannot be divided: {e}", T::SQL_NAME))
+        .unwrap_or_else(|e| {
+            raise::out_of_range(format!("{}_div: stored amount cannot be divided: {e}", T::SQL_NAME))
+        })
         .take_residue();
 
     (T::from_units(quotient), T::from_units(residue))
@@ -184,47 +201,60 @@ pub(crate) fn divide_pinned<T: PinnedCurrency>(amount: T, parts: i32, rounding: 
 ///
 /// Every share is returned in the same type, so the sum of the results is in the
 /// same currency as the input by construction rather than by check.
-pub(crate) fn allocate_pinned<T: PinnedCurrency>(amount: T, weights: &[Option<i32>]) -> Vec<T> {
-    let units = validate_pinned(PinnedPayload::from_units(amount.units()))
-        .unwrap_or_else(|e| error!("{}_allocate: {e}", T::SQL_NAME))
-        .units();
-
-    // Reject size before any per-element work or allocation.
-    if weights.is_empty() {
-        error!(
+/// Reject an impossible weight COUNT before anything is materialized.
+///
+/// Runs on the borrowed pgrx `Array`'s length, so the cap fires before a
+/// single element is collected — the order is what stops an array-bomb
+/// argument from allocating first and being refused second.
+pub(crate) fn allocate_len_guard<T: PinnedCurrency>(len: usize) {
+    if len == 0 {
+        raise::invalid_parameter(format!(
             "{}_allocate: weights must not be empty -- there is no way to split an amount \
              into no parts without destroying it",
             T::SQL_NAME
-        );
+        ));
     }
-    if weights.len() > MAX_ALLOCATE_PARTS {
-        error!(
-            "{}_allocate: {} weights exceeds the limit of {MAX_ALLOCATE_PARTS}; a distribution \
+    if len > MAX_ALLOCATE_PARTS {
+        raise::invalid_parameter(format!(
+            "{}_allocate: {len} weights exceeds the limit of {MAX_ALLOCATE_PARTS}; a distribution \
              that large belongs in the application, not in one SQL call",
-            T::SQL_NAME,
-            weights.len()
-        );
+            T::SQL_NAME
+        ));
     }
+}
+
+pub(crate) fn allocate_pinned<T: PinnedCurrency>(amount: T, weights: &[Option<i32>]) -> Vec<T> {
+    let units = validate_pinned(PinnedPayload::from_units(amount.units()))
+        .unwrap_or_else(|e| raise::data_corrupted(format!("{}_allocate: {e}", T::SQL_NAME)))
+        .units();
 
     let mut checked = Vec::with_capacity(weights.len());
     for weight in weights {
         let Some(weight) = *weight else {
-            error!("{}_allocate: NULL weight -- a share of nothing is not a share of zero", T::SQL_NAME);
+            raise::invalid_parameter(format!(
+                "{}_allocate: NULL weight -- a share of nothing is not a share of zero",
+                T::SQL_NAME
+            ));
         };
         let Ok(weight) = u32::try_from(weight) else {
-            error!(
+            raise::invalid_parameter(format!(
                 "{}_allocate: weight {weight} is negative; a negative share is not a distribution",
                 T::SQL_NAME
-            );
+            ));
         };
         checked.push(weight);
     }
     if checked.iter().all(|&w| w == 0) {
-        error!("{}_allocate: weights sum to zero -- the amount would have nowhere to go", T::SQL_NAME);
+        raise::invalid_parameter(format!(
+            "{}_allocate: weights sum to zero -- the amount would have nowhere to go",
+            T::SQL_NAME
+        ));
     }
 
     kamu_money_core::advanced::arithmetic::allocate_units(units, &checked)
-        .unwrap_or_else(|e| error!("{}_allocate: stored amount cannot be allocated: {e}", T::SQL_NAME))
+        .unwrap_or_else(|e| {
+            raise::out_of_range(format!("{}_allocate: stored amount cannot be allocated: {e}", T::SQL_NAME))
+        })
         .into_iter()
         .map(T::from_units)
         .collect()

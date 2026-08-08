@@ -8,7 +8,7 @@
 //! | Family | `INTERNALLENGTH` | Payload |
 //! | --- | --- | --- |
 //! | per-currency `kmoney_<code>` | 16 | units only; the currency is the SQL type |
-//! | `kmoney`, `kmoney_mixed` | 18 | units plus a stored ISO numeric code |
+//! | `kmoney_mixed` | 18 | units plus a stored ISO numeric code |
 //!
 //! Each is registered pass-by-reference, byte-aligned (`ALIGNMENT = char`) and
 //! `STORAGE = plain`. For a given registered OID a non-null `Datum` therefore
@@ -27,7 +27,6 @@
 //! to a destructor after an error.
 
 mod datum;
-mod typmod;
 mod wire;
 
 /// Re-exported so `pinned_money_type!` can reach it from the crate root, where
@@ -46,7 +45,5 @@ macro_rules! pg_finfo_v1 {
     };
 }
 
-pg_finfo_v1!(FINFO_TYPMOD_IN, pg_finfo_kmoney_typmod_in);
-pg_finfo_v1!(FINFO_TYPMOD_OUT, pg_finfo_kmoney_typmod_out);
-pg_finfo_v1!(FINFO_RECV, pg_finfo_kmoney_recv);
 pg_finfo_v1!(FINFO_MIXED_RECV, pg_finfo_kmoney_mixed_recv);
+pg_finfo_v1!(FINFO_PINNED_RECV, pg_finfo_kmoney_pinned_recv);
