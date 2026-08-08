@@ -307,7 +307,8 @@ yb-build tag="":
     source ./scripts/docker-core-context.sh
     docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
         -f kamu-money-pg/yb/Dockerfile --target artifact \
-        --build-arg YB_IMAGE="$YB_REF" -o "$RUN_ROOT" .
+        --build-arg YB_IMAGE="$YB_REF" \
+        --build-arg KMONEY_CACHE_ID="${KMONEY_CACHE_ID:-shared}" -o "$RUN_ROOT" .
 
 [doc("Build for YB, run the ABI battery on a fresh YugabyteDB, print the result.")]
 yb-native tag="":
@@ -321,7 +322,8 @@ yb-native tag="":
     source ./scripts/docker-core-context.sh
     docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
         -f kamu-money-pg/yb/Dockerfile --target artifact \
-        --build-arg YB_IMAGE="$YB_REF" -o "$RUN_ROOT" .
+        --build-arg YB_IMAGE="$YB_REF" \
+        --build-arg KMONEY_CACHE_ID="${KMONEY_CACHE_ID:-shared}" -o "$RUN_ROOT" .
     ./kamu-money-pg/yb/run-yb.sh "$YB_REF" "$RUN_ROOT" "$RUN_ROOT/out-yb.txt" kamu-money-pg/yb/abi_battery.sql
 
 [doc("Negative control: prove every battery assertion still rejects a mutated output.")]
@@ -493,7 +495,7 @@ test-yb-driver tag="" major="18":
     ./kamu-money-pg/yb/run-yb-driver.sh "{{ tag }}" "{{ major }}"
 
 [doc("Run every suite that avoids a from-source YugabyteDB build.")]
-test-pg-all: test-yb test-pg test-pg-driver test-yb-driver
+test-pg-all: test-yb (test-pg PG_MAJORS "4") test-pg-driver test-yb-driver
 
 # Gates
 [doc("The gate for a change that touches no database: format, lint, audit, docs, Miri, and offline tests.")]
@@ -522,6 +524,9 @@ gate-pg-release jobs="1" tag="":
 
     # Release proof resolves `kamu-money-core` from its version requirement.
     export KMONEY_USE_LOCAL_CORE=0
+    # A unique cache scope is an EMPTY BuildKit cache: the release artifact is
+    # compiled from scratch, never assembled from a shared incremental cache.
+    export KMONEY_CACHE_ID="release-$$-$(od -An -N4 -tx4 /dev/urandom | tr -d ' \n')"
     YB_REF="$(./kamu-money-pg/yb/yb-image.sh {{ tag }})"
     export KMONEY_YB_IMAGE="$YB_REF"
 

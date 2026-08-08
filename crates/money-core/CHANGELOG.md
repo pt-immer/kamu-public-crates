@@ -23,6 +23,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   pair would need an error variant this one does not, which is a property of the
   pair rather than of rendering.
 
+- The register's identity facts are a stated persistence contract
+  (`VENDORED.md`, "Identity facts are append-only"): codes are never removed
+  and numeric codes never change, because stored currency-erased payloads and
+  persisted `stable_hash` values resolve against them. The full
+  alpha3 → numeric mapping is pinned by a digest test whose failure message
+  routes a register update through the policy.
+
 ## [0.1.0] — 2026-07-28
 
 Initial release.

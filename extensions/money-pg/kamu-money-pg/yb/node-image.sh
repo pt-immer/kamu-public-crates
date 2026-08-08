@@ -61,6 +61,7 @@ echo "node-image: building kmoney-yugabyte:$VERSION on $BASE_REF" >&2
 docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
     -f kamu-money-pg/yb/Dockerfile --target node \
     --build-arg YB_IMAGE="$BASE_REF" --iidfile "$IID" \
+    --build-arg KMONEY_CACHE_ID="${KMONEY_CACHE_ID:-shared}" \
     -t "kmoney-yugabyte:${VERSION}" . >&2
 
 ID="$(cat "$IID")"
