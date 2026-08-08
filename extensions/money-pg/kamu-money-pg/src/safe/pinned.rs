@@ -137,3 +137,95 @@ pub(crate) fn sum_state_decode<T: PinnedCurrency>(state: &[u8]) -> UnitSum {
     };
     UnitSum::from_le_bytes(bytes)
 }
+
+/// The largest number of parts one `allocate` call will distribute into.
+///
+/// Same bound the erased form applies. A distribution wider than this belongs in
+/// the application rather than in a single SQL call.
+const MAX_ALLOCATE_PARTS: usize = 1 << 16;
+
+/// Divide a pinned amount into `parts`, returning the quotient and its residue.
+///
+/// The erased form resolves a stored ISO code first and carries it into both
+/// results. There is no code to resolve, and the currency of the results is the
+/// type they are returned as -- so a quotient in one currency and a residue in
+/// another is not a mistake this can make.
+///
+/// The domain check on the stored amount stays: those bytes came from a column.
+pub(crate) fn divide_pinned<T: PinnedCurrency>(amount: T, parts: i32, rounding: &str) -> (T, T) {
+    let units = validate_pinned(PinnedPayload::from_units(amount.units()))
+        .unwrap_or_else(|e| error!("{}_div: {e}", T::SQL_NAME))
+        .units();
+
+    let Ok(parts) = u32::try_from(parts) else {
+        error!("{}_div: cannot divide into {parts} parts", T::SQL_NAME);
+    };
+    let Some(parts) = core::num::NonZeroU32::new(parts) else {
+        error!("{}_div: cannot divide into zero parts", T::SQL_NAME);
+    };
+
+    // The caller selects the rounding policy; there is no default worth guessing.
+    let Some(mode) = kamu_money_core::Rounding::from_name(rounding) else {
+        error!(
+            "{}_div: {rounding:?} is not a rounding mode; expected one of: {}",
+            T::SQL_NAME,
+            kamu_money_core::Rounding::names()
+        );
+    };
+
+    let (quotient, residue) = kamu_money_core::advanced::arithmetic::div_int_units(units, parts, mode)
+        .unwrap_or_else(|e| error!("{}_div: stored amount cannot be divided: {e}", T::SQL_NAME))
+        .take_residue();
+
+    (T::from_units(quotient), T::from_units(residue))
+}
+
+/// Distribute a pinned amount across integer weights, conserving the total.
+///
+/// Every share is returned in the same type, so the sum of the results is in the
+/// same currency as the input by construction rather than by check.
+pub(crate) fn allocate_pinned<T: PinnedCurrency>(amount: T, weights: &[Option<i32>]) -> Vec<T> {
+    let units = validate_pinned(PinnedPayload::from_units(amount.units()))
+        .unwrap_or_else(|e| error!("{}_allocate: {e}", T::SQL_NAME))
+        .units();
+
+    // Reject size before any per-element work or allocation.
+    if weights.is_empty() {
+        error!(
+            "{}_allocate: weights must not be empty -- there is no way to split an amount \
+             into no parts without destroying it",
+            T::SQL_NAME
+        );
+    }
+    if weights.len() > MAX_ALLOCATE_PARTS {
+        error!(
+            "{}_allocate: {} weights exceeds the limit of {MAX_ALLOCATE_PARTS}; a distribution \
+             that large belongs in the application, not in one SQL call",
+            T::SQL_NAME,
+            weights.len()
+        );
+    }
+
+    let mut checked = Vec::with_capacity(weights.len());
+    for weight in weights {
+        let Some(weight) = *weight else {
+            error!("{}_allocate: NULL weight -- a share of nothing is not a share of zero", T::SQL_NAME);
+        };
+        let Ok(weight) = u32::try_from(weight) else {
+            error!(
+                "{}_allocate: weight {weight} is negative; a negative share is not a distribution",
+                T::SQL_NAME
+            );
+        };
+        checked.push(weight);
+    }
+    if checked.iter().all(|&w| w == 0) {
+        error!("{}_allocate: weights sum to zero -- the amount would have nowhere to go", T::SQL_NAME);
+    }
+
+    kamu_money_core::advanced::arithmetic::allocate_units(units, &checked)
+        .unwrap_or_else(|e| error!("{}_allocate: stored amount cannot be allocated: {e}", T::SQL_NAME))
+        .into_iter()
+        .map(T::from_units)
+        .collect()
+}

@@ -54,6 +54,8 @@ fn main() {
         let accum = format!("{ty}_sum_accum");
         let combine = format!("{ty}_sum_combine");
         let finalize = format!("{ty}_sum_final");
+        let div = format!("{ty}_div");
+        let allocate = format!("{ty}_allocate");
 
         writeln!(shells, "CREATE TYPE {ty};").expect("writing to a String cannot fail");
 
@@ -71,6 +73,7 @@ pinned_money_type! {{
     cmp = [{eq}, {ne}, {lt}, {le}, {gt}, {ge}],
     arith = [{add}, {sub}],
     agg = [{accum}, {combine}, {finalize}],
+    split = [{div}, {allocate}],
     hash = {f_hash},
 }}
 

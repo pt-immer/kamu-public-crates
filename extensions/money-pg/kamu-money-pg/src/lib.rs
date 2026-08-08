@@ -121,6 +121,7 @@ macro_rules! pinned_money_type {
         cmp = [$eq:ident, $ne:ident, $lt:ident, $le:ident, $gt:ident, $ge:ident],
         arith = [$add:ident, $sub:ident],
         agg = [$accum:ident, $combine:ident, $final:ident],
+        split = [$div:ident, $allocate:ident],
         hash = $hash:ident $(,)?
     ) => {
         $(#[$meta])*
@@ -405,6 +406,29 @@ macro_rules! pinned_money_type {
                 error!("sum({}): {e}", <$t as safe::pinned::PinnedCurrency>::SQL_NAME)
             });
             Some($t::from_payload(PinnedPayload::from_units(total)))
+        }
+
+        // SPLITTING. Both return their results in this same type, so a quotient
+        // and its residue -- or every share of a distribution -- are in one
+        // currency by construction. The erased forms resolve a stored ISO code
+        // and carry it into each result instead.
+        #[pg_extern(immutable, parallel_safe, requires = [$concrete])]
+        fn $div(
+            amount: $t,
+            parts: i32,
+            rounding: &str,
+        ) -> TableIterator<'static, (name!(quotient, $t), name!(residue, $t))> {
+            let (quotient, residue) = safe::pinned::divide_pinned(amount, parts, rounding);
+            TableIterator::once((quotient, residue))
+        }
+
+        // `Array` by value: pgrx's `#[pg_extern]` ABI takes owned argument types
+        // to build the SQL wrapper, so `needless_pass_by_value` cannot be honoured.
+        #[allow(clippy::needless_pass_by_value)]
+        #[pg_extern(immutable, parallel_safe, requires = [$concrete])]
+        fn $allocate(amount: $t, weights: Array<'_, i32>) -> Vec<$t> {
+            let weights: Vec<Option<i32>> = weights.iter().collect();
+            safe::pinned::allocate_pinned(amount, &weights)
         }
     };
 }
