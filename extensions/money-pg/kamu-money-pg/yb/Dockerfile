@@ -82,7 +82,20 @@ RUN chmod +x kamu-money-pg/yb/probe-yb-abi.sh && ./kamu-money-pg/yb/probe-yb-abi
 # measured (kamu-money-pg/bench/boundary/). They must never reach a deployable node image, and
 # with an empty default they cannot arrive by accident -- a caller has to name them.
 ARG EXTRA_FEATURES=
-RUN cargo pgrx package -p kamu-money-pg \
+# Compilation persists across builds in BuildKit cache mounts: the `COPY . .`
+# above invalidates this layer on every source change, and without the mounts
+# that meant recompiling the pgrx fork and every dependency from scratch each
+# time. Cargo's fingerprinting decides what is reusable, so nothing unproven is
+# skipped. The package STAGING directory is purged first: it accumulates one
+# `kmoney--X.Y.Z.sql` per version ever built into the cache, and a stale one
+# would trip the exactly-one assertions below. `KMONEY_CACHE_ID` scopes the
+# mounts; the release proof passes a unique value, which is an empty cache and
+# therefore a genuine from-scratch build.
+ARG KMONEY_CACHE_ID=shared
+RUN --mount=type=cache,id=kmoney-yb-registry-${KMONEY_CACHE_ID},target=/root/.cargo/registry,sharing=locked \
+    --mount=type=cache,id=kmoney-yb-target-${KMONEY_CACHE_ID},target=/work/target,sharing=locked \
+    rm -rf target/release/kmoney-pg15* && \
+    cargo pgrx package -p kamu-money-pg \
       --no-default-features --features "pg15,yb-pg15${EXTRA_FEATURES:+,$EXTRA_FEATURES}" \
       -c /home/yugabyte/postgres/bin/pg_config
 
@@ -97,7 +110,11 @@ RUN cargo pgrx package -p kamu-money-pg \
 # ARTIFACT-MANIFEST.txt is `sha256sum`'s own format, so kamu-money-pg/yb/artifact.sh verifies it
 # with `sha256sum -c` rather than a hand-rolled comparison -- which is what makes a stale file
 # left in the output directory a failure instead of a coin flip.
-RUN set -eux; mkdir -p /out; \
+# The same cache mounts as the package step: a cache mount is visible only to
+# RUNs that mount it, so without these `target/` would be empty here.
+RUN --mount=type=cache,id=kmoney-yb-registry-${KMONEY_CACHE_ID},target=/root/.cargo/registry,sharing=locked \
+    --mount=type=cache,id=kmoney-yb-target-${KMONEY_CACHE_ID},target=/work/target,sharing=locked \
+    set -eux; mkdir -p /out; \
     one() { \
       n="$(find target -name "$1" | wc -l)"; \
       [ "$n" -eq 1 ] || { echo "expected exactly one $1 under target/, found $n" >&2; exit 1; }; \

@@ -86,5 +86,11 @@ ENV KMONEY_USE_LOCAL_CORE=${KMONEY_USE_LOCAL_CORE}
 # before source copy.
 RUN ln -s /home/pgrx/.pgrx /work/.pgrx
 
+# Exists (empty, pgrx-owned) so that a named cache volume mounted here by
+# test-matrix.sh is seeded with THIS ownership. Docker seeds a fresh named
+# volume from the image path's content and owner; without this the volume
+# arrives root-owned and cargo cannot write to it.
+RUN mkdir -p /work/target
+
 ENV PG_MAJOR=${PG_MAJOR}
 CMD ["bash", "-c", "exec cargo pgrx test --no-default-features --features \"pg${PG_MAJOR}\" \"pg${PG_MAJOR}\""]

@@ -49,8 +49,9 @@ one_major() {
   local pg="$1"
   echo "=============================== PG${pg} ==============================="
 
-  local iidfile image_id
+  local iidfile image_id t0 t_image t_test
   iidfile="$(mktemp)"
+  t0=$SECONDS
   # --iidfile records the image ID this build actually produced. The -t tag is a convenience
   # for a human; it is deliberately not what gets run below.
   if ! docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
@@ -61,15 +62,32 @@ one_major() {
   fi
   image_id="$(cat "${iidfile}")"
   rm -f "${iidfile}"
+  t_image=$((SECONDS - t0))
   echo "PG${pg}: testing image ${image_id}"
+
+  # Cargo caches persist across runs in named volumes: the compile happens at
+  # RUN time (the image CMD is `cargo pgrx test`), so without these every run
+  # rebuilds pgrx and all dependencies into a fresh /work/target. Cargo's own
+  # fingerprinting decides what is reusable, so this trades no correctness --
+  # only the re-proving of unchanged compilation. The target volume is
+  # per-major (fingerprints differ per pg feature); the registry volume is
+  # shared (cargo takes its own locks). KMONEY_TEST_CACHE=0 restores the
+  # from-scratch behaviour.
+  local cache_args=()
+  if [ "${KMONEY_TEST_CACHE:-1}" != "0" ]; then
+    cache_args=(-v "kmoney-cargo-registry:/home/pgrx/.cargo/registry"
+                -v "kmoney-cargo-target-pg${pg}:/work/target")
+  fi
 
   # Run the ID, not the tag. Between the build above and this line, another runner on this
   # shared daemon may have moved `kamu-money-pg:pg${pg}` to its own revision.
-  if ! docker run --rm --label "${LABEL}" \
+  t0=$SECONDS
+  if ! docker run --rm --label "${LABEL}" "${cache_args[@]}" \
         --name "kamu-money-pg-${RUN_ID}-pg${pg}" "${image_id}"; then
     echo "PG${pg}: TESTS FAILED"; return 1
   fi
-  echo "PG${pg}: OK"
+  t_test=$((SECONDS - t0))
+  echo "PG${pg}: OK (image ${t_image}s, compile+test ${t_test}s)"
 }
 
 # Optional parallelism is bounded by the operator; buffered logs replay in major order.
