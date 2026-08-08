@@ -37,8 +37,8 @@ set -euo pipefail
 # ---------------------------------------------------------------------------------------------
 assertion_table() {
     cat <<'TABLE'
-F%%%10.50 | 10.50 | 16000.01 | 10.5 | 10.500 | -0.000000000000000001 | 999999999999999999.999999999999999999%%%%%%s1 text round-trip across every exponent class, incl. the tagged form, the domain top and one canonical unit
-F%%%16 | 18 | 000064a7b3b6e00d0000000000000000%%%%%%s2 send() widths AND the exact 16 payload bytes for USD 1.00
+F%%%10.50 | 10.50      | 16000.01 | 10.5 | 10.500 | -0.000000000000000001 | 999999999999999999.999999999999999999%%%%%%s1 text round-trip across every exponent class, incl. the tagged form, the domain top and one canonical unit
+F%%%16 |             18 | 000064a7b3b6e00d0000000000000000%%%%%%s2 send() widths AND the exact 16 payload bytes for USD 1.00
 E%%%^ +3 \| t *$%%%%%%s2b pinned COPY BINARY round trip: rows_recv = 3, roundtrip_exact = t
 H%%%mixed_roundtrip_exact%%%t%%%s2b mixed COPY BINARY round trip survives send -> recv
 F%%%10.75 | 10.25%%%%%%s3 same-currency + and - results
