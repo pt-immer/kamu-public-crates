@@ -266,7 +266,7 @@ fi
 echo
 if [ "$fail" -eq 0 ]; then
     echo "run-yb-restore: OK -- a schema holding kmoney dumps and restores into a clean cluster"
-    echo "                with byte-identical payloads, live typmods and agreeing totals, and a"
+    echo "                with byte-identical payloads, live type refusals and agreeing totals, and a"
     echo "                destination missing the library fails loudly rather than half-restoring."
     echo
     echo "                NOT COVERED, and not claimed: RPO/RTO, backup cadence, storage, and who"
