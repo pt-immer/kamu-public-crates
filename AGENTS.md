@@ -33,7 +33,7 @@ Repository-wide policy remains at the root. In particular, `lint-shell` and
 
 - The public workspace uses Edition 2024 and MSRV 1.94.0. Its primary and
   compile-fail toolchain is pinned to Rust 1.96.0; CI also tests current stable
-  and exact MSRV. The extension lane uses Rust 1.96.0 because pgrx 0.19.1
+  and exact MSRV. The extension lane uses Rust 1.96.0 because pgrx 0.19.2
   requires it.
 - Never run workspace-wide `--all-features`. `kamu-logging` has mutually
   exclusive native and wasm feature sets; pgrx features select one PostgreSQL

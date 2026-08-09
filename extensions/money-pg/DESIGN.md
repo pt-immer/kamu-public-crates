@@ -11,7 +11,7 @@ Current support:
 - YugabyteDB at the digest recorded in
   [`YB-PINNED.txt`](kamu-money-pg/yb/YB-PINNED.txt);
 - Edition 2024 and Rust 1.96;
-- pgrx 0.19.1 through the `pt-immer/pgrx-yugabytedb` fork.
+- pgrx 0.19.2 through the `pt-immer/pgrx-yugabytedb` fork.
 
 ## Workspace boundary
 

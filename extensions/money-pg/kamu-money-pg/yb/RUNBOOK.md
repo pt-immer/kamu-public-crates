@@ -21,7 +21,7 @@ The supported native combination is defined by four pins:
 
 The fork is
 [`pt-immer/pgrx-yugabytedb`](https://github.com/pt-immer/pgrx-yugabytedb),
-tagged `v0.19.1-yb.1` for the current pgrx 0.19.1 base. Its `yb-pg15` feature
+tagged `v0.19.2-yb.1` for the current pgrx 0.19.2 base. Its `yb-pg15` feature
 adapts three YugabyteDB differences:
 
 | YugabyteDB difference | Fork adaptation |
@@ -94,10 +94,17 @@ A fork change is released in the fork repository first:
 
 ```bash
 git checkout -b yugabytedb-<version> v<version>
-# Apply the yb-pg15 changes behind cfg(feature = "yb-pg15").
+git cherry-pick <previous yb commit>
 git tag -s v<version>-yb.1
 git push origin yugabytedb-<version> v<version>-yb.1
 ```
+
+Every line of the adaptation is a comment or inside `cfg(feature = "yb-pg15")`, so it
+adds lines and modifies none. A cherry-pick that conflicts therefore means upstream
+touched the same lines, which is the signal to re-derive rather than re-apply. Confirm
+the arity assumption survived the bump before trusting a clean pick — the count of
+inserted arguments in `pgrx-pg-sys/src/include.rs` is the number of generated call sites
+times three.
 
 Then update this repository:
 
@@ -105,12 +112,18 @@ Then update this repository:
    `extensions/money-pg/Cargo.toml`;
 2. change pgrx and pgrx-test requirements in
    `extensions/money-pg/kamu-money-pg/Cargo.toml`;
-3. update every Docker `cargo-pgrx` pin;
-4. review every remaining version-specific comment or check:
+3. update every Docker `cargo-pgrx` pin, the `.config/dev-tools.json` entry, and the
+   workflow's `cargo-pgrx@` pins and `~/.pgrx` cache keys;
+4. review every remaining version-specific claim. The pins themselves are checked by
+   `hygiene/tests/pgrx_pin.rs`, so this step is only for prose that names a version and
+   for behaviour a new release may have changed:
 
    ```bash
-   rg '0\.19\.1|v0\.19\.1-yb\.1' extensions/money-pg
+   git grep -nE 'pgrx [0-9]+\.[0-9]+\.[0-9]+' -- . ':!*.lock'
    ```
+
+   A comment such as "pgrx has no safe mapping for `internal`" is a claim about the
+   release it names. Re-read the new source before moving its number.
 
 5. refresh the lane lockfile;
 6. run:

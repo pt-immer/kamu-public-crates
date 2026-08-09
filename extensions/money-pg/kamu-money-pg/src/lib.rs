@@ -42,7 +42,7 @@ mod safe;
 ///
 /// # Why this is not `#[derive(PostgresType)]`
 ///
-/// pgrx 0.19.1's derive hardcodes `INTERNALLENGTH = variable`, so it cannot
+/// pgrx 0.19.2's derive hardcodes `INTERNALLENGTH = variable`, so it cannot
 /// declare this fixed-width value. The extension therefore owns `CREATE TYPE`
 /// and the datum ABI implementations.
 ///

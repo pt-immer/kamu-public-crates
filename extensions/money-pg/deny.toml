@@ -9,7 +9,7 @@ all-features = true
 
 [advisories]
 ignore = [
-  # pgrx 0.19.1 uses serde_cbor only for its extension schema transport.
+  # pgrx 0.19.2 uses serde_cbor only for its extension schema transport.
   # serde_cbor is unmaintained, but the advisory has no safe upgrade and pgrx
   # exposes no replacement hook. Remove this ignore when pgrx drops it.
   "RUSTSEC-2021-0127",

@@ -34,7 +34,7 @@ ENV PATH=/home/pgrx/.cargo/bin:$PATH CARGO_HOME=/home/pgrx/.cargo USER=pgrx
 
 RUN curl --proto '=https' --tlsv1.2 -sSfo /tmp/rustup.sh https://sh.rustup.rs \
  && sh /tmp/rustup.sh -y --default-toolchain 1.96.0
-RUN cargo install cargo-pgrx --version 0.19.1 --locked
+RUN cargo install cargo-pgrx --version 0.19.2 --locked
 ENV RUST_BACKTRACE=1
 
 # Upstream PG15 built from source -- NO YB pg_config, NO shim, NO --cfg yb.

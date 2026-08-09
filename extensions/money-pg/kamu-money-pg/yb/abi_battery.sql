@@ -1,5 +1,5 @@
 -- kamu-money-pg: byte-exact ABI battery. Run IDENTICALLY on YugabyteDB 2025.2.x
--- (patched pgrx 0.19.1) and on stock PostgreSQL 15, then diff the two outputs.
+-- (patched pgrx 0.19.2) and on stock PostgreSQL 15, then diff the two outputs.
 -- Both are PG15, so any divergence is a pure YB-fork-ABI effect on kamu-money-pg's
 -- custom-type code path -- the part the exp-pgrx-yb uuid probe could not cover.
 --

@@ -40,7 +40,7 @@ pg_bench = ["dep:pgrx-bench"]
 yb-pg15 = ["pgrx/yb-pg15"]
 
 [dependencies]
-pgrx = "=0.19.1"
+pgrx = "=0.19.2"
 # The adapter is thin over one codec. Every currency lookup and every digit of the text
 # form comes from here, so the database and the Rust program cannot disagree about what a
 # stored value means.
@@ -58,11 +58,11 @@ tempfile = { version = "3", optional = true }
 kamu-money-core = "0.1"
 
 [dependencies.pgrx-bench]
-version = "=0.19.1"
+version = "=0.19.2"
 optional = true
 
 [dev-dependencies]
 tempfile = "3"
 
 [dev-dependencies.pgrx-tests]
-version = "=0.19.1"
+version = "=0.19.2"
