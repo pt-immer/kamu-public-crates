@@ -151,7 +151,8 @@ pub const fn sub_units(a: i128, b: i128) -> Option<i128> {
 ///
 /// # Errors
 /// [`AmountError::OutOfDomain`] if any term or exact `i128` total leaves the domain;
-/// [`AmountError::ArithmeticOverflow`] if the wide total cannot be represented as `i128`.
+/// [`AmountError::WideOutOfDomain`], carrying the exact total, if that total is wider than
+/// `i128`.
 ///
 pub fn sum_units<I: IntoIterator<Item = i128>>(units: I) -> Result<i128, AmountError> {
     let mut acc = UnitSum::ZERO;
@@ -230,9 +231,14 @@ impl UnitSum {
     ///
     /// # Errors
     /// [`AmountError::OutOfDomain`] when an exact `i128` total leaves the domain, or
-    /// [`AmountError::ArithmeticOverflow`] when the total cannot be represented as `i128`.
+    /// [`AmountError::WideOutOfDomain`] when it is exact but too wide to be one.
+    ///
+    /// Both carry the total. Refusing a value this type is holding is the point; forgetting it
+    /// on the way out is not, and 171 terms at the domain edge is all it takes to leave `i128`.
     pub fn finish(self) -> Result<i128, AmountError> {
-        let attempted = i128::try_from(self.0).map_err(|_| AmountError::ArithmeticOverflow)?;
+        let Ok(attempted) = i128::try_from(self.0) else {
+            return Err(AmountError::wide_out_of_domain(self.to_le_bytes()));
+        };
         if crate::domain_impl::in_domain(attempted) {
             Ok(attempted)
         } else {
@@ -356,6 +362,7 @@ mod tests {
     use crate::domain_impl::DOMAIN_MAX;
     use crate::error_impl::AmountError;
     use crate::iso::USD;
+    use ethnum::I256;
 
     fn m(u: i128) -> Money<USD> {
         Money::<USD>::try_from_units(u).unwrap()
@@ -538,9 +545,36 @@ mod tests {
         // can hold a value no sequence of in-domain terms could reach. Inside a database backend
         // that has to be an error: a panic there is an ereport at best and an abort at worst.
         let huge = forged_max_state();
+        // Nothing exact exists to report for these two: the accumulator itself overflowed.
         assert_eq!(huge.add_units(1), Err(AmountError::ArithmeticOverflow));
         assert_eq!(huge.merge(huge), Err(AmountError::ArithmeticOverflow));
-        assert_eq!(huge.finish(), Err(AmountError::ArithmeticOverflow));
+        // `finish` is different. The state is intact and holds a total; it is merely too wide,
+        // so the refusal carries it rather than replacing it with a bare variant.
+        assert_eq!(huge.finish(), Err(AmountError::wide_out_of_domain(huge.to_le_bytes())));
+    }
+
+    #[test]
+    fn a_total_too_wide_for_i128_is_refused_with_the_total_still_attached() {
+        // 171 amounts at the domain edge is all it takes: 171 * (10^36 - 1) > i128::MAX. The
+        // sum is exact and known, and the point of the variant is that it survives the refusal.
+        let terms = core::iter::repeat_n(DOMAIN_MAX, 171);
+        let expected = I256::from(DOMAIN_MAX) * I256::from(171i128);
+
+        let Err(AmountError::WideOutOfDomain { attempted_units }) = sum_units(terms) else {
+            panic!("a total wider than i128 must be refused as WideOutOfDomain");
+        };
+        assert_eq!(
+            I256::from_le_bytes(attempted_units),
+            expected,
+            "the refusal must carry the exact total, not a rounded or truncated one"
+        );
+
+        // Positive control: one term fewer still narrows, so 171 is the real threshold rather
+        // than an arbitrary count that happens to fail.
+        assert!(
+            matches!(sum_units(core::iter::repeat_n(DOMAIN_MAX, 170)), Err(AmountError::OutOfDomain { .. })),
+            "170 terms still fit i128, so they must be refused for the domain, not the width"
+        );
     }
 
     use crate::rounding_impl::Rounding;
