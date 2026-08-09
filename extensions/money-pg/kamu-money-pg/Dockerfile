@@ -11,7 +11,14 @@
 #
 # Keep cargo-pgrx installation above `ARG PG_MAJOR` so the matrix shares that layer.
 
-ARG RUST_VERSION=1.96
+# The EXACT patch version `rust-toolchain.toml` pins, not the `1.96` series tag.
+#
+# The series tag floats to the newest patch — it was serving 1.96.1 — while the lane pins
+# 1.96.0. rustup honours the pin, so the tests always ran on the right compiler; what it did
+# quietly was download a SECOND toolchain, 305 MB of it, inside every container, at run time,
+# on every run. Naming the exact version makes the base image the pinned toolchain, so rustup
+# has nothing to fetch. `hygiene/tests/pins.rs` asserts the two agree.
+ARG RUST_VERSION=1.96.0
 FROM rust:${RUST_VERSION}-trixie
 
 # Must match the `pgrx` dependency in kamu-money-pg/Cargo.toml exactly. cargo-pgrx refuses to build
@@ -67,13 +74,62 @@ ENV USER=pgrx
 RUN cargo pgrx init "--pg${PG_MAJOR}" "/usr/lib/postgresql/${PG_MAJOR}/bin/pg_config"
 
 WORKDIR /work
-COPY --chown=pgrx . .
+
+# Repository configuration forces PGRX_HOME to `/work/.pgrx`; link it to the cached home created
+# above. It has to exist before anything runs cargo, because `pgrx-pg-sys`'s build script reads
+# that directory to find the pg_config it generates bindings against.
+RUN ln -s /home/pgrx/.pgrx /work/.pgrx
 
 # Ordinary test builds use the normalized Cargo package supplied as a named
 # context. Release proof sets this to 0, leaving the plain version dependency to
 # resolve exclusively from crates.io.
+#
+# This lands ABOVE the dependency build so that both compile the same graph. Resolving
+# `kamu-money-core` one way here and the other way below would make the cached layer a lie.
 ARG KMONEY_USE_LOCAL_CORE=1
 COPY --from=kamu-money-core --chown=pgrx:pgrx . /opt/kamu-money-core
+
+# --- dependency layer -----------------------------------------------------------------------
+# Manifests, lockfile and Cargo configuration only, with a stub source tree standing in for the
+# real one. Compiling that builds every DEPENDENCY -- `pgrx` and `pgrx-pg-sys` dominate, bindgen
+# included -- into a layer keyed by the manifests alone, so editing `src/` recompiles
+# `kamu-money-pg` and nothing beneath it.
+#
+# This is also the ONLY form a CI cache can reach. The extension itself is compiled by this
+# image's `CMD`, at container run time, where no registry cache exists; BuildKit exports layers,
+# never `--mount=type=cache` directories. Moving the expensive half into a layer is what makes
+# `cache-from`/`cache-to` possible at all.
+#
+# `build.rs` is copied rather than stubbed: it is the per-currency generator, so keeping it real
+# puts its `kamu-money-core` build-dependency in the layer too, and a change to it correctly
+# invalidates. Its output is never compiled here, because the stub `lib.rs` does not include it.
+COPY --chown=pgrx Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY --chown=pgrx .cargo/ .cargo/
+COPY --chown=pgrx kamu-money-pg/Cargo.toml kamu-money-pg/build.rs kamu-money-pg/
+COPY --chown=pgrx hygiene/Cargo.toml hygiene/
+RUN <<'SETUP' bash -e
+    case "${KMONEY_USE_LOCAL_CORE}" in
+      0) echo "kamu-money-core: resolving from crates.io" ;;
+      1) printf '\n[patch.crates-io]\nkamu-money-core = { path = "/opt/kamu-money-core" }\n' \
+           >> /work/.cargo/config.toml ;;
+      *) echo "KMONEY_USE_LOCAL_CORE must be 0 or 1" >&2; exit 2 ;;
+    esac
+    mkdir -p kamu-money-pg/src hygiene/src
+    : > kamu-money-pg/src/lib.rs
+    : > hygiene/src/lib.rs
+    # `--tests` so the dev-dependencies land here too; `pgrx-tests` is one, and the CMD needs it.
+    cargo build -p kamu-money-pg --tests --no-default-features --features "pg${PG_MAJOR}"
+    rm -rf kamu-money-pg/src hygiene/src
+SETUP
+
+# --- the real source ------------------------------------------------------------------------
+# `.dockerignore` keeps `target`, `.pgrx` and the suites' scratch root out, so this neither
+# clobbers the artifacts just built nor the symlink above.
+COPY --chown=pgrx . .
+
+# Again, and not redundantly: the copy above restored the tracked `.cargo/config.toml`, taking
+# the patch block with it. Without this the CMD would resolve `kamu-money-core` from the
+# registry while the cached layer was built against the local path.
 RUN case "${KMONEY_USE_LOCAL_CORE}" in \
       0) echo "kamu-money-core: resolving from crates.io" ;; \
       1) printf '\n[patch.crates-io]\nkamu-money-core = { path = "/opt/kamu-money-core" }\n' \
@@ -82,14 +138,10 @@ RUN case "${KMONEY_USE_LOCAL_CORE}" in \
     esac
 ENV KMONEY_USE_LOCAL_CORE=${KMONEY_USE_LOCAL_CORE}
 
-# Repository configuration forces PGRX_HOME to `/work/.pgrx`; link it to the cached home created
-# before source copy.
-RUN ln -s /home/pgrx/.pgrx /work/.pgrx
-
-# Exists (empty, pgrx-owned) so that a named cache volume mounted here by
-# test-matrix.sh is seeded with THIS ownership. Docker seeds a fresh named
-# volume from the image path's content and owner; without this the volume
-# arrives root-owned and cargo cannot write to it.
+# Exists (pgrx-owned, and now carrying the compiled dependencies) so that a named cache volume
+# mounted here by test-matrix.sh is seeded with THIS ownership and THIS content. Docker seeds a
+# fresh named volume from the image path; without this the volume arrives root-owned and cargo
+# cannot write to it.
 RUN mkdir -p /work/target
 
 ENV PG_MAJOR=${PG_MAJOR}
