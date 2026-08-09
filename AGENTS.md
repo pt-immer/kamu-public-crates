@@ -108,6 +108,20 @@ cross targets, then runs `just doctor`. ShellCheck remains an operating-system
 package; setup prints the required version when it is absent.
 `VERBOSE=1` exposes full output behind compact aggregate recipes.
 
+The PostgreSQL matrix image compiles its dependencies in a layer of their own,
+keyed on the manifests, so editing lane source recompiles `kamu-money-pg` and
+nothing beneath it. `KMONEY_BUILD_CACHE_DIR` makes `test-matrix.sh` export and
+restore that layer through `docker buildx`, scoped per PostgreSQL major; CI sets
+it, and locally it stays unset because the daemon already holds the layers. The
+YugabyteDB image compiles inside `--mount=type=cache`, which is builder-local
+and never exported, so no registry cache reaches it.
+
+Both container images must start from the exact toolchain
+`extensions/money-pg/rust-toolchain.toml` names. A series tag such as
+`rust:1.96` floats to a newer patch; rustup then honours the pin by downloading
+a second toolchain inside every container, on every run, without ever producing
+a wrong answer. `hygiene/tests/pins.rs` holds that agreement, and the pgrx one.
+
 Granular root checks:
 
 ```sh

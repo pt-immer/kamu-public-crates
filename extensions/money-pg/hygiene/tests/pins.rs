@@ -1,17 +1,25 @@
-//! The pgrx version is ONE fact, repeated across manifests, Dockerfiles, the tool
-//! manifest and CI.
+//! The lane pins two toolchains, and each is ONE fact spelled in many places: pgrx across
+//! manifests, Dockerfiles, the tool manifest and CI, and Rust across `rust-toolchain.toml`
+//! and three container images.
 //!
-//! `cargo-pgrx` refuses to build an extension whose `pgrx` dependency differs from the
-//! CLI's own version, because the SQL it generates and the FFI shims it links are
-//! versioned together. So a site left on the old number is not a cosmetic lag: it is a
-//! build that fails, and it fails wherever that site is read -- inside a container, on a
-//! CI runner, or on the machine of whoever runs `just setup` next.
+//! The two disagree differently, which is why both are here.
 //!
-//! Every expectation below is DERIVED from `kamu-money-pg`'s own `pgrx` requirement.
-//! This file therefore holds no version number, and cannot become the second list it
-//! exists to prevent. What it does hold is the list of PLACES, and each one is asserted
-//! through an anchor that must be present -- so a renamed directive or a moved file
-//! fails loudly rather than passing because it matched nothing.
+//! `cargo-pgrx` refuses to build an extension whose `pgrx` dependency differs from the CLI's
+//! own version, because the SQL it generates and the FFI shims it links are versioned
+//! together. A site left on the old number is not a cosmetic lag: it is a build that fails,
+//! wherever that site is read -- inside a container, on a CI runner, or on the machine of
+//! whoever runs `just setup` next.
+//!
+//! Rust fails the other way, silently. `rust-toolchain.toml` wins over whatever a base image
+//! ships, so the compiler is always the pinned one and the tests are always right. What a
+//! mismatch costs is a second toolchain downloaded inside every container, on every run,
+//! without ever producing a wrong answer to notice it by. It went unseen until a layer
+//! measurement asked why the image had grown by 305 MB.
+//!
+//! Every expectation below is DERIVED from the pin it checks, so this file holds no version
+//! number and cannot become the second list it exists to prevent. What it does hold is the
+//! list of PLACES, each asserted through an anchor that must be present -- so a renamed
+//! directive or a moved file fails loudly rather than passing because it matched nothing.
 
 mod support;
 
@@ -145,6 +153,46 @@ fn every_cargo_pgrx_installation_pins_the_same_version() {
     let workflow = repository.join(".github/workflows/on-pr-synced.yml");
     every_anchored_line_carries(&workflow, "cargo-pgrx@", &format!("cargo-pgrx@{version}"));
     every_anchored_line_carries(&workflow, "key: pgrx-", &format!("key: pgrx-{version}-"));
+}
+
+/// The lane's Rust toolchain, from the file rustup itself obeys.
+fn pinned_toolchain() -> String {
+    let path = support::lane_root().join("rust-toolchain.toml");
+    let pin = support::manifest(&path);
+    pin.get("toolchain")
+        .and_then(|table| table.get("channel"))
+        .and_then(toml::Value::as_str)
+        .unwrap_or_else(|| panic!("{} must pin a channel", path.display()))
+        .to_owned()
+}
+
+#[test]
+fn every_container_starts_from_the_pinned_rust_toolchain() {
+    let channel = pinned_toolchain();
+    let lane = support::lane_root();
+
+    // An EXACT patch version, not the `1.96` series tag. The series tag floats to the newest
+    // patch, and rustup then honours `rust-toolchain.toml` by downloading a second toolchain
+    // inside the container -- correct, invisible, and paid on every run.
+    assert!(
+        channel.split('.').count() == 3,
+        "the channel must be an exact patch version for a base image to match it, not `{channel}`"
+    );
+    every_anchored_line_carries(
+        &lane.join("kamu-money-pg/Dockerfile"),
+        "ARG RUST_VERSION=",
+        &format!("ARG RUST_VERSION={channel}"),
+    );
+
+    // The YugabyteDB images have no Rust base to inherit, so they install rustup themselves and
+    // name the toolchain on the command line.
+    for image in ["kamu-money-pg/yb/Dockerfile", "kamu-money-pg/yb/Dockerfile.pg15"] {
+        every_anchored_line_carries(
+            &lane.join(image),
+            "--default-toolchain",
+            &format!("--default-toolchain {channel}"),
+        );
+    }
 }
 
 #[test]

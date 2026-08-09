@@ -48,10 +48,29 @@ fn docker_builds_share_the_normalized_core_package() {
         "kamu-money-pg/yb/node-image.sh",
         "kamu-money-pg/bench/run-bench-boundary-yb.sh",
     ] {
-        for line in support::read(root.join(caller)).lines().filter(|line| {
-            let trimmed = line.trim_start();
-            !trimmed.starts_with('#') && trimmed.contains("docker build")
-        }) {
+        // `docker buildx build` is a build too. Matching only the bare form would let a buildx
+        // invocation resolve kamu-money-core differently from its siblings and say nothing,
+        // which is the failure this guard exists to make impossible.
+        let source = support::read(root.join(caller));
+        let builds: Vec<&str> = source
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim_start();
+                !trimmed.starts_with('#')
+                    && (trimmed.contains("docker build") || trimmed.contains("docker buildx build"))
+            })
+            .collect();
+
+        // A positive control. Composing the command in one place and the context in another --
+        // `cmd=(docker build)` here, `"${cmd[@]}" "${ARGS[@]}"` there -- leaves nothing for the
+        // loop below to inspect, and that silence reads exactly like compliance.
+        assert!(
+            !builds.is_empty(),
+            "{caller} no longer names a Docker build on any line, so this guard would pass \
+             vacuously; keep the command and the core context together, or re-point the guard"
+        );
+
+        for line in builds {
             assert!(
                 line.contains("KMONEY_CORE_DOCKER_ARGS"),
                 "{caller} has a Docker build without the normalized core context: {line}"

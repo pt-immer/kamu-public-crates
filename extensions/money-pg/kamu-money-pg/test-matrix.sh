@@ -49,12 +49,38 @@ one_major() {
   local pg="$1"
   echo "=============================== PG${pg} ==============================="
 
+  # A portable layer cache, for a builder that has no daemon-side one.
+  #
+  # Locally this stays unset and the daemon's own layer cache does the work. In CI every job
+  # starts against an empty daemon, so without it the dependency layer is rebuilt from nothing
+  # every run and moving that compile into a layer buys nothing. Scoped per major because a
+  # pg15 dependency layer is not a pg16 one: pgrx-pg-sys generates different bindings for each.
+  #
+  # Naming `buildx` explicitly, and `--load` with it. Exporting a cache needs the
+  # docker-container driver, which the default `docker` driver is not, and which does not put
+  # the built image in the daemon by itself -- and this function has to `docker run` it below.
+  # Depending on which builder a bare `docker build` happens to route to would make the export
+  # silently do nothing on some hosts.
+  # Each form carries the normalized core context on its own line, rather than composing the
+  # command in one place and the context in another: `docker_builds_share_the_normalized_core_package`
+  # reads these lines individually, and a build that resolves kamu-money-core differently from
+  # its siblings is exactly what it exists to catch.
+  local -a build_cmd
+  if [ -n "${KMONEY_BUILD_CACHE_DIR:-}" ]; then
+    mkdir -p "${KMONEY_BUILD_CACHE_DIR}/pg${pg}"
+    build_cmd=(docker buildx build --load "${KMONEY_CORE_DOCKER_ARGS[@]}"
+      --cache-from "type=local,src=${KMONEY_BUILD_CACHE_DIR}/pg${pg}"
+      --cache-to "type=local,dest=${KMONEY_BUILD_CACHE_DIR}/pg${pg},mode=max")
+  else
+    build_cmd=(docker build "${KMONEY_CORE_DOCKER_ARGS[@]}")
+  fi
+
   local iidfile image_id t0 t_image t_test
   iidfile="$(mktemp)"
   t0=$SECONDS
   # --iidfile records the image ID this build actually produced. The -t tag is a convenience
   # for a human; it is deliberately not what gets run below.
-  if ! docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
+  if ! "${build_cmd[@]}" \
         -f kamu-money-pg/Dockerfile --build-arg "PG_MAJOR=${pg}" \
         --label "${LABEL}" --label "kamu-money-pg.revision=${REVISION}" \
         --iidfile "${iidfile}" -t "kamu-money-pg:pg${pg}" . ; then
