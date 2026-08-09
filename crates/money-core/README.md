@@ -138,6 +138,7 @@ Run with `cargo run --example <name>`:
 | Example | What it shows |
 | --- | --- |
 | [`ledger`](examples/ledger.rs) | The everyday path: balances, transfers, splitting a bill, dividing money. |
+| [`rounding`](examples/rounding.rs) | The seven rounding modes and the signed residue, around `quotient * divisor + residue = original`. |
 | [`fx`](examples/fx.rs) | FX conversion: typed pairs, rounding once, and the failures that are conditions rather than errors. |
 | [`wire`](examples/wire.rs) | The serde wire: two modes per field, and the trap that makes the codec hand-written. Add `--features serde`. |
 
