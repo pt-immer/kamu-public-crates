@@ -37,7 +37,7 @@ use crate::safe::{raise, validated_or_error};
 // than believed.
 //
 // `send` is an ordinary `#[pg_extern]`. `recv` cannot be: it takes `internal` (a `StringInfo`),
-// which pgrx 0.19.1 has no safe mapping for, so it is a raw `#[pg_guard] extern "C-unwind"`
+// which pgrx 0.19.2 has no safe mapping for, so it is a raw `#[pg_guard] extern "C-unwind"`
 // function with a hand-written finfo record, declared through `extension_sql!` by symbol name.
 
 /// `send(kmoney_mixed) -> bytea`.

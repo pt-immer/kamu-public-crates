@@ -17,7 +17,7 @@ FROM rust:${RUST_VERSION}-trixie
 # Must match the `pgrx` dependency in kamu-money-pg/Cargo.toml exactly. cargo-pgrx refuses to build
 # an extension whose pgrx version differs from its own — a good refusal, since the generated
 # SQL and the FFI shims are versioned together.
-ARG PGRX_VERSION=0.19.1
+ARG PGRX_VERSION=0.19.2
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg lsb-release \

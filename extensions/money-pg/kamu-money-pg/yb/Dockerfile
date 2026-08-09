@@ -5,7 +5,7 @@
 # makes the ABI byte-correct rather than merely loadable.
 #
 # The three-symbol adaptation now lives in the pgrx fork the workspace root patches in
-# (pgrx-yugabytedb, tag v0.19.1-yb.1), behind its `yb-pg15` feature -- it is no longer vendored
+# (pgrx-yugabytedb, tag v0.19.2-yb.1), behind its `yb-pg15` feature -- it is no longer vendored
 # and textually patched here. Build through `just pg yb-build`; the recipe supplies
 # the lane context plus the normalized kamu-money-core named context.
 ARG YB_IMAGE=yugabytedb/yugabyte:2025.2.5.1-b1
@@ -31,7 +31,7 @@ ENV SSL_CERT_FILE=/etc/pki/tls/certs/ca-bundle.crt \
 RUN curl --proto '=https' --tlsv1.2 -sSfo /tmp/rustup.sh https://sh.rustup.rs \
  && sh /tmp/rustup.sh -y --default-toolchain 1.96.0
 ENV PATH=/root/.cargo/bin:$PATH
-RUN cargo install cargo-pgrx --version 0.19.1 --locked
+RUN cargo install cargo-pgrx --version 0.19.2 --locked
 ENV RUST_BACKTRACE=1
 
 WORKDIR /work
