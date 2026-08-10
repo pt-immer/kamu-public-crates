@@ -411,6 +411,16 @@ artifact-selftest:
 exactly-one-selftest:
     ./kamu-money-pg/yb/exactly-one-selftest.sh
 
+# The one command whose flag is load-bearing. `cargo update -p kamu-money-core` WITHOUT the patch
+# re-locks the lane to whatever crates.io last published, and every container suite then compiles
+# the published crate instead of this tree -- silently, because a patch offering a version the
+# lockfile does not pin is ignored rather than refused. That has happened once, through a
+# dependency bump. `hygiene` now fails on the resulting lockfile, and this recipe is the fix it
+# names, so nobody has to reconstruct the quoting.
+[doc("Re-lock kamu-money-core against the workspace crate, with the lane patch active.")]
+core-relock:
+    cargo update {{ CORE_PATCH }} -p kamu-money-core
+
 [doc("Negative controls for the single-writer lock: exclusion, re-entrancy, release on kill.")]
 workspace-lock-selftest:
     ./kamu-money-pg/yb/workspace-lock-selftest.sh

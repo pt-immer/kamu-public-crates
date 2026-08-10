@@ -817,9 +817,7 @@ dependencies = [
 
 [[package]]
 name = "kamu-money-core"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9012e58a8819064c2a2d6f7ba266e0b19ee1cfc5356578ea6e5bdf88a95101b"
+version = "0.1.2"
 dependencies = [
  "ethnum",
  "proc-macro2",
@@ -2366,7 +2364,3 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-[[patch.unused]]
-name = "kamu-money-core"
-version = "0.1.2"

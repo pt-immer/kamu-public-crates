@@ -92,6 +92,54 @@ fn docker_builds_share_the_normalized_core_package() {
     );
 }
 
+/// `Cargo.lock` must record `kamu-money-core` as a PATCHED entry -- carrying no `source` -- at the
+/// version the workspace crate has.
+///
+/// A patch is ignored when the version it offers is not the version the lockfile pins. Cargo says
+/// so in a warning and then compiles the published crate instead, and every build still succeeds.
+/// That is how this lane spent a release cycle testing kamu-money-core 0.1.1 while the tree carried
+/// 0.1.2: a dependency bump ran bare `cargo update` here, which re-locked the patched entry to the
+/// registry. Nothing failed, because the guards asked whether the named Docker context was PASSED,
+/// and it was.
+///
+/// Asserting the absence of a registry source turns a bare `cargo update` in this lane from a
+/// silent downgrade of what every container suite tests into a failing check.
+#[test]
+fn the_lane_lockfile_resolves_money_core_through_the_patch() {
+    let lock = support::manifest(support::lane_root().join("Cargo.lock"));
+    let packages = lock["package"].as_array().expect("Cargo.lock must contain a package array");
+
+    // A positive control for the absence below. If this parse could not see `source` at all,
+    // "no source" would mean "no idea" -- and every registry entry in the file would read as patched.
+    assert!(
+        packages.iter().any(|package| package.get("source").is_some()),
+        "no locked package carries a `source`, so this parse cannot distinguish a patched entry \
+         from a registry one; re-point the guard"
+    );
+
+    let entry = packages
+        .iter()
+        .find(|package| package["name"].as_str() == Some("kamu-money-core"))
+        .expect("the lane must lock kamu-money-core");
+
+    assert!(
+        entry.get("source").is_none(),
+        "Cargo.lock resolves kamu-money-core from {}, so the lane's patch is inert and every \
+         container suite compiles the PUBLISHED crate rather than this tree. Re-lock with the \
+         patch active: just pg core-relock",
+        entry.get("source").and_then(toml::Value::as_str).unwrap_or("an unreadable source")
+    );
+
+    // Derived, not restated: the pin cannot drift from the crate it is supposed to be.
+    let tree = support::manifest(support::repository_root().join("crates/money-core/Cargo.toml"));
+    assert_eq!(
+        entry["version"].as_str(),
+        tree["package"]["version"].as_str(),
+        "the lane locks a kamu-money-core version the workspace no longer carries, so the patch \
+         would offer a version the lockfile does not pin and would be ignored"
+    );
+}
+
 /// Split a Dockerfile into its RUN instructions, one entry per instruction.
 ///
 /// Backslash continuations and `<<'HEREDOC'` bodies both belong to the instruction that opened
@@ -113,11 +161,7 @@ fn run_instructions(dockerfile: &str) -> Vec<String> {
         let heredoc = line
             .split_once("<<")
             .map(|(_, rest)| {
-                rest.split_whitespace()
-                    .next()
-                    .unwrap_or_default()
-                    .trim_matches(['\'', '"', '-'])
-                    .to_owned()
+                rest.split_whitespace().next().unwrap_or_default().trim_matches(['\'', '"', '-']).to_owned()
             })
             .filter(|delimiter| !delimiter.is_empty());
 
@@ -234,13 +278,13 @@ fn the_release_proof_compiles_the_yb_dependencies_from_empty() {
 fn shipped_yugabytedb_builds_carry_the_release_scope() {
     let root = support::lane_root();
     let mut builds = Vec::new();
-    for caller in ["Justfile", "kamu-money-pg/yb/node-image.sh", "kamu-money-pg/bench/run-bench-boundary-yb.sh"]
+    for caller in
+        ["Justfile", "kamu-money-pg/yb/node-image.sh", "kamu-money-pg/bench/run-bench-boundary-yb.sh"]
     {
         let source = support::read(root.join(caller));
         for (line, logical) in support::logical_lines(&source) {
             // A trailing space excludes `Dockerfile.pg15`, which builds the A/B reference.
-            if !logical.trim_start().starts_with('#') && logical.contains("kamu-money-pg/yb/Dockerfile ")
-            {
+            if !logical.trim_start().starts_with('#') && logical.contains("kamu-money-pg/yb/Dockerfile ") {
                 builds.push((caller, line, logical));
             }
         }

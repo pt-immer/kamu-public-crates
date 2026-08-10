@@ -705,6 +705,7 @@ jobs:
             'extensions/money-pg/kamu-money-pg/Cargo.toml',
             'extensions/money-pg/kamu-money-pg/build.rs',
             'extensions/money-pg/kamu-money-pg/Dockerfile',
+            'extensions/money-pg/scripts/assert-core-resolution.sh',
             'extensions/money-pg/hygiene/Cargo.toml') }}
           restore-keys: |
             buildx-money-pg-pg${{ matrix.pg }}-
@@ -741,6 +742,7 @@ jobs:
             'extensions/money-pg/kamu-money-pg/yb/Dockerfile',
             'extensions/money-pg/kamu-money-pg/yb/probe-yb-abi.sh',
             'extensions/money-pg/kamu-money-pg/yb/YB-PINNED.txt',
+            'extensions/money-pg/scripts/assert-core-resolution.sh',
             'extensions/money-pg/hygiene/Cargo.toml') }}
           restore-keys: |
             buildx-money-pg-yb-
