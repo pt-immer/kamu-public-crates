@@ -190,7 +190,8 @@ they reject native OIDs and read through `::text`.
 | Cluster behavior | release gate suites | Every node, tablet split, concurrency, replica, restore |
 | Developer lane gate | `just gate-pg` | Offline checks, PG15–18, and portable database adapters |
 | Repository pre-push gate | `just gate-all` | Public workspace plus developer lane gate |
-| Native YB release proof | `just pg gate-pg-release` | From-source native build and all cluster suites |
+| Native YB release proof | `just pg gate-pg-release` | From-source native build, byte-exact A/B against upstream PG15, ported case suite |
+| YB deployment suites | `just pg test-yb-deployment` | Multi-node, read replica, concurrency, dump and restore |
 
 [`kamu-money-pg/tests/pg_regress/COVERAGE.md`](kamu-money-pg/tests/pg_regress/COVERAGE.md)
 maps every `#[pg_test]` to a portable SQL case or a reasoned

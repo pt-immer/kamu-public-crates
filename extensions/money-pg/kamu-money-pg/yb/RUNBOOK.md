@@ -56,7 +56,8 @@ YB_PULL=1 "$RESOLVER" "$NEW"
 
 # For a new tag:
 YB_ALLOW_UNPINNED=1 just pg yb-build "$NEW"
-YB_ALLOW_UNPINNED=1 just pg gate-pg-release 4 "$NEW"
+YB_ALLOW_UNPINNED=1 just pg gate-pg-release "$NEW"
+YB_ALLOW_UNPINNED=1 just pg test-yb-deployment "$NEW"
 
 # For a recorded tag whose digest moved, use YB_ALLOW_DRIFT=1 instead.
 ```
@@ -67,10 +68,14 @@ The release gate:
 2. disables the local `kamu-money-core` Cargo patch;
 3. runs the offline and PostgreSQL 15–18 gates;
 4. builds one node image and extracts the artifact from it;
-5. compares YugabyteDB with stock PostgreSQL 15;
-6. runs portable cases, three-node behavior, concurrent transfers, a read
-   replica, and same-version dump/restore;
+5. compares YugabyteDB with stock PostgreSQL 15, byte for byte;
+6. runs the portable cases against that node image;
 7. refuses benchmark-only symbols in the shipped artifact.
+
+It proves the extension is correct on YugabyteDB, and stops there. `just pg
+test-yb-deployment` covers three-node behaviour, a read replica, concurrent
+transfers and same-version dump/restore — those describe how a cluster carries
+the extension, which is why adopting an image runs both.
 
 If the gate passes:
 
@@ -78,7 +83,8 @@ If the gate passes:
 2. rerun without an override:
 
    ```bash
-   YB_PULL=1 just pg gate-pg-release 4 "$NEW"
+   YB_PULL=1 just pg gate-pg-release "$NEW"
+   YB_PULL=1 just pg test-yb-deployment "$NEW"
    ```
 
 3. update this runbook only if the support condition or procedure changed;

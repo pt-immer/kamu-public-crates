@@ -115,7 +115,10 @@ just gate-all   # public-crate gate plus the developer lane gate
 ```
 
 Extension releases additionally require `just pg gate-pg-release`, which builds
-the native extension against YugabyteDB and runs the cluster suites.
+the native extension against YugabyteDB, proves it byte-exact against upstream
+PostgreSQL 15, and runs the ported case suite. The multi-node, read-replica,
+concurrency and dump/restore suites are `just pg test-yb-deployment`: they
+describe YugabyteDB's behaviour rather than the extension's.
 
 `cargo-nextest` runs ordinary tests in isolated processes but omits doctests.
 Complete ordinary-test aggregates run `cargo test --doc` explicitly; coverage

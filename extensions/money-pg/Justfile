@@ -537,6 +537,13 @@ yb-ab tag="":
     workspace_lock "yb-ab" || exit 1
     just _yb-ab-ref "$(./kamu-money-pg/yb/yb-image.sh {{ tag }})"
 
+# Operational assurance for whoever runs a cluster, which is why it is not on the release gate:
+# replication, tablet placement, read replicas and dump/restore are YugabyteDB's behaviour, and a
+# kmoney payload is opaque bytes to DocDB. Run this before adopting a new YugabyteDB image, or when
+# changing how the extension is deployed -- not to prove the type is correct.
+[doc("Every deployment suite: multi-node, read replica, concurrency, dump and restore.")]
+test-yb-deployment tag="": (test-yb-cluster tag) (test-yb-readreplica tag) (test-yb-concurrent "8" "25" tag) (test-yb-restore tag)
+
 [doc("Dump a kmoney schema and restore it into a clean cluster.")]
 test-yb-restore tag="":
     #!/usr/bin/env bash
@@ -561,20 +568,25 @@ gate-offline: fmt-check lint deny doc-pg test-hygiene miri-payload selftest-all
 [doc("The offline gate plus every suite reachable without a from-source YugabyteDB build.")]
 gate-pg: gate-offline yb-image-selftest test-pg-all
 
-[doc("Run the release gate, including every native YugabyteDB proof.")]
-gate-pg-release jobs="1" tag="":
+# THIS GATE PROVES CORRECTNESS, NOT CLUSTER OPERATIONS.
+#
+# What is this repository's to prove about kmoney on YugabyteDB is that the extension compiled
+# against YugabyteDB's PG15 fork behaves identically to one compiled against stock PG15, and that
+# the ported case suite passes on a live server. Both are single-node claims: `_yb-ab-ref` is
+# byte-exact against upstream PG15, and `run-yb-regress.sh` runs the cases.
+#
+# Replication factor, tablet placement, read replicas and dump/restore are YugabyteDB's behaviour,
+# not the extension's. A `kmoney` payload is opaque bytes to DocDB, so raft copying it faithfully,
+# a split relocating it, and a replica serving it are Yugabyte's invariants -- asserting them here
+# tests Yugabyte and charges this gate hours for it. They are operational assurance for whoever
+# runs a cluster, which this repository does not: the extension is `publish = false` and the node
+# image is a test fixture.
+#
+# So they keep their recipes and leave the gate: `just pg test-yb-deployment` runs all four.
+[doc("Run the release gate: the byte-exact A/B and the case suite against a native YugabyteDB.")]
+gate-pg-release tag="":
     #!/usr/bin/env bash
     set -euo pipefail
-
-    # Just arguments are positional; reject a misleading `jobs=3` token.
-    case "{{ jobs }}" in
-        ''|*[!0-9]*)
-            echo "gate-pg-release: jobs must be a positive integer, got '{{ jobs }}'" >&2
-            echo "gate-pg-release: just takes arguments POSITIONALLY -- use 'just gate-pg-release 3'," >&2
-            echo "gate-pg-release: not 'just gate-pg-release jobs=3'." >&2  # just-anti-example
-            exit 2 ;;
-    esac
-    [ "{{ jobs }}" -ge 1 ] || { echo "gate-pg-release: jobs must be >= 1" >&2; exit 2; }
 
     source ./kamu-money-pg/yb/workspace-lock.sh
     workspace_lock "gate-pg-release" || exit 1
@@ -614,44 +626,14 @@ gate-pg-release jobs="1" tag="":
     echo "gate-pg-release: the shipped artifact carries no benchmark scaffolding"
 
     echo "gate-pg-release: base image $YB_REF"
-    echo "gate-pg-release: every suite below boots the NODE IMAGE $NODE_IMAGE"
+    echo "gate-pg-release: the proofs below boot the NODE IMAGE $NODE_IMAGE"
 
+    # The correctness claim: the extension built against YugabyteDB's PG15 fork behaves
+    # BYTE-IDENTICALLY to one built against upstream PG15, and the ported case suite passes on a
+    # live server. Everything this repository publishes about YugabyteDB rests on these two.
     just _yb-ab-ref "$YB_REF" "$NODE_IMAGE"
+    ./kamu-money-pg/yb/run-yb-regress.sh "$NODE_IMAGE"
 
-    SUITES=(
-        "regress:./kamu-money-pg/yb/run-yb-regress.sh $NODE_IMAGE"
-        "cluster:./kamu-money-pg/yb/run-yb-cluster.sh $NODE_IMAGE"
-        "concurrent:./kamu-money-pg/yb/run-yb-concurrent.sh $NODE_IMAGE '' 8 25"
-        "readreplica:./kamu-money-pg/yb/run-yb-readreplica.sh $NODE_IMAGE '' 1"
-        "restore:./kamu-money-pg/yb/run-yb-restore.sh $NODE_IMAGE"
-    )
-
-    if [ "{{ jobs }}" -le 1 ]; then
-        for entry in "${SUITES[@]}"; do
-            eval "${entry#*:}"
-        done
-    else
-        echo "gate-pg-release: running ${#SUITES[@]} YugabyteDB suites concurrently (jobs={{ jobs }})"
-        LOGDIR="$RUN_ROOT/release-suites"
-        mkdir -p "$LOGDIR"
-        pids=(); names=()
-        for entry in "${SUITES[@]}"; do
-            name="${entry%%:*}"
-            while [ "$(jobs -rp | wc -l)" -ge {{ jobs }} ]; do wait -n || true; done
-            eval "${entry#*:}" > "$LOGDIR/$name.log" 2>&1 &
-            pids+=("$!"); names+=("$name")
-        done
-        failed=()
-        for i in "${!pids[@]}"; do
-            wait "${pids[$i]}" || failed+=("${names[$i]}")
-            echo "=============================== ${names[$i]} ==============================="
-            cat "$LOGDIR/${names[$i]}.log"
-        done
-        if [ "${#failed[@]}" -ne 0 ]; then
-            echo "gate-pg-release: FAILED suites: ${failed[*]}" >&2
-            exit 1
-        fi
-    fi
     echo "gate-pg-release: all stages green on $NODE_IMAGE"
     echo
     echo "gate-pg-release: PASS"

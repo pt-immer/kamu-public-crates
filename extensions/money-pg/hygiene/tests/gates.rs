@@ -58,13 +58,30 @@ fn release_gate_covers_one_immutable_deployable_artifact() {
         "node-image.sh",
         "YB_REQUIRE_BAKED=1",
         "run-yb-regress.sh",
-        "run-yb-cluster.sh",
-        "run-yb-concurrent.sh",
-        "run-yb-readreplica.sh",
-        "run-yb-restore.sh",
         "rs_noop",
     ] {
         assert!(release.contains(required), "gate-pg-release must execute {required}");
+    }
+
+    // AND MUST NOT RUN THE DEPLOYMENT SUITES. Replication factor, tablet placement, read replicas
+    // and dump/restore are YugabyteDB's behaviour: a kmoney payload is opaque bytes to DocDB, so
+    // asserting that raft copies it, a split relocates it and a replica serves it tests Yugabyte,
+    // and charges this gate hours to do it. They keep their recipes under `test-yb-deployment`.
+    for operational in
+        ["run-yb-cluster.sh", "run-yb-concurrent.sh", "run-yb-readreplica.sh", "run-yb-restore.sh"]
+    {
+        assert!(
+            !release.contains(operational),
+            "gate-pg-release runs {operational}, which proves YugabyteDB's behaviour rather than \
+             the extension's; it belongs to `just pg test-yb-deployment`"
+        );
+    }
+
+    // Dropped from the gate is not dropped from the repository: each stays runnable, and one
+    // recipe still runs them together.
+    let deployment = support::recipe_dependencies(&dump, "test-yb-deployment");
+    for required in ["test-yb-cluster", "test-yb-readreplica", "test-yb-concurrent", "test-yb-restore"] {
+        assert!(deployment.contains(&required), "test-yb-deployment must compose {required}");
     }
     assert!(
         !release.contains("just yb-ab"),

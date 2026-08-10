@@ -103,13 +103,18 @@ just pg <recipe>        # enter the excluded lane
 just pg gate-offline    # lane checks that need no database
 just gate-pg            # developer lane gate; no native YB release build
 just gate-all           # public gate plus developer lane gate
-just pg gate-pg-release # native YugabyteDB release proof
+just pg gate-pg-release # native YugabyteDB correctness proof
+just pg test-yb-deployment # cluster, read replica, concurrency, dump and restore
 ```
 
 Run `just gate` before pushing public-workspace changes. Run `just gate-all`
 before pushing extension changes. The latter takes hours and needs Docker.
 Before an extension release, also run `just pg gate-pg-release`; it compiles
-the native extension against YugabyteDB and exercises the cluster suites.
+the native extension against YugabyteDB, proves it byte-exact against upstream
+PostgreSQL 15, and runs the ported case suite. It deliberately stops there:
+replication, tablet placement, read replicas and dump/restore are YugabyteDB's
+behaviour rather than the extension's, and live in `just pg test-yb-deployment`
+for whoever adopts a new image or changes how the extension is deployed.
 YugabyteDB commands serialize the shared default scratch root. Set a unique
 `KMONEY_RUN_ROOT` for independent concurrent runs; explicit roots bypass that
 default-root lock.
