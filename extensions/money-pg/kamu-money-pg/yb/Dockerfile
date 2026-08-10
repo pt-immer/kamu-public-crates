@@ -9,7 +9,7 @@
 # and textually patched here. Build through `just pg yb-build`; the recipe supplies
 # the lane context plus the normalized kamu-money-core named context.
 ARG YB_IMAGE=yugabytedb/yugabyte:2025.2.5.1-b1
-FROM ${YB_IMAGE} AS build
+FROM ${YB_IMAGE} AS deps
 USER root
 
 # YB's base is UBI/CentOS-family; use dnf or yum. libclang is needed by pgrx's
@@ -34,36 +34,120 @@ ENV PATH=/root/.cargo/bin:$PATH
 RUN cargo install cargo-pgrx --version 0.19.2 --locked
 ENV RUST_BACKTRACE=1
 
-WORKDIR /work
-COPY . .
-
-# Keep the lane as the primary context. A second context carries only Cargo's
-# normalized kamu-money-core package; release proof disables its Cargo patch.
-ARG KMONEY_USE_LOCAL_CORE=1
-COPY --from=kamu-money-core . /opt/kamu-money-core
-RUN case "${KMONEY_USE_LOCAL_CORE}" in \
-      0) echo "kamu-money-core: resolving from crates.io" ;; \
-      1) printf '\n[patch.crates-io]\nkamu-money-core = { path = "/opt/kamu-money-core" }\n' \
-           >> /work/.cargo/config.toml ;; \
-      *) echo "KMONEY_USE_LOCAL_CORE must be 0 or 1" >&2; exit 2 ;; \
-    esac
-ENV KMONEY_USE_LOCAL_CORE=${KMONEY_USE_LOCAL_CORE}
-
 # `.cargo/config.toml` forces PGRX_HOME=<workspace>/.pgrx (relative, force=true), but
 # `cargo pgrx init` does NOT honour that [env] and writes to the default /root/.pgrx,
 # while the pgrx-pg-sys BUILD SCRIPT (run under cargo) DOES honour it and looks for
 # /work/.pgrx -> "$PGRX_HOME does not exist". A symlink reconciles the two, exactly as
 # kamu-money-pg/Dockerfile does (there the init user is pgrx; here it is root).
-RUN cargo pgrx init --pg15 /home/yugabyte/postgres/bin/pg_config \
- && ln -sfn /root/.pgrx /work/.pgrx
+#
+# It has to exist before ANYTHING runs cargo, which is why it now precedes the dependency layer
+# instead of following a source copy. Neither step needs source to run.
+RUN cargo pgrx init --pg15 /home/yugabyte/postgres/bin/pg_config
+WORKDIR /work
+RUN ln -sfn /root/.pgrx /work/.pgrx
 
 # FIRST assert this image's headers still have the shape the adaptations were derived against.
 #
 # The compiler cannot replace this probe, even now that the adaptations live in a pgrx fork rather
 # than in textual patches. A patch that no longer APPLIES is a build failure by construction; a
-# A patch may still compile after the underlying header contract changes. The probe checks the
-# assumed header shape before building.
+# patch may still compile after the underlying header contract changes. The probe checks the
+# assumed header shape before ANY compile -- which is why it is copied on its own, ahead of the
+# dependency layer, rather than arriving with the rest of the source. It reads this image's
+# headers and nothing else, so keeping it first costs one small file.
+COPY kamu-money-pg/yb/probe-yb-abi.sh kamu-money-pg/yb/
 RUN chmod +x kamu-money-pg/yb/probe-yb-abi.sh && ./kamu-money-pg/yb/probe-yb-abi.sh
+
+# Keep the lane as the primary context. A second context carries only Cargo's
+# normalized kamu-money-core package; release proof disables its Cargo patch.
+#
+# This lands ABOVE the dependency layer so that the layer and the package step compile the same
+# graph. Resolving `kamu-money-core` one way here and the other way there would make the cached
+# layer a lie.
+ARG KMONEY_USE_LOCAL_CORE=1
+COPY --from=kamu-money-core . /opt/kamu-money-core
+
+# --- dependency layer ---------------------------------------------------------------------------
+# Manifests, lockfile and Cargo configuration only, with a stub source tree standing in for the
+# real one. Compiling that builds every DEPENDENCY -- the pgrx fork and pgrx-pg-sys dominate,
+# bindgen against YugabyteDB's own PG15 headers included -- into a layer keyed by the manifests
+# alone, so editing `src/` recompiles `kamu-money-pg` and nothing beneath it.
+#
+# This is also the ONLY form a CI cache can reach, and the reason the compile no longer happens
+# inside a BuildKit cache mount. BuildKit exports LAYERS; a mount is builder-local and never leaves
+# the machine that filled it, so a fresh runner had nothing to restore and rebuilt the whole
+# dependency graph every run. The two are mutually exclusive on the same path -- a mount over
+# /work/target masks whatever a layer baked there -- so this replaces them rather than joining them.
+#
+# `--release`, because `cargo pgrx package` builds the release profile and `[profile.release]` sets
+# `lto = "fat"`, which changes how every dependency rlib is compiled. A dev-profile layer would be
+# reused by nothing.
+#
+# `build.rs` is copied rather than stubbed: it is the per-currency generator, so keeping it real
+# puts its `kamu-money-core` build-dependency in the layer too, and a change to it correctly
+# invalidates. Its output is never compiled here, because the stub `lib.rs` does not include it.
+#
+# No `EXTRA_FEATURES` here. `boundary-probe` adds two no-op externs and no dependency, so one layer
+# serves the deployable build and the measurement build alike.
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY .cargo/ .cargo/
+COPY kamu-money-pg/Cargo.toml kamu-money-pg/build.rs kamu-money-pg/
+COPY hygiene/Cargo.toml hygiene/
+COPY scripts/assert-core-resolution.sh scripts/
+
+# The release proof's empty-cache guarantee, and the reason this ARG is EXPANDED in the RUN below
+# rather than merely declared beside it: BuildKit keys a RUN on its expanded command, so a unique
+# KMONEY_CACHE_ID is a guaranteed miss and therefore a genuine from-scratch dependency compile.
+# `just gate-pg-release` derives one per run, exactly as it did when this scoped a cache mount.
+#
+# An ARG declared and never referenced would scope nothing at all, and would say so nowhere --
+# which is why `hygiene/tests/packaging.rs` asserts the reference below, not just the declaration.
+ARG KMONEY_CACHE_ID=shared
+RUN <<'SETUP' bash -e
+    case "${KMONEY_USE_LOCAL_CORE}" in
+      0) echo "kamu-money-core: resolving from crates.io"; WANT=registry ;;
+      1) printf '\n[patch.crates-io]\nkamu-money-core = { path = "/opt/kamu-money-core" }\n' \
+           >> /work/.cargo/config.toml; WANT=local ;;
+      *) echo "KMONEY_USE_LOCAL_CORE must be 0 or 1" >&2; exit 2 ;;
+    esac
+    mkdir -p kamu-money-pg/src hygiene/src
+    : > kamu-money-pg/src/lib.rs
+    : > hygiene/src/lib.rs
+    # Appending the patch is not the same as Cargo using it. Fail here, before a compile whose
+    # result would silently describe the published crate rather than this tree.
+    #
+    # BELOW the stubs, because Cargo refuses to load a workspace member whose lib target has no
+    # file -- and an assertion that cannot resolve anything refuses every lockfile, correct ones
+    # included, which is a guard that proves nothing while looking strict.
+    bash scripts/assert-core-resolution.sh "$WANT"
+    echo "dependency scope: ${KMONEY_CACHE_ID}"
+    cargo build --release -p kamu-money-pg --no-default-features --features "pg15,yb-pg15"
+    rm -rf kamu-money-pg/src hygiene/src
+SETUP
+
+# =================================================================================================
+# The extension itself, on top of the dependencies above.
+FROM deps AS build
+
+# --- the real source ----------------------------------------------------------------------------
+# `.dockerignore` keeps `target`, `.pgrx` and the suites' scratch root out, so this clobbers
+# neither the dependencies just compiled nor the PGRX_HOME symlink.
+COPY . .
+
+# Again, and not redundantly: the copy above restored the tracked `.cargo/config.toml`, taking the
+# patch block with it. Without this the package step would resolve `kamu-money-core` from the
+# registry while the layer beneath it was built against the local path.
+#
+# The assertion is repeated for the same reason the append is: this is the resolution the SHIPPED
+# library is compiled against, and losing the patch here would be invisible in the artifact.
+ARG KMONEY_USE_LOCAL_CORE=1
+RUN case "${KMONEY_USE_LOCAL_CORE}" in \
+      0) echo "kamu-money-core: resolving from crates.io"; WANT=registry ;; \
+      1) printf '\n[patch.crates-io]\nkamu-money-core = { path = "/opt/kamu-money-core" }\n' \
+           >> /work/.cargo/config.toml; WANT=local ;; \
+      *) echo "KMONEY_USE_LOCAL_CORE must be 0 or 1" >&2; exit 2 ;; \
+    esac; \
+    bash scripts/assert-core-resolution.sh "$WANT"
+ENV KMONEY_USE_LOCAL_CORE=${KMONEY_USE_LOCAL_CORE}
 
 # Package kamu-money-pg (PG15) against YB's own pg_config.
 #
@@ -82,44 +166,23 @@ RUN chmod +x kamu-money-pg/yb/probe-yb-abi.sh && ./kamu-money-pg/yb/probe-yb-abi
 # measured (kamu-money-pg/bench/boundary/). They must never reach a deployable node image, and
 # with an empty default they cannot arrive by accident -- a caller has to name them.
 ARG EXTRA_FEATURES=
-# Compilation persists across builds in BuildKit cache mounts: the `COPY . .`
-# above invalidates this layer on every source change, and without the mounts
-# that meant recompiling the pgrx fork and every dependency from scratch each
-# time. Cargo's fingerprinting decides what is reusable, so nothing unproven is
-# skipped. The package STAGING directory is purged first: it accumulates one
-# `kmoney--X.Y.Z.sql` per version ever built into the cache, and a stale one
-# would trip the exactly-one assertions below. `KMONEY_CACHE_ID` scopes the
-# mounts; the release proof passes a unique value, which is an empty cache and
-# therefore a genuine from-scratch build.
-ARG KMONEY_CACHE_ID=shared
-RUN --mount=type=cache,id=kmoney-yb-registry-${KMONEY_CACHE_ID},target=/root/.cargo/registry,sharing=locked \
-    --mount=type=cache,id=kmoney-yb-target-${KMONEY_CACHE_ID},target=/work/target,sharing=locked \
-    rm -rf target/release/kmoney-pg15* && \
-    cargo pgrx package -p kamu-money-pg \
+RUN cargo pgrx package -p kamu-money-pg \
       --no-default-features --features "pg15,yb-pg15${EXTRA_FEATURES:+,$EXTRA_FEATURES}" \
       -c /home/yugabyte/postgres/bin/pg_config
 
 # EXACTLY ONE of each, asserted rather than assumed, plus a manifest the host side verifies.
 #
-# `find ... | head -1` was here three times, once per file. `find` has no defined order, so that
-# was "whichever the filesystem handed back first" -- and if a build ever produced two majors'
-# artifacts, the three searches could pick from different ones and assemble a triplet that
-# installs cleanly while the library and the SQL script disagree. Counting the matches turns that
-# from a silent choice into a build failure.
+# The selector is kamu-money-pg/yb/exactly-one.sh: it refuses on any count but one, and names the
+# paths it found. Keeping it in a file rather than inline is what lets
+# kamu-money-pg/yb/exactly-one-selftest.sh falsify it -- an assertion that only ever runs inside a
+# Docker build has no negative control short of a build argument invented to break it.
 #
 # ARTIFACT-MANIFEST.txt is `sha256sum`'s own format, so kamu-money-pg/yb/artifact.sh verifies it
 # with `sha256sum -c` rather than a hand-rolled comparison -- which is what makes a stale file
 # left in the output directory a failure instead of a coin flip.
-# The same cache mounts as the package step: a cache mount is visible only to
-# RUNs that mount it, so without these `target/` would be empty here.
-RUN --mount=type=cache,id=kmoney-yb-registry-${KMONEY_CACHE_ID},target=/root/.cargo/registry,sharing=locked \
-    --mount=type=cache,id=kmoney-yb-target-${KMONEY_CACHE_ID},target=/work/target,sharing=locked \
-    set -eux; mkdir -p /out; \
-    one() { \
-      n="$(find target -name "$1" | wc -l)"; \
-      [ "$n" -eq 1 ] || { echo "expected exactly one $1 under target/, found $n" >&2; exit 1; }; \
-      find target -name "$1"; \
-    }; \
+RUN set -eux; mkdir -p /out; \
+    chmod +x kamu-money-pg/yb/exactly-one.sh; \
+    one() { ./kamu-money-pg/yb/exactly-one.sh target "$1"; }; \
     cp "$(one 'kmoney*.so')"     /out/kmoney.so; \
     cp "$(one 'kmoney.control')" /out/kmoney.control; \
     cp "$(one 'kmoney--*.sql')"  /out/; \

@@ -107,16 +107,24 @@ COPY --chown=pgrx Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY --chown=pgrx .cargo/ .cargo/
 COPY --chown=pgrx kamu-money-pg/Cargo.toml kamu-money-pg/build.rs kamu-money-pg/
 COPY --chown=pgrx hygiene/Cargo.toml hygiene/
+COPY --chown=pgrx scripts/assert-core-resolution.sh scripts/
 RUN <<'SETUP' bash -e
     case "${KMONEY_USE_LOCAL_CORE}" in
-      0) echo "kamu-money-core: resolving from crates.io" ;;
+      0) echo "kamu-money-core: resolving from crates.io"; WANT=registry ;;
       1) printf '\n[patch.crates-io]\nkamu-money-core = { path = "/opt/kamu-money-core" }\n' \
-           >> /work/.cargo/config.toml ;;
+           >> /work/.cargo/config.toml; WANT=local ;;
       *) echo "KMONEY_USE_LOCAL_CORE must be 0 or 1" >&2; exit 2 ;;
     esac
     mkdir -p kamu-money-pg/src hygiene/src
     : > kamu-money-pg/src/lib.rs
     : > hygiene/src/lib.rs
+    # Appending the patch is not the same as Cargo using it. Fail here, before a compile whose
+    # result would silently describe the published crate rather than this tree.
+    #
+    # BELOW the stubs, because Cargo refuses to load a workspace member whose lib target has no
+    # file -- and an assertion that cannot resolve anything refuses every lockfile, correct ones
+    # included, which is a guard that proves nothing while looking strict.
+    bash scripts/assert-core-resolution.sh "$WANT"
     # `--tests` so the dev-dependencies land here too; `pgrx-tests` is one, and the CMD needs it.
     cargo build -p kamu-money-pg --tests --no-default-features --features "pg${PG_MAJOR}"
     rm -rf kamu-money-pg/src hygiene/src
@@ -130,12 +138,16 @@ COPY --chown=pgrx . .
 # Again, and not redundantly: the copy above restored the tracked `.cargo/config.toml`, taking
 # the patch block with it. Without this the CMD would resolve `kamu-money-core` from the
 # registry while the cached layer was built against the local path.
+#
+# The assertion is repeated for the same reason the append is: this is the resolution the CMD's
+# tests actually run against, and losing the patch here would be invisible in their results.
 RUN case "${KMONEY_USE_LOCAL_CORE}" in \
-      0) echo "kamu-money-core: resolving from crates.io" ;; \
+      0) echo "kamu-money-core: resolving from crates.io"; WANT=registry ;; \
       1) printf '\n[patch.crates-io]\nkamu-money-core = { path = "/opt/kamu-money-core" }\n' \
-           >> /work/.cargo/config.toml ;; \
+           >> /work/.cargo/config.toml; WANT=local ;; \
       *) echo "KMONEY_USE_LOCAL_CORE must be 0 or 1" >&2; exit 2 ;; \
-    esac
+    esac; \
+    bash scripts/assert-core-resolution.sh "$WANT"
 ENV KMONEY_USE_LOCAL_CORE=${KMONEY_USE_LOCAL_CORE}
 
 # Exists (pgrx-owned, and now carrying the compiled dependencies) so that a named cache volume

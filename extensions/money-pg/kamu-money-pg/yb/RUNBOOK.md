@@ -56,7 +56,8 @@ YB_PULL=1 "$RESOLVER" "$NEW"
 
 # For a new tag:
 YB_ALLOW_UNPINNED=1 just pg yb-build "$NEW"
-YB_ALLOW_UNPINNED=1 just pg gate-pg-release 4 "$NEW"
+YB_ALLOW_UNPINNED=1 just pg gate-pg-release "$NEW"
+YB_ALLOW_UNPINNED=1 just pg test-yb-deployment "$NEW"
 
 # For a recorded tag whose digest moved, use YB_ALLOW_DRIFT=1 instead.
 ```
@@ -67,10 +68,14 @@ The release gate:
 2. disables the local `kamu-money-core` Cargo patch;
 3. runs the offline and PostgreSQL 15–18 gates;
 4. builds one node image and extracts the artifact from it;
-5. compares YugabyteDB with stock PostgreSQL 15;
-6. runs portable cases, three-node behavior, concurrent transfers, a read
-   replica, and same-version dump/restore;
+5. compares YugabyteDB with stock PostgreSQL 15, byte for byte;
+6. runs the portable cases against that node image;
 7. refuses benchmark-only symbols in the shipped artifact.
+
+It proves the extension is correct on YugabyteDB, and stops there. `just pg
+test-yb-deployment` covers three-node behaviour, a read replica, concurrent
+transfers and same-version dump/restore — those describe how a cluster carries
+the extension, which is why adopting an image runs both.
 
 If the gate passes:
 
@@ -78,7 +83,8 @@ If the gate passes:
 2. rerun without an override:
 
    ```bash
-   YB_PULL=1 just pg gate-pg-release 4 "$NEW"
+   YB_PULL=1 just pg gate-pg-release "$NEW"
+   YB_PULL=1 just pg test-yb-deployment "$NEW"
    ```
 
 3. update this runbook only if the support condition or procedure changed;
@@ -222,6 +228,26 @@ as undefined catalog state: `DROP EXTENSION kmoney` and re-run the statement
 rather than reasoning about which objects survived. Its atomicity under a
 mid-statement master failover is a property of the YugabyteDB version's DDL
 handling, not of this extension, and has not been rehearsed here.
+
+### What `gate-pg-release` compiles from
+
+Step 1's artifact is compiled from an empty dependency cache, and that is a
+property of the build rather than of anyone's memory. The YugabyteDB image
+compiles its dependencies in a layer of their own, and `gate-pg-release` exports
+a `KMONEY_CACHE_ID` derived per run from the shell's PID and `/dev/urandom`. The
+Dockerfile expands that value inside the dependency compile, and BuildKit keys a
+`RUN` on its expanded command, so no earlier layer can match and the graph is
+rebuilt.
+
+Ordinary builds leave `KMONEY_CACHE_ID` at `shared` and reuse that layer, which
+is what CI restores. The base image, the toolchain and `cargo-pgrx` stay cached
+either way: the claim is about the dependency graph the shipped library links,
+not about `dnf`.
+
+`hygiene/tests/packaging.rs` asserts the expansion rather than the declaration.
+An `ARG` that is declared and never referenced scopes nothing and changes no
+cache key, so the proof would go on claiming a from-scratch compile while
+assembling one out of whatever the daemon happened to hold.
 
 ### Roll back
 

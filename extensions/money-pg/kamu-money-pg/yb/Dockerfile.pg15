@@ -46,12 +46,16 @@ COPY --chown=pgrx . .
 ARG KMONEY_USE_LOCAL_CORE=1
 COPY --from=kamu-money-core --chown=pgrx:pgrx . /opt/kamu-money-core
 USER pgrx
+# The A/B is only a claim about the YugabyteDB fork's ABI if BOTH sides compile the same
+# kamu-money-core. A patch that is passed and then ignored would make this reference a different
+# build, and the diff would attribute that difference to YugabyteDB.
 RUN case "${KMONEY_USE_LOCAL_CORE}" in \
-      0) echo "kamu-money-core: resolving from crates.io" ;; \
+      0) echo "kamu-money-core: resolving from crates.io"; WANT=registry ;; \
       1) printf '\n[patch.crates-io]\nkamu-money-core = { path = "/opt/kamu-money-core" }\n' \
-           >> /work/.cargo/config.toml ;; \
+           >> /work/.cargo/config.toml; WANT=local ;; \
       *) echo "KMONEY_USE_LOCAL_CORE must be 0 or 1" >&2; exit 2 ;; \
-    esac
+    esac; \
+    bash scripts/assert-core-resolution.sh "$WANT"
 ENV KMONEY_USE_LOCAL_CORE=${KMONEY_USE_LOCAL_CORE}
 # Same PGRX_HOME reconciliation as the other Dockerfiles: the forced relative /work/.pgrx
 # must resolve to the real home pgrx init wrote.

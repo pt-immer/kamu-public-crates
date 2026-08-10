@@ -7,9 +7,30 @@ fn gates_compose_every_required_check() {
     let lane = support::lane_root();
     let lane_dump = support::just_dump(&lane);
     let offline = support::recipe_dependencies(&lane_dump, "gate-offline");
-    for required in ["doc-pg", "deny", "test-hygiene", "miri-payload", "test-regress-selftest"] {
+    for required in ["doc-pg", "deny", "test-hygiene", "miri-payload", "selftest-all"] {
         assert!(offline.contains(&required), "gate-offline must depend on {required}");
     }
+
+    // Every negative control the lane owns, gathered in one recipe, and that recipe reached by a
+    // required check. A control behind a local aggregate only is not CI coverage: it can stop
+    // firing and merge green, which is indistinguishable from a control that cannot fail.
+    let selftests = support::recipe_dependencies(&lane_dump, "selftest-all");
+    for required in [
+        "test-regress-selftest",
+        "artifact-selftest",
+        "exactly-one-selftest",
+        "require-cache-exporter-selftest",
+        "workspace-lock-selftest",
+        "numa-selftest",
+    ] {
+        assert!(selftests.contains(&required), "selftest-all must depend on {required}");
+    }
+    let workflow = support::read(support::repository_root().join(".github/workflows/on-pr-synced.yml"));
+    assert!(
+        workflow.contains("just pg selftest-all"),
+        "a CI job must run `just pg selftest-all`; controls only `gate-offline` reaches are not \
+         covered by any required check"
+    );
     assert!(
         support::recipe_dependencies(&lane_dump, "gate-pg").contains(&"gate-offline"),
         "gate-pg must compose gate-offline"
@@ -37,13 +58,30 @@ fn release_gate_covers_one_immutable_deployable_artifact() {
         "node-image.sh",
         "YB_REQUIRE_BAKED=1",
         "run-yb-regress.sh",
-        "run-yb-cluster.sh",
-        "run-yb-concurrent.sh",
-        "run-yb-readreplica.sh",
-        "run-yb-restore.sh",
         "rs_noop",
     ] {
         assert!(release.contains(required), "gate-pg-release must execute {required}");
+    }
+
+    // AND MUST NOT RUN THE DEPLOYMENT SUITES. Replication factor, tablet placement, read replicas
+    // and dump/restore are YugabyteDB's behaviour: a kmoney payload is opaque bytes to DocDB, so
+    // asserting that raft copies it, a split relocates it and a replica serves it tests Yugabyte,
+    // and charges this gate hours to do it. They keep their recipes under `test-yb-deployment`.
+    for operational in
+        ["run-yb-cluster.sh", "run-yb-concurrent.sh", "run-yb-readreplica.sh", "run-yb-restore.sh"]
+    {
+        assert!(
+            !release.contains(operational),
+            "gate-pg-release runs {operational}, which proves YugabyteDB's behaviour rather than \
+             the extension's; it belongs to `just pg test-yb-deployment`"
+        );
+    }
+
+    // Dropped from the gate is not dropped from the repository: each stays runnable, and one
+    // recipe still runs them together.
+    let deployment = support::recipe_dependencies(&dump, "test-yb-deployment");
+    for required in ["test-yb-cluster", "test-yb-readreplica", "test-yb-concurrent", "test-yb-restore"] {
+        assert!(deployment.contains(&required), "test-yb-deployment must compose {required}");
     }
     assert!(
         !release.contains("just yb-ab"),
@@ -103,25 +141,6 @@ fn captures_status_by_disabling_set_e(logical_line: &str) -> bool {
     logical_line.find("| tee").is_some_and(|pipe| logical_line[pipe..].contains("||"))
 }
 
-fn logical_lines(source: &str) -> Vec<(usize, String)> {
-    let mut lines = Vec::new();
-    let mut logical = String::new();
-    let mut start = 0;
-    for (index, line) in source.lines().enumerate() {
-        if logical.is_empty() {
-            start = index + 1;
-        }
-        logical.push_str(line.strip_suffix('\\').unwrap_or(line));
-        if !line.ends_with('\\') {
-            lines.push((start, std::mem::take(&mut logical)));
-        }
-    }
-    if !logical.is_empty() {
-        lines.push((start, logical));
-    }
-    lines
-}
-
 #[test]
 fn gates_do_not_disable_set_e_while_capturing_output() {
     for bad in [r#"} 2>&1 | tee "$LOG" || rc=$?"#, r#"} 2>&1 | tee "$LOG" || true"#] {
@@ -136,7 +155,7 @@ fn gates_do_not_disable_set_e_while_capturing_output() {
     files.push("Justfile".into());
     let mut offenders = Vec::new();
     for relative in files {
-        for (line, logical) in logical_lines(&support::read(root.join(&relative))) {
+        for (line, logical) in support::logical_lines(&support::read(root.join(&relative))) {
             if !logical.trim_start().starts_with('#') && captures_status_by_disabling_set_e(&logical) {
                 offenders.push(format!("{}:{line}: {}", relative.display(), logical.trim()));
             }

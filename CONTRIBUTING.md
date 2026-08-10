@@ -44,13 +44,16 @@ Enter the excluded lane through the root passthrough:
 just pg             # list lane recipes
 just pg gate-offline
 just gate-all       # root gate plus the developer lane gate
-just pg gate-pg-release  # native YugabyteDB release proof
+just pg gate-pg-release  # native YugabyteDB correctness proof
+just pg test-yb-deployment  # cluster, read replica, concurrency, restore
 ```
 
 `just gate-all` needs Docker and can take hours. Run it before pushing a change
 under `extensions/money-pg`. Run `just pg gate-pg-release` before an extension
-release; it includes the from-source native YugabyteDB build and cluster suites
-that the ordinary development gate omits.
+release; it includes the from-source native YugabyteDB build, the byte-exact A/B
+against upstream PostgreSQL 15 and the ported case suite, which the ordinary
+development gate omits. The deployment suites are separate: see
+`just pg test-yb-deployment`.
 
 ### Test conventions
 

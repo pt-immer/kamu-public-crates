@@ -60,6 +60,18 @@ Repository-wide policy remains at the root. In particular, `lint-shell` and
   `crates/snap-crypto/tests/snap_bi_recipes.rs` pins this contract. Adapters pass
   `path()`, not `path_and_query()`, unless a new provider contract and vector
   require otherwise.
+- The extension lane's `Cargo.lock` must record `kamu-money-core` at the version
+  `crates/money-core` carries. A `[patch.crates-io]` entry offering any other
+  version is ignored rather than refused, so the container suites go on
+  compiling the published crate while reporting nothing; that is how the lane
+  spent a release cycle testing 0.1.1 against a 0.1.2 tree. Re-lock with
+  `just pg core-relock` — a bare `cargo update` in the lane re-locks it to the
+  registry. The entry's form is not fixed: Cargo records whichever resolution it
+  last performed, so a patched run writes a path and an unpatched one writes a
+  registry source. `scripts/assert-core-resolution.sh` re-checks the resolved
+  graph inside every image, in both directions and at the expected version,
+  because the release proof needs the opposite answer from an ordinary suite and
+  a patched lockfile pins no version for it.
 - `kamu-snap-crypto` uses `rsa`, affected by RUSTSEC-2023-0071. `deny.toml`
   records the narrow rationale: SNAP BI signs and verifies; it does not decrypt
   attacker-controlled ciphertext. Remove the ignore when a compatible
@@ -91,13 +103,18 @@ just pg <recipe>        # enter the excluded lane
 just pg gate-offline    # lane checks that need no database
 just gate-pg            # developer lane gate; no native YB release build
 just gate-all           # public gate plus developer lane gate
-just pg gate-pg-release # native YugabyteDB release proof
+just pg gate-pg-release # native YugabyteDB correctness proof
+just pg test-yb-deployment # cluster, read replica, concurrency, dump and restore
 ```
 
 Run `just gate` before pushing public-workspace changes. Run `just gate-all`
 before pushing extension changes. The latter takes hours and needs Docker.
 Before an extension release, also run `just pg gate-pg-release`; it compiles
-the native extension against YugabyteDB and exercises the cluster suites.
+the native extension against YugabyteDB, proves it byte-exact against upstream
+PostgreSQL 15, and runs the ported case suite. It deliberately stops there:
+replication, tablet placement, read replicas and dump/restore are YugabyteDB's
+behaviour rather than the extension's, and live in `just pg test-yb-deployment`
+for whoever adopts a new image or changes how the extension is deployed.
 YugabyteDB commands serialize the shared default scratch root. Set a unique
 `KMONEY_RUN_ROOT` for independent concurrent runs; explicit roots bypass that
 default-root lock.
@@ -108,13 +125,43 @@ cross targets, then runs `just doctor`. ShellCheck remains an operating-system
 package; setup prints the required version when it is absent.
 `VERBOSE=1` exposes full output behind compact aggregate recipes.
 
-The PostgreSQL matrix image compiles its dependencies in a layer of their own,
-keyed on the manifests, so editing lane source recompiles `kamu-money-pg` and
-nothing beneath it. `KMONEY_BUILD_CACHE_DIR` makes `test-matrix.sh` export and
-restore that layer through `docker buildx`, scoped per PostgreSQL major; CI sets
-it, and locally it stays unset because the daemon already holds the layers. The
-YugabyteDB image compiles inside `--mount=type=cache`, which is builder-local
-and never exported, so no registry cache reaches it.
+Both container images compile their dependencies in a layer of their own, keyed
+on the manifests, so editing lane source recompiles `kamu-money-pg` and nothing
+beneath it. `KMONEY_BUILD_CACHE_DIR` makes `test-matrix.sh` and the `yb-build`
+recipe export and restore those layers through `docker buildx`; locally it stays
+unset because the daemon already holds the layers.
+
+CI sets it for the YugabyteDB job only. Each cached target costs about 1.6 GiB
+per manifest state against a 10 GB repository cache, and a branch plus a pull
+request touching a manifest are two live states, so caching all five exceeds the
+limit; saves are then refused and each run rebuilds the layer whose stale
+near-miss it just paid to download, which is worse than not caching. One target
+fits, and YugabyteDB is the one worth it: the PostgreSQL jobs run in parallel, so
+an uncached major sets their pace whether or not its siblings are cached, while
+the YugabyteDB job is both the longest and alone. The PostgreSQL images still
+build their dependencies in a layer; only the export is dropped. Exporting needs
+the
+docker-container buildx driver, which the selected builder is not by default;
+`scripts/require-cache-exporter.sh` refuses rather than letting the build abort
+part-way. The YugabyteDB export names the `deps` build target: `mode=max` over
+the whole graph would also export the package step's `target/`, which nothing
+restores.
+
+The normalized `kamu-money-core` package is copied into both dependency layers,
+so `crates/money-core` and the root lockfile are inputs to them and belong in
+the CI cache keys. Omitting them is not a slow build but a silently stale one:
+an exact key hit makes `actions/cache` skip its post-job save, so the layer
+buildx correctly rebuilt is discarded and every later run rebuilds it too. For
+the same reason `docker-core-context.sh` deletes `.cargo_vcs_info.json` from
+the packaged directory — it carries the HEAD sha1, which would give that layer
+a cache key that can never repeat.
+
+A layer cache is exactly what a release proof must be able to bypass.
+`KMONEY_CACHE_ID` is expanded inside the dependency compile, so the unique value
+`gate-pg-release` derives is a guaranteed cache miss and therefore a genuine
+from-scratch build. An ARG that were declared and never referenced would scope
+nothing and say so nowhere, which is why `hygiene/tests/packaging.rs` asserts
+the reference rather than the declaration.
 
 Both container images must start from the exact toolchain
 `extensions/money-pg/rust-toolchain.toml` names. A series tag such as
@@ -130,7 +177,14 @@ just test-all           # workspace and per-crate feature matrices
 just cov-all            # enforced coverage floors
 just check <crate>      # one crate, without the workspace sweep
 just test-fast          # workspace nextest plus doctests
+just pg selftest-all    # every lane negative control; CI runs this recipe
+just pg core-relock     # re-lock kamu-money-core with the lane patch active
 ```
+
+Negative controls belong to `selftest-all`, and a CI job runs that recipe
+directly. A control reachable only through `gate-offline` is not covered by any
+required check, and one that never runs cannot be told from one that cannot
+fail.
 
 New recipes use the `<area>-<verb>` / `*-all` naming scheme. Aggregates compose
 granular recipes; CI should call the same granular recipes rather than duplicate
