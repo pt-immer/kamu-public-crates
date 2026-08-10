@@ -123,9 +123,19 @@ package; setup prints the required version when it is absent.
 Both container images compile their dependencies in a layer of their own, keyed
 on the manifests, so editing lane source recompiles `kamu-money-pg` and nothing
 beneath it. `KMONEY_BUILD_CACHE_DIR` makes `test-matrix.sh` and the `yb-build`
-recipe export and restore those layers through `docker buildx`, scoped per
-PostgreSQL major and once for YugabyteDB; CI sets it, and locally it stays unset
-because the daemon already holds the layers. Exporting needs the
+recipe export and restore those layers through `docker buildx`; locally it stays
+unset because the daemon already holds the layers.
+
+CI sets it for the YugabyteDB job only. Each cached target costs about 1.6 GiB
+per manifest state against a 10 GB repository cache, and a branch plus a pull
+request touching a manifest are two live states, so caching all five exceeds the
+limit; saves are then refused and each run rebuilds the layer whose stale
+near-miss it just paid to download, which is worse than not caching. One target
+fits, and YugabyteDB is the one worth it: the PostgreSQL jobs run in parallel, so
+an uncached major sets their pace whether or not its siblings are cached, while
+the YugabyteDB job is both the longest and alone. The PostgreSQL images still
+build their dependencies in a layer; only the export is dropped. Exporting needs
+the
 docker-container buildx driver, which the selected builder is not by default;
 `scripts/require-cache-exporter.sh` refuses rather than letting the build abort
 part-way. The YugabyteDB export names the `deps` build target: `mode=max` over

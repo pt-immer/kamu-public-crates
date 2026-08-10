@@ -691,40 +691,20 @@ jobs:
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
-      # Exporting a build cache needs the docker-container driver; the default one cannot.
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      # The key is the dependency layer's own identity: the files the Dockerfile copies before
-      # compiling them. A change anywhere else must not miss, which is what restore-keys is for --
-      # buildx matches layers by content digest, so a near-miss entry still supplies every layer
-      # that did not change. Measured at 1.3 GB per major.
+      # NO BUILD CACHE HERE, and the arithmetic is why. Each cached target costs about 1.6 GiB per
+      # manifest state against a 10 GB repository cache, and a branch plus a pull request touching a
+      # manifest are two live states, so caching five targets wants ~15.8 GiB of that 10 GB. Over
+      # the limit, saves are refused outright and every run rebuilds the layer whose stale near-miss
+      # it just paid to download -- strictly worse than not caching at all.
       #
-      # `crates/money-core/**` and the root lockfile are in the key because the normalized core
-      # package is COPIED INTO that layer, so they are inputs to it. Omitting them is not a slow
-      # build, it is a silently stale one: an exact key hit makes `actions/cache` skip the post-job
-      # save, so the layer buildx correctly rebuilt is discarded and the next run rebuilds it too.
-      # The glob is a superset of money-core's `package.include`; over-invalidating costs one
-      # rebuild, under-invalidating costs every future one.
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: /tmp/kmoney_buildx
-          key: >-
-            buildx-money-pg-pg${{ matrix.pg }}-${{ hashFiles(
-            'Cargo.lock',
-            'crates/money-core/**',
-            'extensions/money-pg/Cargo.lock',
-            'extensions/money-pg/Cargo.toml',
-            'extensions/money-pg/rust-toolchain.toml',
-            'extensions/money-pg/.cargo/config.toml',
-            'extensions/money-pg/kamu-money-pg/Cargo.toml',
-            'extensions/money-pg/kamu-money-pg/build.rs',
-            'extensions/money-pg/kamu-money-pg/Dockerfile',
-            'extensions/money-pg/scripts/assert-core-resolution.sh',
-            'extensions/money-pg/hygiene/Cargo.toml') }}
-          restore-keys: |
-            buildx-money-pg-pg${{ matrix.pg }}-
+      # The budget therefore buys one target, and it buys the most it can there: these jobs run in
+      # PARALLEL, so an uncached major sets the pace whether or not its siblings are cached, while
+      # the YugabyteDB job is the longest and alone. Caching a major would spend 1.6 GiB to move a
+      # job that is not the critical path.
+      #
+      # `test-matrix.sh` keeps the dependency layer regardless; only the export is dropped. Editing
+      # lane source still recompiles kamu-money-pg and nothing beneath it.
       - run: just pg test-pg "${{ matrix.pg }}"
-        env:
-          KMONEY_BUILD_CACHE_DIR: /tmp/kmoney_buildx
 
   test-money-pg-yb:
     name: test (kamu-money-pg YugabyteDB)
