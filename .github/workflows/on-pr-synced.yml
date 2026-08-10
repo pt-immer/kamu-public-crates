@@ -586,6 +586,10 @@ jobs:
           workspaces: extensions/money-pg
       - run: just pg fmt-check
       - run: just pg test-hygiene
+      # The lane's negative controls. They live behind `gate-offline` locally, which no CI job
+      # runs, so without this step a control could stop firing and merge green -- and a control
+      # that never runs is indistinguishable from one that cannot fail.
+      - run: just pg selftest-all
 
   miri-money-pg:
     name: miri (kamu-money-pg safe payload)
@@ -689,15 +693,24 @@ jobs:
           tool: just@1.57.0
       # Exporting a build cache needs the docker-container driver; the default one cannot.
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-      # The key is the dependency layer's own identity: exactly the files the Dockerfile copies
-      # before compiling them, and nothing else. A change anywhere else must not miss, which is
-      # what restore-keys is for -- buildx matches layers by content digest, so a near-miss
-      # entry still supplies every layer that did not change. Measured at 1.3 GB per major.
+      # The key is the dependency layer's own identity: the files the Dockerfile copies before
+      # compiling them. A change anywhere else must not miss, which is what restore-keys is for --
+      # buildx matches layers by content digest, so a near-miss entry still supplies every layer
+      # that did not change. Measured at 1.3 GB per major.
+      #
+      # `crates/money-core/**` and the root lockfile are in the key because the normalized core
+      # package is COPIED INTO that layer, so they are inputs to it. Omitting them is not a slow
+      # build, it is a silently stale one: an exact key hit makes `actions/cache` skip the post-job
+      # save, so the layer buildx correctly rebuilt is discarded and the next run rebuilds it too.
+      # The glob is a superset of money-core's `package.include`; over-invalidating costs one
+      # rebuild, under-invalidating costs every future one.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/kmoney_buildx
           key: >-
             buildx-money-pg-pg${{ matrix.pg }}-${{ hashFiles(
+            'Cargo.lock',
+            'crates/money-core/**',
             'extensions/money-pg/Cargo.lock',
             'extensions/money-pg/Cargo.toml',
             'extensions/money-pg/rust-toolchain.toml',
@@ -727,12 +740,16 @@ jobs:
       - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
       # Same shape as the PostgreSQL matrix, over the files the YugabyteDB dependency layer copies.
       # YB-PINNED.txt joins them because the base image is the bottom of that layer chain, and
-      # probe-yb-abi.sh because it is copied and run above the compile.
+      # probe-yb-abi.sh because it is copied and run above the compile. `crates/money-core/**` and
+      # the root lockfile are inputs for the same reason they are in the matrix key: the normalized
+      # core package is copied into this layer.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /tmp/kmoney_buildx
           key: >-
             buildx-money-pg-yb-${{ hashFiles(
+            'Cargo.lock',
+            'crates/money-core/**',
             'extensions/money-pg/Cargo.lock',
             'extensions/money-pg/Cargo.toml',
             'extensions/money-pg/rust-toolchain.toml',

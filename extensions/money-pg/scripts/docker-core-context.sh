@@ -47,6 +47,17 @@ PY
 )
 
 DOCKER_CORE_PACKAGE="$DOCKER_CORE_REPO_ROOT/target/package/kamu-money-core-$DOCKER_CORE_VERSION"
+
+# `cargo package` records the HEAD sha1 in `.cargo_vcs_info.json`, so the packaged directory's
+# content changes on EVERY COMMIT even when kamu-money-core does not. This directory is copied into
+# both images above their dependency layer, so leaving the file in place gives that layer a cache
+# key that can never repeat: a second commit on a branch recompiles the whole pgrx graph, and the
+# `actions/cache` entry still reports a hit because its key hashes manifests rather than this.
+#
+# Nothing consumes the file. Cargo reads a `[patch]` path dependency from its manifest and sources;
+# the provenance stanza exists for a published `.crate`, which this is not.
+rm -f "$DOCKER_CORE_PACKAGE/.cargo_vcs_info.json"
+
 for required in Cargo.toml tests/pg_native_column.rs; do
     if [ ! -f "$DOCKER_CORE_PACKAGE/$required" ]; then
         echo "docker-core-context: package is missing $required: $DOCKER_CORE_PACKAGE" >&2

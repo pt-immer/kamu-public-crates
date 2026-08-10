@@ -7,9 +7,29 @@ fn gates_compose_every_required_check() {
     let lane = support::lane_root();
     let lane_dump = support::just_dump(&lane);
     let offline = support::recipe_dependencies(&lane_dump, "gate-offline");
-    for required in ["doc-pg", "deny", "test-hygiene", "miri-payload", "test-regress-selftest"] {
+    for required in ["doc-pg", "deny", "test-hygiene", "miri-payload", "selftest-all"] {
         assert!(offline.contains(&required), "gate-offline must depend on {required}");
     }
+
+    // Every negative control the lane owns, gathered in one recipe, and that recipe reached by a
+    // required check. A control behind a local aggregate only is not CI coverage: it can stop
+    // firing and merge green, which is indistinguishable from a control that cannot fail.
+    let selftests = support::recipe_dependencies(&lane_dump, "selftest-all");
+    for required in [
+        "test-regress-selftest",
+        "artifact-selftest",
+        "exactly-one-selftest",
+        "workspace-lock-selftest",
+        "numa-selftest",
+    ] {
+        assert!(selftests.contains(&required), "selftest-all must depend on {required}");
+    }
+    let workflow = support::read(support::repository_root().join(".github/workflows/on-pr-synced.yml"));
+    assert!(
+        workflow.contains("just pg selftest-all"),
+        "a CI job must run `just pg selftest-all`; controls only `gate-offline` reaches are not \
+         covered by any required check"
+    );
     assert!(
         support::recipe_dependencies(&lane_dump, "gate-pg").contains(&"gate-offline"),
         "gate-pg must compose gate-offline"

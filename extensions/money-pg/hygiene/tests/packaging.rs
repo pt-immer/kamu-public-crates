@@ -92,25 +92,28 @@ fn docker_builds_share_the_normalized_core_package() {
     );
 }
 
-/// `Cargo.lock` must record `kamu-money-core` as a PATCHED entry -- carrying no `source` -- at the
-/// version the workspace crate has.
+/// `Cargo.lock` must lock `kamu-money-core` at the version the workspace crate carries.
 ///
-/// A patch is ignored when the version it offers is not the version the lockfile pins. Cargo says
-/// so in a warning and then compiles the published crate instead, and every build still succeeds.
-/// That is how this lane spent a release cycle testing kamu-money-core 0.1.1 while the tree carried
-/// 0.1.2: a dependency bump ran bare `cargo update` here, which re-locked the patched entry to the
-/// registry. Nothing failed, because the guards asked whether the named Docker context was PASSED,
-/// and it was.
+/// That equality, not the entry's form, is the precondition for the lane's patch. A patch is
+/// ignored when the version it offers is not the version the lockfile pins: Cargo says so in a
+/// warning and then compiles the published crate instead, and every build still succeeds. That is
+/// how this lane spent a release cycle testing kamu-money-core 0.1.1 while the tree carried 0.1.2,
+/// after a dependency bump ran bare `cargo update` here. Nothing failed, because the guards asked
+/// whether the named Docker context was PASSED, and it was.
 ///
-/// Asserting the absence of a registry source turns a bare `cargo update` in this lane from a
-/// silent downgrade of what every container suite tests into a failing check.
+/// The entry's form is deliberately NOT asserted, because it cannot be stable. Cargo records the
+/// resolution it just performed: a patched run rewrites the entry to a path (no `source`), an
+/// unpatched one rewrites it back to the registry. Every lane recipe patches, but a `cargo
+/// metadata` from an editor does not, so pinning the form would turn an ordinary background
+/// process into a gate failure while catching nothing the version check misses. What must hold is
+/// that whichever form is committed names the same version the tree does.
 #[test]
 fn the_lane_lockfile_resolves_money_core_through_the_patch() {
     let lock = support::manifest(support::lane_root().join("Cargo.lock"));
     let packages = lock["package"].as_array().expect("Cargo.lock must contain a package array");
 
-    // A positive control for the absence below. If this parse could not see `source` at all,
-    // "no source" would mean "no idea" -- and every registry entry in the file would read as patched.
+    // A positive control for the `source` inspection below: if this parse could not see the key at
+    // all, "no source" would mean "no idea" and every registry entry would read as patched.
     assert!(
         packages.iter().any(|package| package.get("source").is_some()),
         "no locked package carries a `source`, so this parse cannot distinguish a patched entry \
@@ -122,38 +125,81 @@ fn the_lane_lockfile_resolves_money_core_through_the_patch() {
         .find(|package| package["name"].as_str() == Some("kamu-money-core"))
         .expect("the lane must lock kamu-money-core");
 
-    assert!(
-        entry.get("source").is_none(),
-        "Cargo.lock resolves kamu-money-core from {}, so the lane's patch is inert and every \
-         container suite compiles the PUBLISHED crate rather than this tree. Re-lock with the \
-         patch active: just pg core-relock",
-        entry.get("source").and_then(toml::Value::as_str).unwrap_or("an unreadable source")
-    );
-
     // Derived, not restated: the pin cannot drift from the crate it is supposed to be.
     let tree = support::manifest(support::repository_root().join("crates/money-core/Cargo.toml"));
     assert_eq!(
         entry["version"].as_str(),
         tree["package"]["version"].as_str(),
-        "the lane locks a kamu-money-core version the workspace no longer carries, so the patch \
-         would offer a version the lockfile does not pin and would be ignored"
+        "the lane locks a kamu-money-core version the workspace does not carry, so the patch \
+         offers a version the lockfile does not pin and Cargo IGNORES it -- every container suite \
+         would compile the published crate rather than this tree. Re-lock with the patch active: \
+         just pg core-relock"
     );
+
+    // A registry entry must stay verifiable. A `source` without a `checksum` is neither a patched
+    // entry nor a checked one.
+    if entry.get("source").is_some() {
+        assert!(
+            entry.get("checksum").is_some(),
+            "kamu-money-core is locked to a registry source with no checksum"
+        );
+    }
 }
 
-/// Split a Dockerfile into its RUN instructions, one entry per instruction.
+/// One `FROM` stage: its alias, what it descends from, the build arguments it declares, and its
+/// RUN instructions with comment lines removed.
+struct Stage {
+    name: Option<String>,
+    parent: String,
+    args: Vec<String>,
+    runs: Vec<String>,
+}
+
+/// Parse a Dockerfile into stages.
 ///
-/// Backslash continuations and `<<'HEREDOC'` bodies both belong to the instruction that opened
-/// them, because BuildKit keys the layer on the whole expanded command. A guard reading single
-/// lines could see a build argument's expansion and the compile it is meant to scope as unrelated,
-/// and would then pass on a Dockerfile where they had drifted into different instructions.
-fn run_instructions(dockerfile: &str) -> Vec<String> {
+/// Three things a line-oriented reading gets wrong, each of which would let a guard below pass on a
+/// Dockerfile it exists to reject:
+///
+/// * `ARG` is STAGE-scoped. A declaration in a sibling stage is not a declaration in this one: the
+///   `--build-arg` arrives unconsumed, Docker only warns, the expansion resolves to the empty
+///   string, and the layer key stops varying while the file still reads correct.
+/// * A RUN spans its backslash continuations and its `<<'HEREDOC'` body, because BuildKit keys the
+///   layer on the whole expanded command. Reading single lines would see an argument's expansion
+///   and the compile it scopes as unrelated.
+/// * COMMENTS ARE NOT CODE. A comment naming `${KMONEY_CACHE_ID}` must not satisfy a guard looking
+///   for the expansion, and a comment naming `--mount=type=cache` -- this Dockerfile carries one,
+///   explaining why the mounts were removed -- must not fail a guard looking for the mount.
+fn stages(dockerfile: &str) -> Vec<Stage> {
     let lines: Vec<&str> = dockerfile.lines().collect();
-    let mut instructions = Vec::new();
+    let mut stages: Vec<Stage> = Vec::new();
     let mut index = 0;
+
     while index < lines.len() {
         let line = lines[index];
         index += 1;
-        if !line.trim_start().starts_with("RUN ") {
+        let trimmed = line.trim_start();
+
+        if let Some(rest) = trimmed.strip_prefix("FROM ") {
+            let mut words = rest.split_whitespace();
+            let parent = words.next().unwrap_or_default().to_owned();
+            let name = match (words.next(), words.next()) {
+                (Some(keyword), Some(alias)) if keyword.eq_ignore_ascii_case("as") => Some(alias.to_owned()),
+                _ => None,
+            };
+            stages.push(Stage { name, parent, args: Vec::new(), runs: Vec::new() });
+            continue;
+        }
+
+        // An `ARG` above the first `FROM` belongs to no stage, which is exactly what Docker says
+        // about it too.
+        let Some(stage) = stages.last_mut() else { continue };
+
+        if let Some(rest) = trimmed.strip_prefix("ARG ") {
+            stage.args.push(rest.split('=').next().unwrap_or_default().trim().to_owned());
+            continue;
+        }
+
+        if !trimmed.starts_with("RUN ") {
             continue;
         }
 
@@ -185,19 +231,54 @@ fn run_instructions(dockerfile: &str) -> Vec<String> {
                 }
             }
         }
-        instructions.push(instruction);
+
+        let code: Vec<&str> =
+            instruction.lines().filter(|line| !line.trim_start().starts_with('#')).collect();
+        stage.runs.push(code.join("\n"));
     }
-    instructions
+
+    stages
+}
+
+/// The stage that both DECLARES `KMONEY_CACHE_ID` and EXPANDS it in the RUN that compiles.
+fn scoped_dependency_stage(stages: &[Stage]) -> Option<usize> {
+    stages.iter().position(|stage| {
+        stage.args.iter().any(|arg| arg == "KMONEY_CACHE_ID")
+            && stage
+                .runs
+                .iter()
+                .any(|run| run.contains("cargo build --release") && run.contains("${KMONEY_CACHE_ID}"))
+    })
+}
+
+fn stage_running(stages: &[Stage], command: &str) -> Option<usize> {
+    stages.iter().position(|stage| stage.runs.iter().any(|run| run.contains(command)))
+}
+
+/// Whether `index` is `ancestor`, or descends from it through `FROM <stage>` links.
+fn descends_from(stages: &[Stage], index: usize, ancestor: usize) -> bool {
+    let mut current = index;
+    let mut hops = 0;
+    while hops <= stages.len() {
+        if current == ancestor {
+            return true;
+        }
+        let parent = stages[current].parent.as_str();
+        match stages.iter().position(|stage| stage.name.as_deref() == Some(parent)) {
+            Some(next) => current = next,
+            None => return false,
+        }
+        hops += 1;
+    }
+    false
 }
 
 fn scopes_the_dependency_compile(dockerfile: &str) -> bool {
-    run_instructions(dockerfile)
-        .iter()
-        .any(|run| run.contains("cargo build --release") && run.contains("${KMONEY_CACHE_ID}"))
+    scoped_dependency_stage(&stages(dockerfile)).is_some()
 }
 
 fn mounts_a_cache(dockerfile: &str) -> bool {
-    run_instructions(dockerfile).iter().any(|run| run.contains("--mount=type=cache"))
+    stages(dockerfile).iter().any(|stage| stage.runs.iter().any(|run| run.contains("--mount=type=cache")))
 }
 
 /// The YugabyteDB dependency compile must be scoped by `KMONEY_CACHE_ID`, EXPANDED inside the
@@ -215,50 +296,91 @@ fn mounts_a_cache(dockerfile: &str) -> bool {
 fn the_release_proof_compiles_the_yb_dependencies_from_empty() {
     let root = support::lane_root();
     let dockerfile = support::read(root.join("kamu-money-pg/yb/Dockerfile"));
+    let parsed = stages(&dockerfile);
 
+    let scoped = scoped_dependency_stage(&parsed).unwrap_or_else(|| {
+        panic!(
+            "the YugabyteDB dependency compile must DECLARE KMONEY_CACHE_ID in its own stage and \
+             EXPAND it in the same RUN that runs `cargo build --release`"
+        )
+    });
+
+    // The scope only reaches the shipped library if the package step inherits that layer. While
+    // the argument sat on the package RUN itself the relationship could not be broken; now it is
+    // inherited, and re-parenting the stage would sever it without touching anything asserted above.
+    let packaging = stage_running(&parsed, "cargo pgrx package")
+        .expect("the YugabyteDB image must run `cargo pgrx package`");
     assert!(
-        dockerfile.lines().any(|line| line.trim() == "ARG KMONEY_CACHE_ID=shared"),
-        "the YugabyteDB image must declare KMONEY_CACHE_ID, defaulting to the shared scope"
-    );
-    assert!(
-        scopes_the_dependency_compile(&dockerfile),
-        "the YugabyteDB dependency compile must expand ${{KMONEY_CACHE_ID}} in the SAME RUN that \
-         runs `cargo build --release`; a declaration elsewhere busts no layer"
+        descends_from(&parsed, packaging, scoped),
+        "the stage running `cargo pgrx package` does not descend from the scoped dependency stage, \
+         so a unique KMONEY_CACHE_ID no longer busts what the shipped library is built on"
     );
 
-    // Controls. Without them this guard would pass on all three of the shapes it exists to reject.
+    // Controls. Without them this guard would pass on every shape it exists to reject.
+    assert!(
+        scopes_the_dependency_compile(concat!(
+            "FROM base AS deps\nARG KMONEY_CACHE_ID=shared\n",
+            "RUN <<'SETUP' bash -e\n  echo ${KMONEY_CACHE_ID}\n  cargo build --release -p x\nSETUP\n"
+        )),
+        "a heredoc body belongs to the instruction that opened it"
+    );
     assert!(
         !scopes_the_dependency_compile(
-            "ARG KMONEY_CACHE_ID=shared\nRUN cargo build --release -p kamu-money-pg\n"
+            "FROM base AS deps\nARG KMONEY_CACHE_ID=shared\nRUN cargo build --release -p x\n"
         ),
         "a declared-but-unreferenced ARG scopes nothing and must not satisfy this guard"
     );
     assert!(
-        !scopes_the_dependency_compile(
-            "RUN echo ${KMONEY_CACHE_ID}\nRUN cargo build --release -p kamu-money-pg\n"
-        ),
+        !scopes_the_dependency_compile(concat!(
+            "FROM base AS deps\nARG KMONEY_CACHE_ID=shared\n",
+            "RUN echo ${KMONEY_CACHE_ID}\nRUN cargo build --release -p x\n"
+        )),
         "the reference must share an instruction with the compile, not merely the file"
     );
     assert!(
-        scopes_the_dependency_compile(
-            "RUN <<'SETUP' bash -e\n  echo ${KMONEY_CACHE_ID}\n  cargo build --release -p x\nSETUP\n"
+        !scopes_the_dependency_compile(concat!(
+            "FROM base AS other\nARG KMONEY_CACHE_ID=shared\n",
+            "FROM base AS deps\nRUN echo ${KMONEY_CACHE_ID} && cargo build --release -p x\n"
+        )),
+        "ARG is stage-scoped: a declaration in another stage arrives unconsumed and expands to \
+         nothing, so the layer key stops varying while the file still reads correct"
+    );
+    assert!(
+        !scopes_the_dependency_compile(concat!(
+            "FROM base AS deps\nARG KMONEY_CACHE_ID=shared\n",
+            "RUN <<'SETUP' bash -e\n  # scoped by ${KMONEY_CACHE_ID}\n  cargo build --release -p x\nSETUP\n"
+        )),
+        "a comment naming the argument is not an expansion of it"
+    );
+    assert!(
+        !descends_from(
+            &stages(concat!(
+                "FROM base AS deps\nARG KMONEY_CACHE_ID=shared\n",
+                "RUN echo ${KMONEY_CACHE_ID} && cargo build --release -p x\n",
+                "FROM base AS build\nRUN cargo pgrx package\n"
+            )),
+            1,
+            0
         ),
-        "a heredoc body belongs to the instruction that opened it"
+        "a package stage re-parented off the scoped stage must not read as descending from it"
     );
 
     // A cache mount at /work/target would MASK the layer beneath it, so the two cannot coexist:
     // reintroducing one would leave the dependency layer built, exported, restored -- and unused.
-    //
-    // Read from the RUN instructions, not the file: the comments there NAME the mechanism they
-    // replaced, and prose explaining why something is absent must not read as its presence.
     assert!(
         !mounts_a_cache(&dockerfile),
         "the YugabyteDB image compiles into layers; a cache mount would shadow them and is also \
          builder-local, which is what made this compile unreachable by any CI cache"
     );
     assert!(
-        mounts_a_cache("RUN --mount=type=cache,target=/work/target cargo build --release\n"),
+        mounts_a_cache(
+            "FROM base AS deps\nRUN --mount=type=cache,target=/work/target cargo build --release\n"
+        ),
         "the mount check must still see a mount that is actually there"
+    );
+    assert!(
+        !mounts_a_cache("FROM base AS deps\nRUN true\n# the mounts were removed: --mount=type=cache\n"),
+        "prose explaining why something is absent must not read as its presence"
     );
 
     let release = support::recipe_body(&support::just_dump(&root), "gate-pg-release");
@@ -289,6 +411,13 @@ fn shipped_yugabytedb_builds_carry_the_release_scope() {
             }
         }
     }
+
+    // A comment must not swallow the command beneath it. Were it joined, the merged entry would
+    // begin with `#`, the filter above would drop it, and a build written under a wrapped comment
+    // would never be examined for the arguments it has to carry.
+    let wrapped = support::logical_lines("# a comment ending in a backslash \\\ndocker build .");
+    assert_eq!(wrapped.len(), 2, "a comment must not continue into the next line: {wrapped:?}");
+    assert!(wrapped[1].1.contains("docker build"), "the command below a comment must survive");
 
     // A positive control. Routing these builds through a helper would leave nothing to inspect,
     // and that silence reads exactly like compliance.

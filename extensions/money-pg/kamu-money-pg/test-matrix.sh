@@ -67,6 +67,7 @@ one_major() {
   # its siblings is exactly what it exists to catch.
   local -a build_cmd
   if [ -n "${KMONEY_BUILD_CACHE_DIR:-}" ]; then
+    bash ./scripts/require-cache-exporter.sh test-matrix
     mkdir -p "${KMONEY_BUILD_CACHE_DIR}/pg${pg}"
     build_cmd=(docker buildx build --load "${KMONEY_CORE_DOCKER_ARGS[@]}"
       --cache-from "type=local,src=${KMONEY_BUILD_CACHE_DIR}/pg${pg}"

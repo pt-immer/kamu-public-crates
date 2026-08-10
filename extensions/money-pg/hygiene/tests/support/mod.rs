@@ -159,8 +159,13 @@ pub fn logical_lines(source: &str) -> Vec<(usize, String)> {
         if logical.is_empty() {
             start = index + 1;
         }
-        logical.push_str(line.strip_suffix('\\').unwrap_or(line));
-        if !line.ends_with('\\') {
+        // A comment ends at its newline: neither bash nor just continues one through a trailing
+        // backslash. Joining it to the command beneath would hide that command from every caller
+        // that skips comments -- so a `docker build` written under a wrapped comment would never
+        // be examined for the arguments it must carry.
+        let comment = logical.is_empty() && line.trim_start().starts_with('#');
+        logical.push_str(if comment { line } else { line.strip_suffix('\\').unwrap_or(line) });
+        if comment || !line.ends_with('\\') {
             lines.push((start, std::mem::take(&mut logical)));
         }
     }

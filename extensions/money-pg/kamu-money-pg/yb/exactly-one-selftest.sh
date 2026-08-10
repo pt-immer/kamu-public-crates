@@ -46,14 +46,26 @@ expect_one() {
     fi
 }
 
-# Refuses with the given status, and says why on stderr.
+# Refuses with the given status, says why on stderr, and PRINTS NOTHING on stdout.
+#
+# The last of those is the one the image depends on and the easiest to lose. The copy-out step
+# writes `cp "$(one 'kmoney*.so')" /out/kmoney.so`, and a command substitution's non-zero status is
+# discarded in an argument position -- `set -e` never fires. So a refusal that still printed a path
+# would be copied anyway, and a build holding two majors' artifacts would ship one major's library
+# beside another major's install script: exactly the mismatched triplet the selector exists to
+# prevent, with every status and message check still green.
 expect_refuse() {
-    local label="$1" root="$2" pattern="$3" want_status="$4" want_text="$5" out status
-    out="$("$SELECT" "$root" "$pattern" 2>&1 >/dev/null)" && status=0 || status=$?
+    local label="$1" root="$2" pattern="$3" want_status="$4" want_text="$5" out err status stdout
+    stdout="$(mktemp)"
+    err="$("$SELECT" "$root" "$pattern" 2>&1 >"$stdout")" && status=0 || status=$?
+    out="$(cat "$stdout")"
+    rm -f "$stdout"
     if [ "$status" -ne "$want_status" ]; then
         bad "$label (status $status, wanted $want_status)"
-    elif ! printf '%s' "$out" | grep -q "$want_text"; then
-        bad "$label (diagnostic did not mention '$want_text': $out)"
+    elif [ -n "$out" ]; then
+        bad "$label (refused but printed '$out' on stdout, which the image would then copy)"
+    elif ! printf '%s' "$err" | grep -q "$want_text"; then
+        bad "$label (diagnostic did not mention '$want_text': $err)"
     else
         ok "$label"
     fi

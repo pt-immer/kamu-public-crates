@@ -320,6 +320,7 @@ yb-build tag="":
     # reads these lines individually, and a build that resolves kamu-money-core differently from its
     # siblings is what it exists to catch.
     if [ -n "${KMONEY_BUILD_CACHE_DIR:-}" ]; then
+        bash ./scripts/require-cache-exporter.sh yb-build
         mkdir -p "${KMONEY_BUILD_CACHE_DIR}/yb"
         docker buildx build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
             -f kamu-money-pg/yb/Dockerfile --target deps --output type=cacheonly \
@@ -340,11 +341,18 @@ yb-build tag="":
     fi
 
 [doc("Build for YB, run the ABI battery on a fresh YugabyteDB, print the result.")]
-yb-native tag="": (yb-build tag)
+yb-native tag="":
     #!/usr/bin/env bash
     set -euo pipefail
     source ./kamu-money-pg/yb/workspace-lock.sh
     workspace_lock "yb-native" || exit 1
+    # `just yb-build` from the BODY, not as a recipe dependency. just runs a dependency in its own
+    # process BEFORE the body, so the build would take the lock and release it again, leaving a
+    # window in which another writer claims the default scratch root and overwrites yb/out -- and
+    # this recipe would then refuse, after paying for the artifact. Inside the body the exported
+    # KMONEY_WORKSPACE_LOCK_FD makes yb-build's acquisition re-entrant, so one hold spans the build
+    # and the battery, as it did before the build was extracted.
+    just yb-build "{{ tag }}"
     RUN_ROOT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}"
     YB_REF="$(./kamu-money-pg/yb/yb-image.sh {{ tag }})"
     ./kamu-money-pg/yb/run-yb.sh "$YB_REF" "$RUN_ROOT" "$RUN_ROOT/out-yb.txt" kamu-money-pg/yb/abi_battery.sql
@@ -428,6 +436,13 @@ workspace-lock-selftest:
 [doc("Negative controls for the NUMA pin verifier: CPU-only and memory-only mismatch.")]
 numa-selftest:
     ./kamu-money-pg/bench/numa-selftest.sh
+
+# Every negative control in the lane, in one place, because a control that no required check runs
+# is indistinguishable from one that cannot fire. These need no Docker, no database and no
+# compiler, so CI runs this recipe directly rather than reaching them through `gate-offline`;
+# `gates_compose_every_required_check` asserts both halves of that arrangement.
+[doc("Run every negative control: regress, artifact, copy-out selector, workspace lock, NUMA.")]
+selftest-all: test-regress-selftest artifact-selftest exactly-one-selftest workspace-lock-selftest numa-selftest
 
 # Measurements; never gates
 [doc("SQL cost: kmoney vs numeric(36,18) on stock PostgreSQL, with the floor. Never a gate.")]
@@ -537,7 +552,7 @@ test-pg-all: test-yb (test-pg PG_MAJORS "4") test-pg-driver test-yb-driver
 
 # Gates
 [doc("The gate for a change that touches no database: format, lint, audit, docs, Miri, and offline tests.")]
-gate-offline: fmt-check lint deny doc-pg test-hygiene miri-payload test-regress-selftest artifact-selftest exactly-one-selftest workspace-lock-selftest numa-selftest
+gate-offline: fmt-check lint deny doc-pg test-hygiene miri-payload selftest-all
 
 [doc("The offline gate plus every suite reachable without a from-source YugabyteDB build.")]
 gate-pg: gate-offline yb-image-selftest test-pg-all

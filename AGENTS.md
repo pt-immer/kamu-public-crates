@@ -60,6 +60,18 @@ Repository-wide policy remains at the root. In particular, `lint-shell` and
   `crates/snap-crypto/tests/snap_bi_recipes.rs` pins this contract. Adapters pass
   `path()`, not `path_and_query()`, unless a new provider contract and vector
   require otherwise.
+- The extension lane's `Cargo.lock` must record `kamu-money-core` at the version
+  `crates/money-core` carries. A `[patch.crates-io]` entry offering any other
+  version is ignored rather than refused, so the container suites go on
+  compiling the published crate while reporting nothing; that is how the lane
+  spent a release cycle testing 0.1.1 against a 0.1.2 tree. Re-lock with
+  `just pg core-relock` — a bare `cargo update` in the lane re-locks it to the
+  registry. The entry's form is not fixed: Cargo records whichever resolution it
+  last performed, so a patched run writes a path and an unpatched one writes a
+  registry source. `scripts/assert-core-resolution.sh` re-checks the resolved
+  graph inside every image, in both directions and at the expected version,
+  because the release proof needs the opposite answer from an ordinary suite and
+  a patched lockfile pins no version for it.
 - `kamu-snap-crypto` uses `rsa`, affected by RUSTSEC-2023-0071. `deny.toml`
   records the narrow rationale: SNAP BI signs and verifies; it does not decrypt
   attacker-controlled ciphertext. Remove the ignore when a compatible
@@ -113,9 +125,21 @@ on the manifests, so editing lane source recompiles `kamu-money-pg` and nothing
 beneath it. `KMONEY_BUILD_CACHE_DIR` makes `test-matrix.sh` and the `yb-build`
 recipe export and restore those layers through `docker buildx`, scoped per
 PostgreSQL major and once for YugabyteDB; CI sets it, and locally it stays unset
-because the daemon already holds the layers. The YugabyteDB export names the
-`deps` build target: `mode=max` over the whole graph would also export the
-package step's `target/`, which nothing restores.
+because the daemon already holds the layers. Exporting needs the
+docker-container buildx driver, which the selected builder is not by default;
+`scripts/require-cache-exporter.sh` refuses rather than letting the build abort
+part-way. The YugabyteDB export names the `deps` build target: `mode=max` over
+the whole graph would also export the package step's `target/`, which nothing
+restores.
+
+The normalized `kamu-money-core` package is copied into both dependency layers,
+so `crates/money-core` and the root lockfile are inputs to them and belong in
+the CI cache keys. Omitting them is not a slow build but a silently stale one:
+an exact key hit makes `actions/cache` skip its post-job save, so the layer
+buildx correctly rebuilt is discarded and every later run rebuilds it too. For
+the same reason `docker-core-context.sh` deletes `.cargo_vcs_info.json` from
+the packaged directory — it carries the HEAD sha1, which would give that layer
+a cache key that can never repeat.
 
 A layer cache is exactly what a release proof must be able to bypass.
 `KMONEY_CACHE_ID` is expanded inside the dependency compile, so the unique value
@@ -138,7 +162,14 @@ just test-all           # workspace and per-crate feature matrices
 just cov-all            # enforced coverage floors
 just check <crate>      # one crate, without the workspace sweep
 just test-fast          # workspace nextest plus doctests
+just pg selftest-all    # every lane negative control; CI runs this recipe
+just pg core-relock     # re-lock kamu-money-core with the lane patch active
 ```
+
+Negative controls belong to `selftest-all`, and a CI job runs that recipe
+directly. A control reachable only through `gate-offline` is not covered by any
+required check, and one that never runs cannot be told from one that cannot
+fail.
 
 New recipes use the `<area>-<verb>` / `*-all` naming scheme. Aggregates compose
 granular recipes; CI should call the same granular recipes rather than duplicate
