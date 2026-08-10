@@ -441,8 +441,12 @@ numa-selftest:
 # is indistinguishable from one that cannot fire. These need no Docker, no database and no
 # compiler, so CI runs this recipe directly rather than reaching them through `gate-offline`;
 # `gates_compose_every_required_check` asserts both halves of that arrangement.
-[doc("Run every negative control: regress, artifact, copy-out selector, workspace lock, NUMA.")]
-selftest-all: test-regress-selftest artifact-selftest exactly-one-selftest workspace-lock-selftest numa-selftest
+[doc("Negative controls for the buildx cache-export pre-flight, including an unanswerable probe.")]
+require-cache-exporter-selftest:
+    ./scripts/require-cache-exporter-selftest.sh
+
+[doc("Run every negative control: regress, artifact, copy-out, cache exporter, lock, NUMA.")]
+selftest-all: test-regress-selftest artifact-selftest exactly-one-selftest require-cache-exporter-selftest workspace-lock-selftest numa-selftest
 
 # Measurements; never gates
 [doc("SQL cost: kmoney vs numeric(36,18) on stock PostgreSQL, with the floor. Never a gate.")]
