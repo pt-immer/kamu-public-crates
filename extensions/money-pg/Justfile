@@ -305,25 +305,48 @@ yb-build tag="":
     YB_REF="$(./kamu-money-pg/yb/yb-image.sh {{ tag }})"
     echo "yb: image identity $YB_REF"
     source ./scripts/docker-core-context.sh
-    docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
-        -f kamu-money-pg/yb/Dockerfile --target artifact \
-        --build-arg YB_IMAGE="$YB_REF" \
-        --build-arg KMONEY_CACHE_ID="${KMONEY_CACHE_ID:-shared}" -o "$RUN_ROOT" .
+    # CI sets KMONEY_BUILD_CACHE_DIR; locally it stays unset, because the daemon already holds
+    # these layers. Two invocations rather than one: `mode=max` over the whole graph would also
+    # export the package step's multi-gigabyte target/ diff, on every source change -- an upload
+    # paid every run and restored by nothing. Scoping the export to the `deps` target bounds it to
+    # the layers that are actually reused, and the second build reuses the first's in-builder cache.
+    #
+    # `buildx` is named explicitly, because exporting a cache needs the docker-container driver and
+    # the default `docker` driver is not it. Depending on which builder a bare `docker build`
+    # happens to route to would make the export silently do nothing on some hosts.
+    #
+    # Each form carries the normalized core context on its own line rather than composing the
+    # command in one place and the context in another: docker_builds_share_the_normalized_core_package
+    # reads these lines individually, and a build that resolves kamu-money-core differently from its
+    # siblings is what it exists to catch.
+    if [ -n "${KMONEY_BUILD_CACHE_DIR:-}" ]; then
+        mkdir -p "${KMONEY_BUILD_CACHE_DIR}/yb"
+        docker buildx build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
+            -f kamu-money-pg/yb/Dockerfile --target deps --output type=cacheonly \
+            --build-arg YB_IMAGE="$YB_REF" \
+            --build-arg KMONEY_CACHE_ID="${KMONEY_CACHE_ID:-shared}" \
+            --cache-from "type=local,src=${KMONEY_BUILD_CACHE_DIR}/yb" \
+            --cache-to "type=local,dest=${KMONEY_BUILD_CACHE_DIR}/yb,mode=max" .
+        docker buildx build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
+            -f kamu-money-pg/yb/Dockerfile --target artifact \
+            --build-arg YB_IMAGE="$YB_REF" \
+            --build-arg KMONEY_CACHE_ID="${KMONEY_CACHE_ID:-shared}" \
+            --cache-from "type=local,src=${KMONEY_BUILD_CACHE_DIR}/yb" -o "$RUN_ROOT" .
+    else
+        docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
+            -f kamu-money-pg/yb/Dockerfile --target artifact \
+            --build-arg YB_IMAGE="$YB_REF" \
+            --build-arg KMONEY_CACHE_ID="${KMONEY_CACHE_ID:-shared}" -o "$RUN_ROOT" .
+    fi
 
 [doc("Build for YB, run the ABI battery on a fresh YugabyteDB, print the result.")]
-yb-native tag="":
+yb-native tag="": (yb-build tag)
     #!/usr/bin/env bash
     set -euo pipefail
     source ./kamu-money-pg/yb/workspace-lock.sh
     workspace_lock "yb-native" || exit 1
     RUN_ROOT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}"
     YB_REF="$(./kamu-money-pg/yb/yb-image.sh {{ tag }})"
-    echo "yb: image identity $YB_REF"
-    source ./scripts/docker-core-context.sh
-    docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
-        -f kamu-money-pg/yb/Dockerfile --target artifact \
-        --build-arg YB_IMAGE="$YB_REF" \
-        --build-arg KMONEY_CACHE_ID="${KMONEY_CACHE_ID:-shared}" -o "$RUN_ROOT" .
     ./kamu-money-pg/yb/run-yb.sh "$YB_REF" "$RUN_ROOT" "$RUN_ROOT/out-yb.txt" kamu-money-pg/yb/abi_battery.sql
 
 [doc("Negative control: prove every battery assertion still rejects a mutated output.")]
@@ -383,6 +406,10 @@ yb-image-selftest:
 [doc("Negative controls for the artifact resolver: provenance, coherence, and the maxdepth rule.")]
 artifact-selftest:
     ./kamu-money-pg/yb/artifact-selftest.sh
+
+[doc("Negative controls for the copy-out artifact selector: zero, one, and two matches.")]
+exactly-one-selftest:
+    ./kamu-money-pg/yb/exactly-one-selftest.sh
 
 [doc("Negative controls for the single-writer lock: exclusion, re-entrancy, release on kill.")]
 workspace-lock-selftest:
@@ -452,7 +479,8 @@ _yb-ab-ref base runtime="":
     if [ "$RUNTIME" = "$BASE" ]; then
         docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
             -f kamu-money-pg/yb/Dockerfile --target artifact \
-            --build-arg YB_IMAGE="$BASE" -o "$RUN_ROOT" .
+            --build-arg YB_IMAGE="$BASE" \
+            --build-arg KMONEY_CACHE_ID="${KMONEY_CACHE_ID:-shared}" -o "$RUN_ROOT" .
     else
         echo "yb: runtime differs from base, so it is a node image that already carries kmoney;"
         echo "yb: no artifact build, and run-yb.sh will refuse to install onto it."
@@ -499,7 +527,7 @@ test-pg-all: test-yb (test-pg PG_MAJORS "4") test-pg-driver test-yb-driver
 
 # Gates
 [doc("The gate for a change that touches no database: format, lint, audit, docs, Miri, and offline tests.")]
-gate-offline: fmt-check lint deny doc-pg test-hygiene miri-payload test-regress-selftest artifact-selftest workspace-lock-selftest numa-selftest
+gate-offline: fmt-check lint deny doc-pg test-hygiene miri-payload test-regress-selftest artifact-selftest exactly-one-selftest workspace-lock-selftest numa-selftest
 
 [doc("The offline gate plus every suite reachable without a from-source YugabyteDB build.")]
 gate-pg: gate-offline yb-image-selftest test-pg-all

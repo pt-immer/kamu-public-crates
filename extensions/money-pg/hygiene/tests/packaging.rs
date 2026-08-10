@@ -92,6 +92,180 @@ fn docker_builds_share_the_normalized_core_package() {
     );
 }
 
+/// Split a Dockerfile into its RUN instructions, one entry per instruction.
+///
+/// Backslash continuations and `<<'HEREDOC'` bodies both belong to the instruction that opened
+/// them, because BuildKit keys the layer on the whole expanded command. A guard reading single
+/// lines could see a build argument's expansion and the compile it is meant to scope as unrelated,
+/// and would then pass on a Dockerfile where they had drifted into different instructions.
+fn run_instructions(dockerfile: &str) -> Vec<String> {
+    let lines: Vec<&str> = dockerfile.lines().collect();
+    let mut instructions = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        let line = lines[index];
+        index += 1;
+        if !line.trim_start().starts_with("RUN ") {
+            continue;
+        }
+
+        let mut instruction = line.to_owned();
+        let heredoc = line
+            .split_once("<<")
+            .map(|(_, rest)| {
+                rest.split_whitespace()
+                    .next()
+                    .unwrap_or_default()
+                    .trim_matches(['\'', '"', '-'])
+                    .to_owned()
+            })
+            .filter(|delimiter| !delimiter.is_empty());
+
+        match heredoc {
+            Some(delimiter) => {
+                while index < lines.len() {
+                    let next = lines[index];
+                    index += 1;
+                    instruction.push('\n');
+                    instruction.push_str(next);
+                    if next.trim() == delimiter {
+                        break;
+                    }
+                }
+            }
+            None => {
+                while instruction.trim_end().ends_with('\\') && index < lines.len() {
+                    instruction.push('\n');
+                    instruction.push_str(lines[index]);
+                    index += 1;
+                }
+            }
+        }
+        instructions.push(instruction);
+    }
+    instructions
+}
+
+fn scopes_the_dependency_compile(dockerfile: &str) -> bool {
+    run_instructions(dockerfile)
+        .iter()
+        .any(|run| run.contains("cargo build --release") && run.contains("${KMONEY_CACHE_ID}"))
+}
+
+fn mounts_a_cache(dockerfile: &str) -> bool {
+    run_instructions(dockerfile).iter().any(|run| run.contains("--mount=type=cache"))
+}
+
+/// The YugabyteDB dependency compile must be scoped by `KMONEY_CACHE_ID`, EXPANDED inside the
+/// instruction that performs it.
+///
+/// `gate-pg-release` derives a value per run that no other run has used. While the compile lived
+/// in a BuildKit cache mount, that made the mount empty by definition. It now busts the dependency
+/// LAYER, by the same mechanism and for the same reason: BuildKit keys a RUN on its expanded
+/// command, so an unseen value is a guaranteed miss and therefore a genuine from-scratch build.
+///
+/// What this exists to make impossible is an ARG declared and never referenced. It scopes nothing,
+/// changes no cache key, and reads exactly like a build argument that works -- so the release proof
+/// would go on claiming a from-scratch compile while assembling one out of whatever the daemon had.
+#[test]
+fn the_release_proof_compiles_the_yb_dependencies_from_empty() {
+    let root = support::lane_root();
+    let dockerfile = support::read(root.join("kamu-money-pg/yb/Dockerfile"));
+
+    assert!(
+        dockerfile.lines().any(|line| line.trim() == "ARG KMONEY_CACHE_ID=shared"),
+        "the YugabyteDB image must declare KMONEY_CACHE_ID, defaulting to the shared scope"
+    );
+    assert!(
+        scopes_the_dependency_compile(&dockerfile),
+        "the YugabyteDB dependency compile must expand ${{KMONEY_CACHE_ID}} in the SAME RUN that \
+         runs `cargo build --release`; a declaration elsewhere busts no layer"
+    );
+
+    // Controls. Without them this guard would pass on all three of the shapes it exists to reject.
+    assert!(
+        !scopes_the_dependency_compile(
+            "ARG KMONEY_CACHE_ID=shared\nRUN cargo build --release -p kamu-money-pg\n"
+        ),
+        "a declared-but-unreferenced ARG scopes nothing and must not satisfy this guard"
+    );
+    assert!(
+        !scopes_the_dependency_compile(
+            "RUN echo ${KMONEY_CACHE_ID}\nRUN cargo build --release -p kamu-money-pg\n"
+        ),
+        "the reference must share an instruction with the compile, not merely the file"
+    );
+    assert!(
+        scopes_the_dependency_compile(
+            "RUN <<'SETUP' bash -e\n  echo ${KMONEY_CACHE_ID}\n  cargo build --release -p x\nSETUP\n"
+        ),
+        "a heredoc body belongs to the instruction that opened it"
+    );
+
+    // A cache mount at /work/target would MASK the layer beneath it, so the two cannot coexist:
+    // reintroducing one would leave the dependency layer built, exported, restored -- and unused.
+    //
+    // Read from the RUN instructions, not the file: the comments there NAME the mechanism they
+    // replaced, and prose explaining why something is absent must not read as its presence.
+    assert!(
+        !mounts_a_cache(&dockerfile),
+        "the YugabyteDB image compiles into layers; a cache mount would shadow them and is also \
+         builder-local, which is what made this compile unreachable by any CI cache"
+    );
+    assert!(
+        mounts_a_cache("RUN --mount=type=cache,target=/work/target cargo build --release\n"),
+        "the mount check must still see a mount that is actually there"
+    );
+
+    let release = support::recipe_body(&support::just_dump(&root), "gate-pg-release");
+    assert!(
+        release.contains("export KMONEY_CACHE_ID=") && release.contains("/dev/urandom"),
+        "gate-pg-release must DERIVE a scope no earlier build can have filled, not name one"
+    );
+}
+
+/// Every YugabyteDB build whose bytes ship carries the release scope.
+///
+/// `artifact` is what the suites certify and `node` is what an orchestrator deploys; a release
+/// build of either that silently reused a shared layer would be exactly the claim
+/// `gate-pg-release` exists to refuse. `boundary-node` is a measurement artefact that never
+/// reaches a deployable image, and `deps` only warms the cache, so neither is required to carry it.
+#[test]
+fn shipped_yugabytedb_builds_carry_the_release_scope() {
+    let root = support::lane_root();
+    let mut builds = Vec::new();
+    for caller in ["Justfile", "kamu-money-pg/yb/node-image.sh", "kamu-money-pg/bench/run-bench-boundary-yb.sh"]
+    {
+        let source = support::read(root.join(caller));
+        for (line, logical) in support::logical_lines(&source) {
+            // A trailing space excludes `Dockerfile.pg15`, which builds the A/B reference.
+            if !logical.trim_start().starts_with('#') && logical.contains("kamu-money-pg/yb/Dockerfile ")
+            {
+                builds.push((caller, line, logical));
+            }
+        }
+    }
+
+    // A positive control. Routing these builds through a helper would leave nothing to inspect,
+    // and that silence reads exactly like compliance.
+    assert!(
+        !builds.is_empty(),
+        "no caller names a kamu-money-pg/yb/Dockerfile build any more, so this guard would pass \
+         vacuously; keep the build and its scope together, or re-point the guard"
+    );
+
+    for (caller, line, logical) in &builds {
+        let ships = ["--target artifact", "--target node"].iter().any(|target| logical.contains(target));
+        if ships {
+            assert!(
+                logical.contains("--build-arg KMONEY_CACHE_ID"),
+                "{caller}:{line} builds shipped YugabyteDB bytes without passing KMONEY_CACHE_ID, \
+                 so gate-pg-release could not force it to compile from empty: {logical}"
+            );
+        }
+    }
+}
+
 #[test]
 fn every_lane_package_carries_both_license_texts() {
     let repository = support::repository_root();

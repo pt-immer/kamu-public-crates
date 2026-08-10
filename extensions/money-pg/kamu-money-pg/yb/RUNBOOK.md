@@ -223,6 +223,26 @@ rather than reasoning about which objects survived. Its atomicity under a
 mid-statement master failover is a property of the YugabyteDB version's DDL
 handling, not of this extension, and has not been rehearsed here.
 
+### What `gate-pg-release` compiles from
+
+Step 1's artifact is compiled from an empty dependency cache, and that is a
+property of the build rather than of anyone's memory. The YugabyteDB image
+compiles its dependencies in a layer of their own, and `gate-pg-release` exports
+a `KMONEY_CACHE_ID` derived per run from the shell's PID and `/dev/urandom`. The
+Dockerfile expands that value inside the dependency compile, and BuildKit keys a
+`RUN` on its expanded command, so no earlier layer can match and the graph is
+rebuilt.
+
+Ordinary builds leave `KMONEY_CACHE_ID` at `shared` and reuse that layer, which
+is what CI restores. The base image, the toolchain and `cargo-pgrx` stay cached
+either way: the claim is about the dependency graph the shipped library links,
+not about `dnf`.
+
+`hygiene/tests/packaging.rs` asserts the expansion rather than the declaration.
+An `ARG` that is declared and never referenced scopes nothing and changes no
+cache key, so the proof would go on claiming a from-scratch compile while
+assembling one out of whatever the daemon happened to hold.
+
 ### Roll back
 
 Before the catalog update, roll back by redeploying the previous image digest.

@@ -108,13 +108,21 @@ cross targets, then runs `just doctor`. ShellCheck remains an operating-system
 package; setup prints the required version when it is absent.
 `VERBOSE=1` exposes full output behind compact aggregate recipes.
 
-The PostgreSQL matrix image compiles its dependencies in a layer of their own,
-keyed on the manifests, so editing lane source recompiles `kamu-money-pg` and
-nothing beneath it. `KMONEY_BUILD_CACHE_DIR` makes `test-matrix.sh` export and
-restore that layer through `docker buildx`, scoped per PostgreSQL major; CI sets
-it, and locally it stays unset because the daemon already holds the layers. The
-YugabyteDB image compiles inside `--mount=type=cache`, which is builder-local
-and never exported, so no registry cache reaches it.
+Both container images compile their dependencies in a layer of their own, keyed
+on the manifests, so editing lane source recompiles `kamu-money-pg` and nothing
+beneath it. `KMONEY_BUILD_CACHE_DIR` makes `test-matrix.sh` and the `yb-build`
+recipe export and restore those layers through `docker buildx`, scoped per
+PostgreSQL major and once for YugabyteDB; CI sets it, and locally it stays unset
+because the daemon already holds the layers. The YugabyteDB export names the
+`deps` build target: `mode=max` over the whole graph would also export the
+package step's `target/`, which nothing restores.
+
+A layer cache is exactly what a release proof must be able to bypass.
+`KMONEY_CACHE_ID` is expanded inside the dependency compile, so the unique value
+`gate-pg-release` derives is a guaranteed cache miss and therefore a genuine
+from-scratch build. An ARG that were declared and never referenced would scope
+nothing and say so nowhere, which is why `hygiene/tests/packaging.rs` asserts
+the reference rather than the declaration.
 
 Both container images must start from the exact toolchain
 `extensions/money-pg/rust-toolchain.toml` names. A series tag such as

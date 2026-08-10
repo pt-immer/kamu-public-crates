@@ -103,25 +103,6 @@ fn captures_status_by_disabling_set_e(logical_line: &str) -> bool {
     logical_line.find("| tee").is_some_and(|pipe| logical_line[pipe..].contains("||"))
 }
 
-fn logical_lines(source: &str) -> Vec<(usize, String)> {
-    let mut lines = Vec::new();
-    let mut logical = String::new();
-    let mut start = 0;
-    for (index, line) in source.lines().enumerate() {
-        if logical.is_empty() {
-            start = index + 1;
-        }
-        logical.push_str(line.strip_suffix('\\').unwrap_or(line));
-        if !line.ends_with('\\') {
-            lines.push((start, std::mem::take(&mut logical)));
-        }
-    }
-    if !logical.is_empty() {
-        lines.push((start, logical));
-    }
-    lines
-}
-
 #[test]
 fn gates_do_not_disable_set_e_while_capturing_output() {
     for bad in [r#"} 2>&1 | tee "$LOG" || rc=$?"#, r#"} 2>&1 | tee "$LOG" || true"#] {
@@ -136,7 +117,7 @@ fn gates_do_not_disable_set_e_while_capturing_output() {
     files.push("Justfile".into());
     let mut offenders = Vec::new();
     for relative in files {
-        for (line, logical) in logical_lines(&support::read(root.join(&relative))) {
+        for (line, logical) in support::logical_lines(&support::read(root.join(&relative))) {
             if !logical.trim_start().starts_with('#') && captures_status_by_disabling_set_e(&logical) {
                 offenders.push(format!("{}:{line}: {}", relative.display(), logical.trim()));
             }

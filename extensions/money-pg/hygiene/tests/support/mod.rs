@@ -144,6 +144,32 @@ pub fn recipe_body(dump: &Value, name: &str) -> String {
         .join("\n")
 }
 
+/// Join backslash continuations, so a guard reads whole COMMANDS rather than the lines a command
+/// happens to be spread over.
+///
+/// Every caller is looking for two things that must appear together -- a build and its context, a
+/// compile and the argument that scopes it. Reading raw lines would let a command satisfy such a
+/// guard by being wrapped, or evade it the same way. Each entry carries the 1-based line the
+/// command started on, so a diagnostic can name it.
+pub fn logical_lines(source: &str) -> Vec<(usize, String)> {
+    let mut lines = Vec::new();
+    let mut logical = String::new();
+    let mut start = 0;
+    for (index, line) in source.lines().enumerate() {
+        if logical.is_empty() {
+            start = index + 1;
+        }
+        logical.push_str(line.strip_suffix('\\').unwrap_or(line));
+        if !line.ends_with('\\') {
+            lines.push((start, std::mem::take(&mut logical)));
+        }
+    }
+    if !logical.is_empty() {
+        lines.push((start, logical));
+    }
+    lines
+}
+
 pub fn recipe_empty_parameters(dump: &Value, name: &str) -> Vec<String> {
     recipe(dump, name)
         .get("parameters")
