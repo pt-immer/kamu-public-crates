@@ -50,4 +50,13 @@ INSERT INTO overflowing VALUES
     ('999999999999999999.999999999999999999'), ('0.000000000000000001');
 SELECT sum(amount)::text FROM overflowing;
 
+-- The refusal above narrows to i128 and reports the total as an i128. 171 rows
+-- at the domain edge exceed i128 itself, which is the only path that reaches
+-- the wide arm; 170 still narrow, so 171 is the threshold, not a round number.
+\echo -- the_sum_aggregate_reports_a_total_too_wide_for_i128
+CREATE TEMP TABLE too_wide (amount kmoney_usd);
+INSERT INTO too_wide
+    SELECT '999999999999999999.999999999999999999'::kmoney_usd FROM generate_series(1, 171);
+SELECT sum(amount)::text FROM too_wide;
+
 \echo == CASE COMPLETE: 04-sum ==

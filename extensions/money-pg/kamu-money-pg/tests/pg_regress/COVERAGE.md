@@ -97,8 +97,9 @@ If a test cannot be expressed here, its row must read
 | 60 | `the_sum_aggregate_is_plan_independent_across_a_domain_edge_transient` | `04-sum` | two orders, one total |
 | 61 | `the_sum_aggregate_rejects_a_forged_transition_state` | `04-sum` | ERROR, state must be 32 bytes |
 | 62 | `the_sum_aggregate_rejects_a_total_that_leaves_the_domain` | `04-sum` | ERROR, sum overflow |
-| 63 | `the_text_form_matches_money_core` | `02-text` | the five-form line |
-| 64 | `there_is_no_cast_to_numeric` | `11-compare` | ERROR, cannot cast to numeric |
+| 63 | `the_sum_aggregate_reports_a_total_too_wide_for_i128` | `04-sum` | ERROR naming the exact 171-term total |
+| 64 | `the_text_form_matches_money_core` | `02-text` | the five-form line |
+| 65 | `there_is_no_cast_to_numeric` | `11-compare` | ERROR, cannot cast to numeric |
 
 ## Running it
 

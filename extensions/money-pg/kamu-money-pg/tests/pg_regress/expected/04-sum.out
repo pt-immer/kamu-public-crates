@@ -13,4 +13,6 @@ empty_partial_is_identity=true
 ERROR:  sum(kmoney_usd): transition state must be exactly 32 bytes, got 5
 -- the_sum_aggregate_rejects_a_total_that_leaves_the_domain
 ERROR:  sum(kmoney_usd): 1000000000000000000000000000000000000 canonical units is outside the supported range -999999999999999999999999999999999999..=999999999999999999999999999999999999
+-- the_sum_aggregate_reports_a_total_too_wide_for_i128
+ERROR:  sum(kmoney_usd): 170999999999999999999999999999999999829 canonical units is outside the supported range -999999999999999999999999999999999999..=999999999999999999999999999999999999
 == CASE COMPLETE: 04-sum ==
