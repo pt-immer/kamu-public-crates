@@ -101,8 +101,11 @@ doctor:
     hard=0
     soft=0
     pass=0
+    # `!`, not `•`: the root doctor spends `•` on a tool that passed from
+    # outside the repository. A lane warning is not a pass, so it takes its own
+    # glyph rather than teaching two meanings for one mark.
     ok()   { printf '  %s✓%s %-*s %s%s%s\n' "$G" "$R" "$W" "$1" "$D" "$2" "$R"; pass=$((pass+1)); }
-    warn() { printf '  %s•%s %-*s %s%s%s\n' "$Y" "$R" "$W" "$1" "$Y" "$2" "$R"; soft=$((soft+1)); }
+    warn() { printf '  %s!%s %-*s %s%s%s\n' "$Y" "$R" "$W" "$1" "$Y" "$2" "$R"; soft=$((soft+1)); }
     fail() { printf '  %s✗%s %-*s %s%s%s\n' "$X" "$R" "$W" "$1" "$X" "$2" "$R"; hard=$((hard+1)); }
     sec()  { printf '\n%s%s%s\n' "$B$C" "$1" "$R"; }
 
@@ -219,13 +222,13 @@ doctor:
 
     printf '\n'
     if [ "$hard" -gt 0 ]; then
-        printf '%s%s✗ %d failed%s   %s✓ %d ok%s   %s• %d warning(s)%s\n' \
+        printf '%s%s✗ %d failed%s   %s✓ %d ok%s   %s! %d warning(s)%s\n' \
             "$B" "$X" "$hard" "$R" "$G" "$pass" "$R" "$Y" "$soft" "$R"
         exit 1
     fi
     # "healthy", not "all good": warnings do not fail the lane, but a headline
     # that contradicts the count beside it teaches the reader to skip both.
-    printf '%s%s✓ healthy%s   %s✓ %d ok%s   %s• %d warning(s)%s\n' \
+    printf '%s%s✓ healthy%s   %s✓ %d ok%s   %s! %d warning(s)%s\n' \
         "$B" "$G" "$R" "$G" "$pass" "$R" "$Y" "$soft" "$R"
 
 

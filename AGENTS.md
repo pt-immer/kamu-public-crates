@@ -141,9 +141,14 @@ so a tool above the floor is running something CI is not: for `taplo`, `typos`,
 can pass locally and fail in CI. Rust toolchains stay exact, because
 `rustup run <version>` addresses one by name — an identity, not a floor.
 
-Doctor colors an interactive stdout only and honors `NO_COLOR`. `setup` and
-`doctor` carry `[no-exit-message]`, so a failure is the script's own report; the
-exit status still travels.
+`just pg doctor` follows the same rendering contract, with one marker of its
+own: `!` is an advisory warning, which never affects its exit code. It is a
+distinct glyph because `•` already means a tool that passed from outside the
+repository, and a warning is not a pass.
+
+Both doctors color an interactive stdout only and honor `NO_COLOR`. `setup`,
+`doctor` and the `pg` passthrough carry `[no-exit-message]`, so a failure is the
+script's own report; the exit status still travels.
 
 Both container images compile their dependencies in a layer of their own, keyed
 on the manifests, so editing lane source recompiles `kamu-money-pg` and nothing
