@@ -505,10 +505,13 @@ gate:
     fi
     exit "$fail"
 
-# Passthrough keeps the lane's recipe inventory in its own Justfile.
+# Passthrough keeps the lane's recipe inventory in its own Justfile. It reports
+# nothing of its own, so `[no-exit-message]` leaves the lane recipe's failure as
+# the whole message; the exit status still travels.
 [doc("Run a recipe in the excluded PostgreSQL extension lane.")]
+[no-exit-message]
 pg *ARGS:
-    cd extensions/money-pg && just {{ ARGS }}
+    @cd extensions/money-pg && just {{ ARGS }}
 
 # The PostgreSQL lane's developer gate. Hours and Docker-backed, but excludes the native YB
 # release proof (`just pg gate-pg-release`).

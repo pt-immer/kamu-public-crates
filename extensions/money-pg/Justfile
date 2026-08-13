@@ -83,115 +83,146 @@ setup:
     exit "$rc"
 
 [doc("Report every extension-lane prerequisite and cleanup warning.")]
+[no-exit-message]
 doctor:
     #!/usr/bin/env bash
+    # No `-e`: every check runs, so one absent tool cannot hide the rest.
     set -uo pipefail
+
+    # Color an interactive terminal only, and never when NO_COLOR is set, so a
+    # redirected or captured run stays plain text.
+    if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+        B=$'\033[1m'; D=$'\033[2m'; R=$'\033[0m'
+        G=$'\033[32m'; Y=$'\033[33m'; X=$'\033[31m'; C=$'\033[36m'
+    else
+        B=''; D=''; R=''; G=''; Y=''; X=''; C=''
+    fi
+    W=22
     hard=0
     soft=0
-    ok()   { printf '  \033[32mok\033[0m    %s\n' "$1"; }
-    warn() { printf '  \033[33mwarn\033[0m  %s\n' "$1"; soft=$((soft+1)); }
-    fail() { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; hard=$((hard+1)); }
+    pass=0
+    ok()   { printf '  %s✓%s %-*s %s%s%s\n' "$G" "$R" "$W" "$1" "$D" "$2" "$R"; pass=$((pass+1)); }
+    warn() { printf '  %s•%s %-*s %s%s%s\n' "$Y" "$R" "$W" "$1" "$Y" "$2" "$R"; soft=$((soft+1)); }
+    fail() { printf '  %s✗%s %-*s %s%s%s\n' "$X" "$R" "$W" "$1" "$X" "$2" "$R"; hard=$((hard+1)); }
+    sec()  { printf '\n%s%s%s\n' "$B$C" "$1" "$R"; }
 
-    echo "toolchain"
+    printf '\n%skmoney · doctor%s  %sextension-lane prerequisites%s\n' "$B$C" "$R" "$D" "$R"
+
+    sec "Toolchain"
     if command -v cargo >/dev/null; then
-        ok "cargo $(cargo --version | cut -d' ' -f2)"
+        ok "cargo" "$(cargo --version | cut -d' ' -f2)"
     else
-        fail "cargo not found -- nothing in this repo can build"
+        fail "cargo" "not found — nothing in this lane can build"
     fi
     if command -v rustc >/dev/null; then
         have=$(rustc --version | cut -d' ' -f2)
         want=$(grep -m1 'rust-version' Cargo.toml | tr -d '" ' | cut -d= -f2)
         if [ "$(printf '%s\n%s\n' "$want" "$have" | sort -V | head -1)" = "$want" ]; then
-            ok "rustc $have (workspace rust-version = $want)"
+            ok "rustc" "$have  ≥ $want (workspace rust-version)"
         else
-            fail "rustc $have is below the workspace rust-version $want"
+            fail "rustc" "$have — below the workspace rust-version $want"
         fi
     else
-        fail "rustc not found"
+        fail "rustc" "not found"
     fi
-    cargo fmt --version   >/dev/null 2>&1 && ok "rustfmt"  || fail "rustfmt missing (rustup component add rustfmt)"
-    cargo clippy --version >/dev/null 2>&1 && ok "clippy"   || fail "clippy missing (rustup component add clippy)"
-    cargo +nightly miri --version >/dev/null 2>&1 \
-        && ok "nightly Miri" \
-        || fail "nightly Miri missing (rustup component add miri --toolchain nightly)"
+    if cargo fmt --version >/dev/null 2>&1; then
+        ok "rustfmt" "present"
+    else
+        fail "rustfmt" "missing — rustup component add rustfmt"
+    fi
+    if cargo clippy --version >/dev/null 2>&1; then
+        ok "clippy" "present"
+    else
+        fail "clippy" "missing — rustup component add clippy"
+    fi
+    if cargo +nightly miri --version >/dev/null 2>&1; then
+        ok "nightly Miri" "present"
+    else
+        fail "nightly Miri" "missing — rustup component add miri --toolchain nightly"
+    fi
 
-    echo "containers"
+    sec "Containers"
     if command -v docker >/dev/null; then
         if docker info >/dev/null 2>&1; then
-            ok "docker daemon reachable"
+            ok "docker" "daemon reachable"
             n=$(docker ps -q | wc -l)
-            ok "$n container(s) running on the shared daemon -- never global-prune here"
+            ok "shared daemon" "$n container(s) running — never global-prune here"
             all=$(docker ps -aq --filter 'label=kamu-money-pg.revision' | wc -l)
             live=$(docker ps -q --filter 'label=kamu-money-pg.revision' | wc -l)
             leaked=$((all - live))
             if [ "$leaked" -gt 0 ]; then
-                warn "$leaked leaked test-matrix container(s); run: just containers"
+                warn "test-matrix" "$leaked leaked container(s) — run: just containers"
             elif [ "$live" -gt 0 ]; then
-                ok "no leaked test-matrix containers ($live still running -- a matrix is live)"
+                ok "test-matrix" "no leaked containers ($live running — a matrix is live)"
             else
-                ok "no leaked test-matrix containers"
+                ok "test-matrix" "no leaked containers"
             fi
         else
-            warn "docker installed but the daemon is unreachable -- container suites will be skipped"
+            warn "docker" "installed but the daemon is unreachable — container suites will be skipped"
         fi
     else
-        warn "docker not found -- test-db, test-yb and test-pg cannot run"
+        warn "docker" "not found — test-db, test-yb and test-pg cannot run"
     fi
 
-    echo "kamu-money-pg (pgrx)"
+    sec "kamu-money-pg (pgrx)"
     if [ -f ".pgrx/config.toml" ]; then
-        ok "in-repo .pgrx present -- 'just check-pg' compiles kamu-money-pg without a container"
+        ok ".pgrx" "present — check-pg compiles kamu-money-pg without a container"
     else
-        warn "no .pgrx/ -- run 'just pgrx-init'; until then kamu-money-pg can only be built in containers"
+        warn ".pgrx" "absent — run: just pgrx-init; until then only containers build it"
     fi
+    # cargo-pgrx is matched exactly, not as a floor: it is one half of an ABI
+    # pairing with the pinned pgrx dependency, not a capability threshold.
     if command -v cargo-pgrx >/dev/null; then
         have_pgrx=$(cargo pgrx --version | awk '{print $2}')
         want_pgrx=$(grep -m1 '^pgrx = ' kamu-money-pg/Cargo.toml | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
         if [ "$have_pgrx" = "$want_pgrx" ]; then
-            ok "cargo-pgrx $have_pgrx matches the pinned pgrx dependency"
+            ok "cargo-pgrx" "$have_pgrx matches the pinned pgrx dependency"
         else
-            fail "cargo-pgrx $have_pgrx but kamu-money-pg pins pgrx $want_pgrx -- they must match"
+            fail "cargo-pgrx" "$have_pgrx — kamu-money-pg pins pgrx $want_pgrx; they must match"
         fi
     else
-        warn "cargo-pgrx not installed -- 'just pgrx-init' and 'just test-pg' need it"
+        warn "cargo-pgrx" "not installed — pgrx-init and test-pg need it"
     fi
 
-    echo "hygiene"
+    sec "Hygiene"
     if git rev-parse --git-dir >/dev/null 2>&1; then
-        ok "inside a git work tree"
+        ok "git work tree" "inside one"
         if grep -qE '^(repository|license|publish) = ' kamu-money-pg/Cargo.toml; then
-            warn "kamu-money-pg/Cargo.toml hard-codes repository/license/publish -- these belong to [workspace.package] in the lane root; a literal here overrides it"
+            warn "manifest fields" "kamu-money-pg hard-codes repository/license/publish — a literal overrides [workspace.package]"
         else
-            ok "kamu-money-pg inherits repository, license and publish from the lane root"
+            ok "manifest fields" "inherited from the lane root"
         fi
         declared="$(grep -m1 '^repository = ' Cargo.toml 2>/dev/null | cut -d'"' -f2 || true)"
         actual="$(git remote get-url "$(git remote | head -1)" 2>/dev/null || echo '')"
         if [ -z "$declared" ]; then
-            warn "the lane root declares no 'repository'"
+            warn "repository field" "the lane root declares none"
         else
             case "$actual" in
-                *"${declared#https://github.com/}"*) ok "lane root 'repository' matches the git remote" ;;
-                *) warn "lane root says '$declared' but the remote is '$actual'" ;;
+                *"${declared#https://github.com/}"*) ok "repository field" "matches the git remote" ;;
+                # The remote URL is not echoed: it can name a host, and this
+                # report is pasted into issues. `git remote -v` shows it.
+                *) warn "repository field" "declared '$declared' but the remote differs" ;;
             esac
         fi
     else
-        fail "not a git work tree"
+        fail "git work tree" "not inside one"
     fi
-
     leaked_certs=$(git status --porcelain --untracked-files=all 2>/dev/null | grep -cE '\.(crt|pem|key)$')
     if [ "$leaked_certs" -gt 0 ]; then
-        fail "$leaked_certs certificate/key file(s) are UNTRACKED and not ignored -- fix .gitignore before any commit:"
+        fail "certificates" "$leaked_certs untracked, unignored key or cert file(s) — fix .gitignore before any commit:"
         git status --porcelain --untracked-files=all | grep -E '\.(crt|pem|key)$' | sed 's/^/          /'
     else
-        ok "no untracked certificate or key files"
+        ok "certificates" "none untracked"
     fi
 
-    echo
+    printf '\n'
     if [ "$hard" -gt 0 ]; then
-        echo "doctor: $hard hard failure(s), $soft warning(s)"
+        printf '%s%s✗ %d failed%s   %s✓ %d ok%s   %s• %d warning(s)%s\n' \
+            "$B" "$X" "$hard" "$R" "$G" "$pass" "$R" "$Y" "$soft" "$R"
         exit 1
     fi
-    echo "doctor: healthy ($soft warning(s))"
+    printf '%s%s✓ all good%s   %s✓ %d ok%s   %s• %d warning(s)%s\n' \
+        "$B" "$G" "$R" "$G" "$pass" "$R" "$Y" "$soft" "$R"
 
 
 # Build and static checks
