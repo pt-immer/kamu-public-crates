@@ -210,7 +210,9 @@ doctor:
     leaked_certs=$(git status --porcelain --untracked-files=all 2>/dev/null | grep -cE '\.(crt|pem|key)$')
     if [ "$leaked_certs" -gt 0 ]; then
         fail "certificates" "$leaked_certs untracked, unignored key or cert file(s) — fix .gitignore before any commit:"
-        git status --porcelain --untracked-files=all | grep -E '\.(crt|pem|key)$' | sed 's/^/          /'
+        # Indent to the detail column the row helpers use: two spaces, the
+        # marker, a space, the label padded to $W, then one space.
+        git status --porcelain --untracked-files=all | grep -E '\.(crt|pem|key)$' | sed "s/^/$(printf '%*s' $((W + 5)) '')/"
     else
         ok "certificates" "none untracked"
     fi
@@ -221,7 +223,9 @@ doctor:
             "$B" "$X" "$hard" "$R" "$G" "$pass" "$R" "$Y" "$soft" "$R"
         exit 1
     fi
-    printf '%s%s✓ all good%s   %s✓ %d ok%s   %s• %d warning(s)%s\n' \
+    # "healthy", not "all good": warnings do not fail the lane, but a headline
+    # that contradicts the count beside it teaches the reader to skip both.
+    printf '%s%s✓ healthy%s   %s✓ %d ok%s   %s• %d warning(s)%s\n' \
         "$B" "$G" "$R" "$G" "$pass" "$R" "$Y" "$soft" "$R"
 
 

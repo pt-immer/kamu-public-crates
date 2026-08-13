@@ -323,7 +323,7 @@ tests complement it.
 | `rust_decimal::Decimal` as storage or compute representation | Does not cover the canonical domain while preserving a fixed structural scale |
 | Runtime-currency `Money` with fallible arithmetic | Allows calculation before currency identity is proved |
 | `Iterator::sum()` through `Add` | A transient out-of-domain partial makes results order-dependent |
-| Infallible `Summation`/`Overflow` mirroring `Division`/`Residue` | An overflowing sum splits nothing, and its excess is outside the domain, so no `Residue` can carry it |
+| Infallible `Summation`/`Overflow` mirroring `Division`/`Residue` | An overflowing sum splits nothing, and nothing bounds its excess, so the accessor would be fallible |
 | PostgreSQL `NUMERIC` storage | Over-precise ingress can round before constraints inspect it |
 | Separate public driver-adapter crates | Orphan rules prevent the required trait implementations |
 | Untagged binary `i128` | Lets bytes written as one currency decode as another |

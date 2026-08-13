@@ -14,20 +14,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   alternative in `DESIGN.md`.
 
   `div_int` bundles its quotient with a residue because integer division splits
-  one amount into two representable parts, and the residue is a whole number of
-  canonical units someone is still owed. An overflowing sum splits nothing:
-  every term is untouched, no obligation is created, and the amount by which
-  the total overshoots is itself outside the domain, so `Residue::try_from_units`
-  refuses it. Such a product type would exist to hand back the one value it
-  could not hold.
+  one amount into two parts and bounds the residue by the divisor. That bound
+  is what lets `Division` hand the residue back unconditionally: it is always a
+  whole number of canonical units inside the domain, and always money someone
+  is still owed.
 
-  This is the same rule that already keeps `Residue` out of conversion, whose
-  loss is below one canonical unit, and out of allocation, which leaves every
-  unit in the returned parts.
+  An overflowing sum splits nothing — every term is untouched and no obligation
+  is created — and nothing bounds its excess. Two terms at the domain edge
+  overshoot by exactly the domain maximum, which is a valid `Residue`; 171
+  overshoot by more than `i128` holds, which is not. An `Overflow` could
+  therefore only expose the excess through a fallible accessor, which is the
+  `Result` again one layer down.
 
-  `a_refused_total_has_no_excess_that_could_be_handed_back_as_money` pins the
-  property, so a later change cannot quietly make the excess representable
-  without the reasoning being revisited.
+  `a_refused_totals_excess_is_not_uniformly_representable_as_money` pins both
+  sides of that, so neither half can be quietly assumed away.
 
   No API change.
 

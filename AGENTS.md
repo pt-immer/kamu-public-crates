@@ -127,9 +127,11 @@ package; setup prints the required version when it is absent.
 
 The Justfile exports `.tools/bin` and `node_modules/.bin` ahead of `PATH`, so a
 recipe runs the repository-local tool where setup installed one and the system
-copy where it did not. `just doctor` resolves in that same order and names the
-copy it found: `✓` repository-local, `•` system, `✗` absent, unreadable, or below
-its pin.
+copy where it did not. `just doctor` resolves in that same order. Under
+**Repository tools**, where setup is what installs them, the marker names the
+copy it found: `✓` repository-local, `•` system. Elsewhere `✓` means satisfied,
+because nothing in those sections is setup's to install. `✗` is always absent,
+unreadable, or below its pin.
 
 Pinned tool versions are floors, not equalities. Any tool at or above its
 `.config/dev-tools.json` version passes, and the row prints the comparison.

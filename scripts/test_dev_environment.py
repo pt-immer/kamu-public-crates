@@ -20,8 +20,13 @@ from scripts.dev_environment import (
     Palette,
     cargo_install_command,
     capture,
+    check_bootstrap,
     check_floor,
+    check_targets,
+    check_toolchain,
     contains_version,
+    rust_item_detail,
+    search_path,
     is_repository_local,
     load_manifest,
     node_package_version,
@@ -229,6 +234,41 @@ class NodeVersionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             binary = self.build(root, "markdownlint-cli2", "0.23.2")
             self.assertIsNone(node_package_version(binary, "other-package"))
+
+    def test_a_shim_that_is_not_a_symlink_still_resolves(self) -> None:
+        # `npm ci --no-bin-links`, and filesystems without symlinks, leave a
+        # real file in .bin whose parents never reach the owning package.
+        with tempfile.TemporaryDirectory() as root:
+            modules = pathlib.Path(root) / "node_modules"
+            package = modules / "markdownlint-cli2"
+            package.mkdir(parents=True)
+            (package / "package.json").write_text(
+                json.dumps({"name": "markdownlint-cli2", "version": "0.23.2"}),
+                encoding="utf-8",
+            )
+            shims = modules / ".bin"
+            shims.mkdir()
+            shim = executable(shims, "markdownlint-cli2")
+            self.assertFalse(shim.is_symlink())
+
+            with mock.patch.object(dev_environment, "NODE_MODULES", modules):
+                self.assertEqual(
+                    "0.23.2",
+                    node_package_version(shim, "markdownlint-cli2"),
+                )
+
+    def test_an_unreadable_manifest_does_not_abort_the_walk(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            binary = self.build(root, "markdownlint-cli2", "0.23.2")
+            # A malformed manifest between the binary and its package.
+            (pathlib.Path(root) / "lib" / "package.json").write_text(
+                "{ not json",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                "0.23.2",
+                node_package_version(binary, "markdownlint-cli2"),
+            )
 
 
 class PaletteTests(unittest.TestCase):
@@ -473,6 +513,80 @@ class FloorVerdictTests(unittest.TestCase):
         self.assertEqual([], checks.failed)
         self.assertEqual(1, checks.system)
         self.assertIn("system: /usr/bin/just", output)
+
+
+class RowWiringTests(unittest.TestCase):
+    """A row's detail must never contradict the marker beside it."""
+
+    def doctor(self) -> Doctor:
+        return Doctor(Palette(enabled=False))
+
+    def test_an_absent_component_reads_missing_not_installed(self) -> None:
+        self.assertEqual("missing", rust_item_detail(True, False))
+        self.assertEqual("installed", rust_item_detail(True, True))
+        self.assertEqual("toolchain unavailable", rust_item_detail(False, False))
+
+    def test_check_toolchain_never_calls_an_absent_component_installed(
+        self,
+    ) -> None:
+        checks = self.doctor()
+        with mock.patch.object(
+            dev_environment, "capture", return_value=(0, "rustc 1.96.0")
+        ), mock.patch.object(
+            dev_environment, "installed_rust_items", return_value=(True, set())
+        ):
+            _, output = captured(
+                lambda: check_toolchain(
+                    checks, "primary compiler", "1.96.0", ["rust-src"]
+                )
+            )
+        self.assertIn("1.96.0 rust-src", checks.failed)
+        self.assertIn("missing", output)
+        self.assertNotIn("rust-src                       installed", output)
+
+    def test_check_targets_never_calls_an_absent_target_installed(self) -> None:
+        checks = self.doctor()
+        with mock.patch.object(
+            dev_environment, "installed_rust_items", return_value=(True, set())
+        ):
+            _, output = captured(
+                lambda: check_targets(
+                    checks, "1.96.0", ["wasm32-unknown-unknown"]
+                )
+            )
+        self.assertIn("1.96.0 wasm32-unknown-unknown", checks.failed)
+        self.assertIn("missing", output)
+
+    def test_a_bootstrap_command_that_exits_nonzero_says_so(self) -> None:
+        checks = self.doctor()
+        with mock.patch.object(
+            dev_environment, "capture", return_value=(1, "boom")
+        ), mock.patch("shutil.which", return_value="/usr/bin/cargo"):
+            _, output = captured(
+                lambda: check_bootstrap(checks, "cargo", ["--version"], "1.96.0")
+            )
+        self.assertEqual(["cargo"], checks.failed)
+        self.assertIn("exited 1", output)
+        # It never printed a version, so the row must not send the reader
+        # looking for a version mismatch.
+        self.assertNotIn("expected 1.96.0", output)
+
+
+class SearchPathTests(unittest.TestCase):
+    """An empty PATH entry means the working directory to shutil.which."""
+
+    def test_an_unset_path_contributes_no_empty_entry(self) -> None:
+        with mock.patch.dict(os.environ, {"PATH": ""}):
+            entries = search_path().split(os.pathsep)
+        self.assertNotIn("", entries)
+
+    def test_interior_empty_entries_are_dropped(self) -> None:
+        crafted = os.pathsep.join(["/usr/bin", "", "/bin"])
+        with mock.patch.dict(os.environ, {"PATH": crafted}):
+            entries = search_path().split(os.pathsep)
+        self.assertNotIn("", entries)
+        self.assertIn("/usr/bin", entries)
+        self.assertIn("/bin", entries)
 
 
 class ToolchainIdentityTests(unittest.TestCase):

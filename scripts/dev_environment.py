@@ -77,15 +77,18 @@ def contains_version(output: str, version: str) -> bool:
 
 
 def parse_version(output: str) -> tuple[int, ...] | None:
-    """Read the first dotted version out of a tool's banner.
+    """Read the dotted version out of a tool's banner.
 
-    Scans the whole banner rather than its first line: ShellCheck prints its
-    name on line one and `version: 0.11.0` on line two.
+    The banner line wins, and the rest of the output is only a fallback:
+    ShellCheck prints its name on line one and `version: 0.11.0` on line two,
+    while `capture` folds stderr in, so a warning carrying a path like
+    `/etc/foo/1.2.3/` would otherwise be read as the version.
     """
-    found = re.search(r"(?<![0-9.])(\d+(?:\.\d+)+)(?![0-9.])", output)
-    if found is None:
-        return None
-    return tuple(int(part) for part in found.group(1).split("."))
+    for candidate in (first_line(output), output):
+        found = re.search(r"(?<![0-9.])(\d+(?:\.\d+)+)(?![0-9.])", candidate)
+        if found is not None:
+            return tuple(int(part) for part in found.group(1).split("."))
+    return None
 
 
 def satisfies_floor(
@@ -104,11 +107,15 @@ def satisfies_floor(
 
 
 def search_path() -> str:
-    """Build the tool search path the Justfile exports for every recipe."""
-    return os.pathsep.join(
-        [str(prefix) for prefix in SEARCH_PREFIXES]
-        + [os.environ.get("PATH", "")]
-    )
+    """Build the tool search path the Justfile exports for every recipe.
+
+    Empty entries are dropped. `shutil.which` reads one as the working
+    directory, so an unset PATH would otherwise let a file sitting in the
+    repository root answer for a pinned tool — and doctor runs what it finds.
+    """
+    entries = [str(prefix) for prefix in SEARCH_PREFIXES]
+    entries.extend(os.environ.get("PATH", "").split(os.pathsep))
+    return os.pathsep.join(entry for entry in entries if entry)
 
 
 def resolve(binary: str) -> pathlib.Path | None:
@@ -130,15 +137,24 @@ def node_package_version(
 
     Asking the binary is not an option: markdownlint-cli2 treats every
     argument as a glob, so a version query lints the whole repository.
+
+    The repository's own install is read by path, because `npm ci --no-bin-links`
+    and filesystems without symlinks leave `.bin` entries that lead nowhere. The
+    walk up from the resolved binary is what covers a system install, whose shim
+    symlinks into a package directory elsewhere.
     """
-    for parent in binary.resolve().parents:
-        manifest = parent / "package.json"
+    candidates = [NODE_MODULES / package]
+    candidates.extend(binary.resolve().parents)
+    for directory in candidates:
+        manifest = directory / "package.json"
         if not manifest.is_file():
             continue
         try:
             data = json.loads(manifest.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return None
+            # An unreadable manifest between here and the owning package is
+            # not the answer; keep looking rather than abandoning the walk.
+            continue
         if data.get("name") == package:
             version = data.get("version")
             return None if version is None else str(version)
@@ -368,12 +384,16 @@ def check_bootstrap(
         checks.fail(command, "not found", "install it before setup")
         return
     status, output = capture([path, *args])
+    if status != 0:
+        # It ran and refused. Naming a version it never printed would send the
+        # reader after the wrong thing.
+        checks.fail(command, first_line(output), f"exited {status}")
+        return
     checks.verdict(
         command,
-        status == 0
-        and (version is None or contains_version(output, version)),
+        version is None or contains_version(output, version),
         first_line(output),
-        "not runnable" if version is None else f"expected {version}",
+        "no version reported" if version is None else f"expected {version}",
     )
 
 
@@ -472,6 +492,18 @@ def component_present(installed: set[str], component: str) -> bool:
     )
 
 
+def rust_item_detail(available: bool, present: bool) -> str:
+    """Describe one rustup component or target so the row matches its marker.
+
+    An absent item reads `missing`. Reporting it as `installed` beside a
+    failing marker is how a missing `rust-src` gets mistaken for a present
+    one, and the compile-fail goldens re-blessed against it.
+    """
+    if not available:
+        return "toolchain unavailable"
+    return "installed" if present else "missing"
+
+
 def check_toolchain(
     checks: Doctor,
     label: str,
@@ -488,10 +520,11 @@ def check_toolchain(
     )
     available, installed = installed_rust_items(version, "component")
     for component in components:
+        present = available and component_present(installed, component)
         checks.verdict(
             f"{version} {component}",
-            available and component_present(installed, component),
-            "installed" if available else "toolchain unavailable",
+            present,
+            rust_item_detail(available, present),
             f"rustup component add {component} --toolchain {version}",
         )
 
@@ -504,10 +537,11 @@ def check_targets(
     """Check every cross-compilation target the gates build for."""
     available, installed = installed_rust_items(version, "target")
     for target in targets:
+        present = available and target in installed
         checks.verdict(
             f"{version} {target}",
-            available and target in installed,
-            "installed" if available else "toolchain unavailable",
+            present,
+            rust_item_detail(available, present),
             f"rustup target add {target} --toolchain {version}",
         )
 
