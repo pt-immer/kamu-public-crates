@@ -6,4 +6,4 @@ slug = "immer-kamu-public-crates"
 server = "https://amem.flusci.org"
 
 [client]
-manifest_version = 30
+manifest_version = 31
