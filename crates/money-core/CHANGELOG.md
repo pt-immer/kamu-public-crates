@@ -8,6 +8,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `money!(USD, "1500.00")`, building a `Money` constant from a decimal literal
+  that is validated at compile time.
+
+  This is ergonomics, not a safety mechanism. Amounts that matter arrive at run
+  time — from a database column, a bank file, an API payload — and no macro
+  touches those. What it buys is that the compile-time path, which already
+  existed through the `const` `Money::try_from_units`, stops being written in
+  raw canonical units that no reviewer can read as `1500.00`.
+
+  Reach it by path — `kamu_money_core::money!(…)` — until 0.2.0. `money` is
+  also the deprecated compatibility module kept until then, so importing the
+  name inherits that module's deprecation warning. The macro works either way.
+
+- `text::parse_amount` is now `const`, and so is the `parse_fixed_point` behind
+  it. That is what `money!` is built on, and it is deliberately the crate's
+  **only** parser: a const twin could accept a literal the runtime parser
+  rejects, or narrow differently, and nothing would notice until a golden
+  moved. `tests/const_literal.rs` parses one corpus twice — once as `const`
+  items the compiler must evaluate, once by ordinary call — and requires the
+  two to agree, including at the domain edges, at exactly the maximum scale,
+  and across every form the parser rejects.
+
+  Marking a public function `const` is a semver commitment; un-`const`ing it
+  later would be breaking.
+
 - `Money::try_add` and `Money::try_sub`, returning
   `Result<Money<C>, AmountError>` with `AmountError::OutOfDomain` carrying the
   exact total that was refused.

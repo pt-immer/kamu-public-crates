@@ -53,6 +53,8 @@ mod currency_impl;
 mod domain_impl;
 #[path = "error.rs"]
 mod error_impl;
+#[path = "macros.rs"]
+mod macros_impl;
 #[path = "money.rs"]
 mod money_impl;
 #[path = "rate.rs"]
