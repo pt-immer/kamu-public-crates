@@ -1813,7 +1813,7 @@ dependencies = [
 
 [[package]]
 name = "kamu-money-core"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "bytes",
  "ethnum",

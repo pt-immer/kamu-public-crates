@@ -10,40 +10,79 @@ use core::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 use ethnum::I256;
 
 impl<C: StaticCurrency> Money<C> {
-    /// Exact addition. `None` iff the result leaves the domain.
+    /// Exact addition, reporting the rejected total.
+    ///
+    /// The same arithmetic as [`Self::checked_add`], which discards that total. Prefer this one
+    /// when the refusal is reported rather than merely branched on: an operator or a log line
+    /// needs the value that was refused, and recomputing it at the call site duplicates the
+    /// overflow reasoning this method already carries.
+    ///
+    /// # Errors
+    /// [`AmountError::OutOfDomain`], carrying the exact sum, if it leaves the domain.
     #[inline]
-    #[must_use]
-    pub const fn checked_add(self, o: Self) -> Option<Self> {
+    pub const fn try_add(self, o: Self) -> Result<Self, AmountError> {
         // The shared raw kernel validates both operands and the result, so its `Some` arm
         // justifies the crate-private unchecked constructor.
         match add_units(self.units(), o.units()) {
-            Some(units) => Some(Self::from_units_unchecked(units)),
-            None => None,
+            Some(units) => Ok(Self::from_units_unchecked(units)),
+            // Both operands are `Money`, hence in domain, so the kernel refused the *result* and
+            // not an operand. Two magnitudes at most `DOMAIN_MAX` sum ~85x below `i128::MAX`, so
+            // this reproduces the exact total and never actually wraps.
+            None => Err(AmountError::out_of_domain(self.units().wrapping_add(o.units()))),
+        }
+    }
+
+    /// Exact subtraction, reporting the rejected total. See [`Self::try_add`].
+    ///
+    /// # Errors
+    /// [`AmountError::OutOfDomain`], carrying the exact difference, if it leaves the domain.
+    #[inline]
+    pub const fn try_sub(self, o: Self) -> Result<Self, AmountError> {
+        match sub_units(self.units(), o.units()) {
+            Some(units) => Ok(Self::from_units_unchecked(units)),
+            None => Err(AmountError::out_of_domain(self.units().wrapping_sub(o.units()))),
+        }
+    }
+
+    /// Exact addition. `None` iff the result leaves the domain.
+    ///
+    /// [`Self::try_add`] is the same operation, reporting the total it refused.
+    #[inline]
+    #[must_use]
+    pub const fn checked_add(self, o: Self) -> Option<Self> {
+        // Delegating, rather than reaching for the kernel a second time, is what makes the two
+        // surfaces incapable of disagreeing about which sums are money.
+        match self.try_add(o) {
+            Ok(sum) => Some(sum),
+            Err(_) => None,
         }
     }
 
     /// Exact subtraction. `None` iff the result leaves the domain.
+    ///
+    /// [`Self::try_sub`] is the same operation, reporting the total it refused.
     #[inline]
     #[must_use]
     pub const fn checked_sub(self, o: Self) -> Option<Self> {
-        match sub_units(self.units(), o.units()) {
-            Some(units) => Some(Self::from_units_unchecked(units)),
-            None => None,
+        match self.try_sub(o) {
+            Ok(difference) => Some(difference),
+            Err(_) => None,
         }
     }
 }
 
 /// Panics on domain overflow, matching integer `Add`. Use [`Money::checked_add`] when overflow
-/// is recoverable.
+/// is recoverable, or [`Money::try_add`] when the rejected total is worth reporting.
 impl<C: StaticCurrency> Add for Money<C> {
     type Output = Self;
     #[inline]
     fn add(self, o: Self) -> Self {
-        self.checked_add(o).unwrap_or_else(|| {
-            let attempted =
-                self.units().checked_add(o.units()).expect("two in-domain amounts cannot overflow i128");
-            panic!("{}", AmountError::out_of_domain(attempted))
-        })
+        // The panic message reads the attempted total off the error rather than recomputing it,
+        // so the operator and the fallible method cannot describe the same refusal differently.
+        match self.try_add(o) {
+            Ok(sum) => sum,
+            Err(e) => panic!("{e}"),
+        }
     }
 }
 
@@ -51,11 +90,10 @@ impl<C: StaticCurrency> Sub for Money<C> {
     type Output = Self;
     #[inline]
     fn sub(self, o: Self) -> Self {
-        self.checked_sub(o).unwrap_or_else(|| {
-            let attempted =
-                self.units().checked_sub(o.units()).expect("two in-domain amounts cannot overflow i128");
-            panic!("{}", AmountError::out_of_domain(attempted))
-        })
+        match self.try_sub(o) {
+            Ok(difference) => difference,
+            Err(e) => panic!("{e}"),
+        }
     }
 }
 
@@ -104,8 +142,9 @@ impl<C: StaticCurrency> Money<C> {
 /// Add two canonical unit counts. `None` if **either operand** or the result is outside the
 /// domain.
 ///
-/// This is the shared `Money`/`kamu-money-pg` addition kernel: both
-/// [`Money::checked_add`] and `kamu-money-pg`'s generated `<type>_add` functions delegate here.
+/// This is the shared `Money`/`kamu-money-pg` addition kernel: [`Money::try_add`] — and through
+/// it [`Money::checked_add`] and `+` — plus `kamu-money-pg`'s generated `<type>_add` functions
+/// all delegate here.
 #[inline]
 #[must_use]
 pub const fn add_units(a: i128, b: i128) -> Option<i128> {
@@ -127,8 +166,8 @@ pub const fn add_units(a: i128, b: i128) -> Option<i128> {
 }
 
 /// Subtract two canonical unit counts. `None` if **either operand** or the result is outside
-/// the domain. The units-level kernel behind both [`Money::checked_sub`] and `kamu-money-pg`'s
-/// the generated `<type>_sub` functions.
+/// the domain. The units-level kernel behind [`Money::try_sub`] — and through it
+/// [`Money::checked_sub`] and `-` — and `kamu-money-pg`'s generated `<type>_sub` functions.
 #[inline]
 #[must_use]
 pub const fn sub_units(a: i128, b: i128) -> Option<i128> {
@@ -392,6 +431,57 @@ mod tests {
         assert_eq!(m(DOMAIN_MAX).checked_add(m(1)), None);
         assert_eq!(m(-DOMAIN_MAX).checked_sub(m(1)), None);
     }
+
+    #[test]
+    fn try_add_and_try_sub_report_the_total_they_refused() {
+        // The value, not merely the refusal: an `is_err()` assertion passes for a payload of
+        // zero, which is the whole reason these methods exist beside the `checked_` pair.
+        assert_eq!(m(DOMAIN_MAX).try_add(m(1)), Err(AmountError::out_of_domain(DOMAIN_MAX + 1)));
+        assert_eq!(m(-DOMAIN_MAX).try_sub(m(1)), Err(AmountError::out_of_domain(-DOMAIN_MAX - 1)));
+    }
+
+    #[test]
+    fn the_widest_refusable_total_is_reported_exactly_and_never_wraps() {
+        // Both extremes at once, which is as far past the domain as two `Money` can reach.
+        // `try_add` reconstructs this with `wrapping_add`; if that claim were wrong, it is
+        // here that the payload would come back with the opposite sign. The headroom this
+        // relies on is already pinned crate-wide, by the `DOMAIN_MAX + DOMAIN_MAX` assertion
+        // in `domain.rs`.
+        assert_eq!(m(DOMAIN_MAX).try_add(m(DOMAIN_MAX)), Err(AmountError::out_of_domain(2 * DOMAIN_MAX)));
+        assert_eq!(m(-DOMAIN_MAX).try_sub(m(DOMAIN_MAX)), Err(AmountError::out_of_domain(-2 * DOMAIN_MAX)));
+    }
+
+    #[test]
+    fn the_checked_and_try_surfaces_are_one_operation() {
+        for a in [0, 1, -1, DOMAIN_MAX, -DOMAIN_MAX] {
+            for b in [0, 1, -1, DOMAIN_MAX, -DOMAIN_MAX] {
+                let (x, y) = (m(a), m(b));
+                assert_eq!(x.checked_add(y), x.try_add(y).ok(), "add disagreed at {a} + {b}");
+                assert_eq!(x.checked_sub(y), x.try_sub(y).ok(), "sub disagreed at {a} - {b}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_operator_panics_with_exactly_what_try_add_reports() {
+        let reported = m(DOMAIN_MAX).try_add(m(1)).unwrap_err().to_string();
+        let panicked = std::panic::catch_unwind(|| m(DOMAIN_MAX) + m(1)).unwrap_err();
+        let msg = panicked.downcast_ref::<String>().map_or("", String::as_str);
+        assert_eq!(msg, reported, "the operator and the fallible method describe one refusal");
+    }
+
+    // `const`, not merely `#[inline]`: the pair is usable wherever `checked_add` already was,
+    // and dropping that would be a silent semver break rather than a compile error here.
+    const ONE: Money<USD> = match Money::<USD>::try_from_units(1) {
+        Ok(amount) => amount,
+        Err(_) => panic!("one canonical unit is in domain"),
+    };
+    const CONST_SUM: i128 = match ONE.try_add(ONE) {
+        Ok(sum) => sum.units(),
+        Err(_) => panic!("two canonical units are in domain"),
+    };
+    const _: () = assert!(CONST_SUM == 2);
+    const _: () = assert!(ONE.try_sub(ONE).is_ok());
 
     #[test]
     fn add_units_and_sub_units_are_the_shared_kernel() {
