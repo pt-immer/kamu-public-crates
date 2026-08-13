@@ -1,0 +1,15 @@
+error[E0080]: evaluation panicked: money! literal is outside the money domain
+  --> tests/ui/money_literal_out_of_domain.rs:11:35
+   |
+11 |     const TOO_LARGE: Money<USD> = kamu_money_core::money!(USD, "1000000000000000000");
+   |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `main::TOO_LARGE::AMOUNT` failed here
+   |
+   = note: this error originates in the macro `$crate::panic::panic_2021` which comes from the expansion of the macro `kamu_money_core::money` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+  --> tests/ui/money_literal_out_of_domain.rs:11:35
+   |
+11 |     const TOO_LARGE: Money<USD> = kamu_money_core::money!(USD, "1000000000000000000");
+   |                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this note originates in the macro `kamu_money_core::money` (in Nightly builds, run with -Z macro-backtrace for more info)

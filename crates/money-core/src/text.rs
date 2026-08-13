@@ -39,13 +39,76 @@ use core::str::FromStr;
 /// `10^SCALE` as `u128`, for the unsigned split. Same constant as [`POW10_SCALE`], widened.
 const SCALE_U128: u128 = POW10_SCALE.unsigned_abs();
 
-/// [`SCALE`] as `usize`, for string widths.
+/// [`SCALE`] as `usize`, for string widths and byte offsets.
 ///
 /// `SCALE as usize` would be lossless on every platform this crate can build for, but
 /// `clippy::as_conversions` is denied crate-wide precisely so that "provably fine here" is
-/// never the reason a cast ships. `try_from` states the proof instead of assuming it.
-fn scale_usize() -> usize {
-    usize::try_from(SCALE).expect("SCALE is 18; usize is at least 16 bits on every target")
+/// never the reason a cast ships. `usize::try_from` states the proof instead of assuming it,
+/// and is not const, which [`parse_fixed_point`] needs. So the width is written once as a
+/// literal and *tied* to [`SCALE`] by an assertion the compiler evaluates: move [`SCALE`] and
+/// this fails to build, rather than parsing at a width that no longer matches the scale.
+const SCALE_USIZE: usize = 18;
+const _: () = assert!(SCALE == 18);
+
+/// The magnitude of [`i128::MAX`], as the unsigned accumulator holds it.
+///
+/// The bound `i128::try_from` would check, written so that a const fn can check it too.
+const I128_MAX_MAGNITUDE: u128 = i128::MAX.unsigned_abs();
+
+/// One past a loop index already known to sit inside a slice.
+///
+/// `index + 1` is denied by `clippy::arithmetic_side_effects`, which cannot see that bound.
+/// The `expect` is the bound, said out loud.
+const fn next(index: usize) -> usize {
+    index.checked_add(1).expect("an index inside a slice that exists cannot reach usize::MAX")
+}
+
+/// The value of an ASCII digit, widened for accumulation. `None` for anything else.
+///
+/// A match rather than `byte - b'0'` widened by a cast: `u128::from` is not const, and
+/// `clippy::as_conversions` is denied crate-wide. Being **total** is the other half of the
+/// bargain — the byte-subtraction form needed an `expect` to restate that its input really was
+/// a digit, and this one cannot be reached with a byte it has not classified.
+const fn digit_value(byte: u8) -> Option<u128> {
+    Some(match byte {
+        b'0' => 0,
+        b'1' => 1,
+        b'2' => 2,
+        b'3' => 3,
+        b'4' => 4,
+        b'5' => 5,
+        b'6' => 6,
+        b'7' => 7,
+        b'8' => 8,
+        b'9' => 9,
+        _ => return None,
+    })
+}
+
+/// Which overflow a magnitude that outgrew its accumulator is, given the sign already read.
+const fn magnitude_overflow(negative: bool) -> ParseMoneyError {
+    if negative {
+        ParseMoneyError::NegativeMagnitudeOverflow
+    } else {
+        ParseMoneyError::PositiveMagnitudeOverflow
+    }
+}
+
+/// Shift one decimal place and add `byte`'s digit.
+///
+/// Every step is checked: the text is untrusted, and an overflow here would otherwise be the
+/// silent corruption this crate exists to prevent.
+const fn push_digit(magnitude: u128, byte: u8, negative: bool) -> Result<u128, ParseMoneyError> {
+    let Some(digit) = digit_value(byte) else {
+        return Err(ParseMoneyError::InvalidSyntax);
+    };
+    let Some(shifted) = magnitude.checked_mul(10) else {
+        return Err(magnitude_overflow(negative));
+    };
+    match shifted.checked_add(digit) {
+        Some(value) => Ok(value),
+        None => Err(magnitude_overflow(negative)),
+    }
 }
 
 /// The digits of `units` at [`SCALE`] places, trimmed to `min_dp`, as `(negative, whole,
@@ -66,7 +129,7 @@ pub(crate) fn fixed_point_parts(units: i128, min_dp: usize) -> (bool, String, St
     let whole = magnitude.checked_div(SCALE_U128).expect("SCALE_U128 is 10^18, never zero");
     let frac = magnitude.checked_rem(SCALE_U128).expect("SCALE_U128 is 10^18, never zero");
 
-    let mut digits = format!("{frac:0width$}", width = scale_usize());
+    let mut digits = format!("{frac:0SCALE_USIZE$}");
     // Trim to `min_dp` but stop at the first non-zero digit from the right.
     while digits.len() > min_dp && digits.ends_with('0') {
         digits.pop();
@@ -87,63 +150,95 @@ fn render_fixed_point(units: i128, min_dp: usize) -> String {
 /// Parse a fixed-point decimal into canonical units. Liberal: any exact decimal.
 ///
 /// Refuses excess precision rather than rounding.
-fn parse_fixed_point(text: &str) -> Result<i128, ParseMoneyError> {
-    let (negative, digits) = match text.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, text),
-    };
+///
+/// `const`, so that a literal can be validated where it is written. Const evaluation admits no
+/// iterators, no closures, no `?` and no `TryFrom`, so this reads bytes by index and matches
+/// every `Result` explicitly. It remains the crate's **only** parser: a const twin could accept
+/// a literal the runtime parser rejects, and nothing would notice until a golden moved.
+pub(crate) const fn parse_fixed_point(text: &str) -> Result<i128, ParseMoneyError> {
+    let bytes = text.as_bytes();
+    let len = bytes.len();
 
-    let (whole_text, frac_text) = match digits.split_once('.') {
-        // A second '.' lands in `frac_text` and is rejected by the digit check below.
-        Some((w, fr)) => (w, fr),
-        None => (digits, ""),
-    };
+    let negative = len > 0 && bytes[0] == b'-';
+    let body_start = if negative { 1 } else { 0 };
 
-    if whole_text.is_empty() || !whole_text.bytes().all(|b| b.is_ascii_digit()) {
+    // One scan locates the point and counts the fraction. `split_once` took the *first* point
+    // and let any second one fail the digit check below it; scanning reaches both verdicts
+    // directly.
+    let mut point = len; // `len` reads as "no point", so nothing has to unwrap an `Option`
+    let mut supplied: u32 = 0;
+    let mut index = body_start;
+    while index < len {
+        let byte = bytes[index];
+        if byte == b'.' {
+            if point != len {
+                return Err(ParseMoneyError::InvalidSyntax);
+            }
+            point = index;
+        } else if !byte.is_ascii_digit() {
+            return Err(ParseMoneyError::InvalidSyntax);
+        } else if point != len {
+            // Counted as `u32` while scanning rather than narrowed from a `usize` afterwards:
+            // `u32::try_from` is not const, and a fraction too long to count must keep its
+            // original verdict of `InvalidSyntax` rather than becoming an overflow.
+            supplied = match supplied.checked_add(1) {
+                Some(count) => count,
+                None => return Err(ParseMoneyError::InvalidSyntax),
+            };
+        }
+        index = next(index);
+    }
+
+    // An empty whole part is refused, so `"-"`, `""` and `".5"` are all invalid syntax.
+    if point == body_start {
         return Err(ParseMoneyError::InvalidSyntax);
     }
-    if !frac_text.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(ParseMoneyError::InvalidSyntax);
-    }
-
-    let supplied = u32::try_from(frac_text.len()).map_err(|_| ParseMoneyError::InvalidSyntax)?;
     if supplied > SCALE {
         return Err(ParseMoneyError::ExcessPrecision { digits: supplied });
     }
 
-    // Right-pad the fraction to the canonical scale, then read the whole thing as one
-    // integer. Every step is checked: the text is untrusted, and an overflow here would
-    // otherwise be the silent corruption this crate exists to prevent.
+    // Right-pad the fraction to the canonical scale, then read whole and fraction as one
+    // integer.
     let mut magnitude: u128 = 0;
-    for byte in
-        whole_text.bytes().chain(frac_text.bytes().chain(core::iter::repeat(b'0')).take(scale_usize()))
-    {
-        // Every byte here is either an ASCII digit (checked above) or a padding b'0', so the
-        // subtraction cannot underflow. `checked_sub` states that rather than relying on it.
-        let digit = u128::from(
-            byte.checked_sub(b'0').expect("bytes were verified as ASCII digits, or are padding zeros"),
-        );
-        magnitude =
-            magnitude.checked_mul(10).and_then(|shifted| shifted.checked_add(digit)).ok_or(if negative {
-                ParseMoneyError::NegativeMagnitudeOverflow
-            } else {
-                ParseMoneyError::PositiveMagnitudeOverflow
-            })?;
+    let mut whole = body_start;
+    while whole < point {
+        magnitude = match push_digit(magnitude, bytes[whole], negative) {
+            Ok(value) => value,
+            Err(error) => return Err(error),
+        };
+        whole = next(whole);
     }
 
+    let frac_start = if point == len { len } else { next(point) };
+    let frac_len = len.checked_sub(frac_start).expect("the fraction starts at or before the end");
+    let mut place = 0;
+    while place < SCALE_USIZE {
+        // The supplied digits first, then zero padding out to the canonical scale.
+        let byte = if place < frac_len {
+            bytes[frac_start.checked_add(place).expect("the fraction lies inside the input")]
+        } else {
+            b'0'
+        };
+        magnitude = match push_digit(magnitude, byte, negative) {
+            Ok(value) => value,
+            Err(error) => return Err(error),
+        };
+        place = next(place);
+    }
+
+    // `i128::MIN` has no positive counterpart, which is why the accumulator is unsigned.
     if negative && magnitude == i128::MIN.unsigned_abs() {
         return Ok(i128::MIN);
     }
-
-    let units = i128::try_from(magnitude).map_err(|_| {
-        if negative {
-            ParseMoneyError::NegativeMagnitudeOverflow
-        } else {
-            ParseMoneyError::PositiveMagnitudeOverflow
-        }
-    })?;
+    if magnitude > I128_MAX_MAGNITUDE {
+        return Err(magnitude_overflow(negative));
+    }
+    // The bound above is exactly what `i128::try_from` checks, so the two-complement bit
+    // pattern is the value. Stated as a re-read of the bytes because the conversion is not
+    // const and a cast is denied crate-wide; the guard is the proof, in code rather than prose.
+    let units = i128::from_le_bytes(magnitude.to_le_bytes());
     if negative {
-        Ok(units.checked_neg().expect("positive i128 magnitude can always be negated"))
+        Ok(units.checked_neg().expect("a positive i128 magnitude can always be negated"))
     } else {
         Ok(units)
     }
@@ -155,7 +250,7 @@ fn parse_fixed_point(text: &str) -> Result<i128, ParseMoneyError> {
 /// constructor owns both the domain and strictly-positive checks, so every rate
 /// ingress reaches the same validation edge.
 #[cfg(feature = "serde")]
-pub(crate) fn parse_rate_amount(text: &str) -> Result<i128, ParseMoneyError> {
+pub(crate) const fn parse_rate_amount(text: &str) -> Result<i128, ParseMoneyError> {
     parse_fixed_point(text)
 }
 
@@ -204,14 +299,21 @@ pub fn render(units: i128, currency: Iso4217) -> Result<String, AmountError> {
 /// [`ParseMoneyError::NegativeMagnitudeOverflow`] when the signed canonical-unit
 /// value cannot fit `i128`,
 /// and [`ParseMoneyError::Amount`] outside the money domain.
-pub fn parse_amount(text: &str) -> Result<i128, ParseMoneyError> {
-    let units = parse_fixed_point(text)?;
+/// `const`, so a literal can be checked where it is written — which is what
+/// [`money!`](crate::money!) is built on. It remains the crate's only parser: a const twin could
+/// accept a literal this one rejects, and nothing would notice until a golden moved.
+pub const fn parse_amount(text: &str) -> Result<i128, ParseMoneyError> {
+    let units = match parse_fixed_point(text) {
+        Ok(units) => units,
+        Err(error) => return Err(error),
+    };
     // parse_fixed_point stops at what an i128 can hold; the DOMAIN is narrower. The generic
     // path got this check from `Money::try_from_units`, so a caller taking raw units needs it
     // applied here or the two paths would not agree on what is in range. Same `in_domain`
     // that `try_from_units` calls, rather than a restatement of the bound.
     if !in_domain(units) {
-        return Err(AmountError::out_of_domain(units).into());
+        // `Into` is not const, so the variant `#[from]` generates is named directly.
+        return Err(ParseMoneyError::Amount(AmountError::out_of_domain(units)));
     }
     Ok(units)
 }

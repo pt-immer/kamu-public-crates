@@ -312,6 +312,7 @@ tests complement it.
 | Currency closure and generated register | `tests/register_codegen.rs`; build-script validation |
 | Static currency and residue API shape | `tests/compile_fail.rs`; `tests/ui/` |
 | Canonical text and locale non-loss | `tests/text.rs`; `tests/locale.rs` |
+| One parser for `money!` and run time | `tests/const_literal.rs`; `tests/ui/money_literal_*.rs` |
 | Tagged serde and wrong-currency refusal | `tests/wire.rs` |
 | Positive rates at every ingress | `tests/rate_ingress.rs` |
 | PostgreSQL text adapters | `tests/pg_roundtrip.rs`; `tests/sqlx_roundtrip.rs` |
@@ -325,6 +326,7 @@ tests complement it.
 | Runtime-currency `Money` with fallible arithmetic | Allows calculation before currency identity is proved |
 | `Iterator::sum()` through `Add` | A transient out-of-domain partial makes results order-dependent |
 | Infallible `Summation`/`Overflow` mirroring `Division`/`Residue` | An overflowing sum splits nothing, and nothing bounds its excess, so the accessor would be fallible |
+| A separate const parser for `money!` | Two parsers for one text format diverge silently; the existing parser gained `const` instead |
 | PostgreSQL `NUMERIC` storage | Over-precise ingress can round before constraints inspect it |
 | Separate public driver-adapter crates | Orphan rules prevent the required trait implementations |
 | Untagged binary `i128` | Lets bytes written as one currency decode as another |
