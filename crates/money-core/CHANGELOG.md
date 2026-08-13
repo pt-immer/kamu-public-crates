@@ -4,6 +4,32 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] — 2026-08-14
+
+### Added
+
+- `Money::try_add` and `Money::try_sub`, returning
+  `Result<Money<C>, AmountError>` with `AmountError::OutOfDomain` carrying the
+  exact total that was refused.
+
+  `checked_add` and `checked_sub` answer whether a sum is money. They do not
+  say what the rejected sum was, so a caller that reports the refusal — an
+  operator message, an audit line, a database error — had to recompute the
+  total and repeat the overflow reasoning to do it. These methods carry the
+  value the operation already held.
+
+  Both are `const`, like the `checked_` pair, and both delegate to the same
+  `advanced::arithmetic` kernels. `checked_add` and `checked_sub` now delegate
+  in turn to `try_add` and `try_sub`, so the two surfaces cannot disagree about
+  which sums are money; `the_checked_and_try_surfaces_are_one_operation` pins
+  that across the domain edges.
+
+### Changed
+
+- The `+` and `-` operators read the attempted total off the error rather than
+  recomputing it. The panic message is unchanged and is now pinned equal to
+  what `try_add` reports.
+
 ## [0.1.3] — 2026-08-13
 
 ### Changed

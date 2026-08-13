@@ -118,6 +118,7 @@ schema or application-boundary concern, not a second arithmetic model.
 | Operation | Contract |
 | --- | --- |
 | `checked_add`, `checked_sub` | Exact; `None` only when the result leaves the money domain |
+| `try_add`, `try_sub` | The same arithmetic, reporting the total it refused rather than discarding it |
 | `+`, `-` | Exact; panic on domain overflow, matching integer operator convention |
 | unary `-` | Total for valid money because the domain excludes `i128::MIN` |
 | `try_sum` | Accumulate in `I256`, check each term, narrow once |
