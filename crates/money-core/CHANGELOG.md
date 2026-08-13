@@ -4,6 +4,33 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] — 2026-08-13
+
+### Changed
+
+- Documented why summation returns `Result` instead of an infallible
+  `Summation`/`Overflow` product type mirroring `Division`/`Residue`, on
+  `Money::try_sum`, on `advanced::UnitSum::finish`, and as a rejected
+  alternative in `DESIGN.md`.
+
+  `div_int` bundles its quotient with a residue because integer division splits
+  one amount into two representable parts, and the residue is a whole number of
+  canonical units someone is still owed. An overflowing sum splits nothing:
+  every term is untouched, no obligation is created, and the amount by which
+  the total overshoots is itself outside the domain, so `Residue::try_from_units`
+  refuses it. Such a product type would exist to hand back the one value it
+  could not hold.
+
+  This is the same rule that already keeps `Residue` out of conversion, whose
+  loss is below one canonical unit, and out of allocation, which leaves every
+  unit in the returned parts.
+
+  `a_refused_total_has_no_excess_that_could_be_handed_back_as_money` pins the
+  property, so a later change cannot quietly make the excess representable
+  without the reasoning being revisited.
+
+  No API change.
+
 ## [0.1.2] — 2026-08-09
 
 ### Added

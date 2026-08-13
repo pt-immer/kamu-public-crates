@@ -82,6 +82,13 @@ impl<C: StaticCurrency> Money<C> {
     /// # Errors
     /// [`AmountError`] if the total is outside the domain.
     ///
+    /// A `Result`, and not a [`Division`](crate::Division)-style product type: division splits
+    /// one amount into two representable parts and its residue is money someone is still owed,
+    /// whereas an overflowing sum splits nothing and leaves every term untouched. The excess is
+    /// outside the domain by construction, so no [`Residue`](crate::Residue) could carry it —
+    /// [`Residue::try_from_units`](crate::Residue::try_from_units) checks the domain and would
+    /// refuse the one value such a type would exist to hand back.
+    ///
     pub fn try_sum<B, I>(iter: I) -> Result<Self, AmountError>
     where
         B: core::borrow::Borrow<Self>,
@@ -235,6 +242,10 @@ impl UnitSum {
     ///
     /// Both carry the total. Refusing a value this type is holding is the point; forgetting it
     /// on the way out is not, and 171 terms at the domain edge is all it takes to leave `i128`.
+    ///
+    /// The total travels as an error payload rather than as money the caller must resolve: the
+    /// amount by which it overshoots is itself outside the domain, so it has no representation
+    /// as [`Residue`](crate::Residue).
     pub fn finish(self) -> Result<i128, AmountError> {
         let Ok(attempted) = i128::try_from(self.0) else {
             return Err(AmountError::wide_out_of_domain(self.to_le_bytes()));
@@ -575,6 +586,38 @@ mod tests {
             matches!(sum_units(core::iter::repeat_n(DOMAIN_MAX, 170)), Err(AmountError::OutOfDomain { .. })),
             "170 terms still fit i128, so they must be refused for the domain, not the width"
         );
+    }
+
+    #[test]
+    fn a_refused_total_has_no_excess_that_could_be_handed_back_as_money() {
+        // Why summation returns a `Result` and not a `Division`-shaped product type. Such a
+        // type would have to yield the overshoot the way `Division` yields its residue, and
+        // `Residue` is domain-checked: the one value the type would exist to carry is the one
+        // value it cannot hold. Division differs because its residue is always a whole number
+        // of canonical units *inside* the domain.
+        for count in [171usize, 400, 4_000] {
+            let Err(error) = sum_units(core::iter::repeat_n(DOMAIN_MAX, count)) else {
+                panic!("{count} terms at the domain edge must be refused");
+            };
+            let total = match error {
+                AmountError::WideOutOfDomain { attempted_units } => I256::from_le_bytes(attempted_units),
+                AmountError::OutOfDomain { attempted_units } => I256::from(attempted_units),
+                other => panic!("an exact total must be reported, got {other:?}"),
+            };
+
+            let excess = total - I256::from(DOMAIN_MAX);
+            assert!(excess > I256::ZERO, "a refused total must overshoot the domain");
+            let refused = match i128::try_from(excess) {
+                // Too wide for the storage type, so far outside the money domain.
+                Err(_) => true,
+                Ok(units) => crate::Residue::<USD>::try_from_units(units).is_err(),
+            };
+            assert!(refused, "the excess of a refused total must not be constructible as a Residue");
+        }
+
+        // Positive control: an in-domain residue IS constructible, so the assertion above is
+        // rejecting the excess rather than rejecting every input.
+        assert!(crate::Residue::<USD>::try_from_units(1).is_ok());
     }
 
     use crate::rounding_impl::Rounding;
