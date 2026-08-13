@@ -125,6 +125,31 @@ cross targets, then runs `just doctor`. ShellCheck remains an operating-system
 package; setup prints the required version when it is absent.
 `VERBOSE=1` exposes full output behind compact aggregate recipes.
 
+The Justfile exports `.tools/bin` and `node_modules/.bin` ahead of `PATH`, so a
+recipe runs the repository-local tool where setup installed one and the system
+copy where it did not. `just doctor` resolves in that same order. Under
+**Repository tools**, where setup is what installs them, the marker names the
+copy it found: `✓` repository-local, `•` system. Elsewhere `✓` means satisfied,
+because nothing in those sections is setup's to install. `✗` is always absent,
+unreadable, or below its pin.
+
+Pinned tool versions are floors, not equalities. Any tool at or above its
+`.config/dev-tools.json` version passes, and the row prints the comparison.
+`just setup` still installs the exact pin and every workflow still installs it,
+so a tool above the floor is running something CI is not: for `taplo`, `typos`,
+`markdownlint-cli2` and `shellcheck`, whose output is itself a gate verdict, that
+can pass locally and fail in CI. Rust toolchains stay exact, because
+`rustup run <version>` addresses one by name — an identity, not a floor.
+
+`just pg doctor` follows the same rendering contract, with one marker of its
+own: `!` is an advisory warning, which never affects its exit code. It is a
+distinct glyph because `•` already means a tool that passed from outside the
+repository, and a warning is not a pass.
+
+Both doctors color an interactive stdout only and honor `NO_COLOR`. `setup`,
+`doctor` and the `pg` passthrough carry `[no-exit-message]`, so a failure is the
+script's own report; the exit status still travels.
+
 Both container images compile their dependencies in a layer of their own, keyed
 on the manifests, so editing lane source recompiles `kamu-money-pg` and nothing
 beneath it. `KMONEY_BUILD_CACHE_DIR` makes `test-matrix.sh` and the `yb-build`

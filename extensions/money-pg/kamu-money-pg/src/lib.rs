@@ -1089,6 +1089,24 @@ mod tests {
         Spi::get_one::<String>("SELECT sum(amount)::text FROM overflowing").ok();
     }
 
+    /// The refusal above narrows to `i128` first, so it reports `OutOfDomain`. This one cannot:
+    /// 171 rows at the domain edge exceed `i128` itself, which is the `WideOutOfDomain` arm and
+    /// the only path where the accumulator's exact total has to survive a width it cannot be
+    /// narrowed into. 170 rows still narrow, so 171 is the threshold rather than a round number.
+    #[pg_test(
+        error = "sum(kmoney_usd): 170999999999999999999999999999999999829 canonical units is outside the supported range -999999999999999999999999999999999999..=999999999999999999999999999999999999"
+    )]
+    fn the_sum_aggregate_reports_a_total_too_wide_for_i128() {
+        Spi::run("CREATE TABLE too_wide (amount kmoney_usd)").expect("table created");
+        Spi::run(
+            "INSERT INTO too_wide
+                 SELECT '999999999999999999.999999999999999999'::kmoney_usd
+                   FROM generate_series(1, 171)",
+        )
+        .expect("rows inserted");
+        Spi::get_one::<String>("SELECT sum(amount)::text FROM too_wide").ok();
+    }
+
     /// The mixed type still has no aggregate: a column of several currencies
     /// has no total, and the refusal is at plan time.
     #[pg_test(error = "function sum(kmoney_mixed) does not exist")]

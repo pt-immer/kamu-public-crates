@@ -82,6 +82,14 @@ impl<C: StaticCurrency> Money<C> {
     /// # Errors
     /// [`AmountError`] if the total is outside the domain.
     ///
+    /// A `Result`, and not a [`Division`](crate::Division)-style product type. Division splits
+    /// one amount into two parts and bounds its residue by the divisor, so the residue is
+    /// always money and can always be handed back. An overflowing sum splits nothing, creates
+    /// no obligation, and bounds its excess by nothing: two terms at the domain edge overshoot
+    /// by exactly the domain maximum, which is a valid [`Residue`](crate::Residue), while 171
+    /// overshoot by more than `i128` holds, which is not. An `Overflow` could therefore only
+    /// offer a *fallible* accessor for the excess — the `Result` again, one layer down.
+    ///
     pub fn try_sum<B, I>(iter: I) -> Result<Self, AmountError>
     where
         B: core::borrow::Borrow<Self>,
@@ -235,6 +243,10 @@ impl UnitSum {
     ///
     /// Both carry the total. Refusing a value this type is holding is the point; forgetting it
     /// on the way out is not, and 171 terms at the domain edge is all it takes to leave `i128`.
+    ///
+    /// The total travels as an error payload rather than as money the caller must resolve.
+    /// Nothing bounds the overshoot, so it is representable as [`Residue`](crate::Residue) only
+    /// sometimes, which is why no [`Division`](crate::Division)-style accessor exists for it.
     pub fn finish(self) -> Result<i128, AmountError> {
         let Ok(attempted) = i128::try_from(self.0) else {
             return Err(AmountError::wide_out_of_domain(self.to_le_bytes()));
@@ -575,6 +587,50 @@ mod tests {
             matches!(sum_units(core::iter::repeat_n(DOMAIN_MAX, 170)), Err(AmountError::OutOfDomain { .. })),
             "170 terms still fit i128, so they must be refused for the domain, not the width"
         );
+    }
+
+    #[test]
+    fn a_refused_totals_excess_is_not_uniformly_representable_as_money() {
+        // Why summation returns a `Result` and not a `Division`-shaped product type.
+        //
+        // `Division` can hand its residue back unconditionally: `|residue| < n`, so it is
+        // always inside the domain. A summation excess has no such bound. Two terms at the
+        // edge overshoot by exactly DOMAIN_MAX, which IS a `Residue`; 171 overshoot by more
+        // than `i128` can hold, which is not. So `Overflow<C>` could not offer the
+        // unconditional `take_excess() -> Residue<C>` that makes `Division` worth having —
+        // the accessor would be fallible, reintroducing the `Result` it set out to remove.
+        let excess_of = |count: usize| -> I256 {
+            let Err(error) = sum_units(core::iter::repeat_n(DOMAIN_MAX, count)) else {
+                panic!("{count} terms at the domain edge must be refused");
+            };
+            let total = match error {
+                AmountError::WideOutOfDomain { attempted_units } => I256::from_le_bytes(attempted_units),
+                AmountError::OutOfDomain { attempted_units } => I256::from(attempted_units),
+                other => panic!("an exact total must be reported, got {other:?}"),
+            };
+            total - I256::from(DOMAIN_MAX)
+        };
+
+        let representable = |excess: I256| match i128::try_from(excess) {
+            // Too wide for the storage type, so far outside the money domain.
+            Err(_) => false,
+            Ok(units) => crate::Residue::<USD>::try_from_units(units).is_ok(),
+        };
+
+        // Two terms overshoot by exactly DOMAIN_MAX. Representable — the refusal is about the
+        // total, not about the excess being unrepresentable.
+        let small = excess_of(2);
+        assert_eq!(small, I256::from(DOMAIN_MAX));
+        assert!(representable(small), "a small overshoot IS a valid residue");
+
+        // 170 terms still narrow to i128; 171 do not. Both overshoot the domain by more than
+        // it can hold, so neither excess is money.
+        for count in [170usize, 171, 400] {
+            assert!(
+                !representable(excess_of(count)),
+                "{count} terms overshoot by more than the domain holds"
+            );
+        }
     }
 
     use crate::rounding_impl::Rounding;

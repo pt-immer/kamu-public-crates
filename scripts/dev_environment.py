@@ -5,19 +5,28 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import re
 import shutil
 import subprocess
 import sys
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, TextIO
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MANIFEST_PATH = ROOT / ".config" / "dev-tools.json"
 TOOLS_BIN = ROOT / ".tools" / "bin"
 NODE_MODULES = ROOT / "node_modules"
+NODE_BIN = NODE_MODULES / ".bin"
+
+# The Justfile exports this prefix order ahead of PATH, so a recipe runs the
+# repository-local copy where setup installed one and the system copy where it
+# did not. Doctor searches the same order, or it reports on a binary no recipe
+# would ever run.
+SEARCH_PREFIXES = (TOOLS_BIN, NODE_BIN)
+SETUP_HINT = "run just setup"
 
 
 def load_manifest() -> dict[str, Any]:
@@ -47,9 +56,16 @@ def capture(command: Sequence[str]) -> tuple[int, str]:
             stderr=subprocess.STDOUT,
             text=True,
         )
-    except OSError as error:
-        return 127, str(error)
+    except OSError:
+        # The OSError text is an absolute host path and no remedy. Callers
+        # describe the absence themselves, in words a reader can act on.
+        return 127, "not executable"
     return result.returncode, result.stdout.strip()
+
+
+def first_line(output: str) -> str:
+    """Reduce a version banner to the one line worth displaying."""
+    return output.splitlines()[0] if output else "no output"
 
 
 def contains_version(output: str, version: str) -> bool:
@@ -58,6 +74,91 @@ def contains_version(output: str, version: str) -> bool:
         rf"(?<![0-9.]){re.escape(version)}(?![0-9.])",
         output,
     ) is not None
+
+
+def parse_version(output: str) -> tuple[int, ...] | None:
+    """Read the dotted version out of a tool's banner.
+
+    The banner line wins, and the rest of the output is only a fallback:
+    ShellCheck prints its name on line one and `version: 0.11.0` on line two,
+    while `capture` folds stderr in, so a warning carrying a path like
+    `/etc/foo/1.2.3/` would otherwise be read as the version.
+    """
+    for candidate in (first_line(output), output):
+        found = re.search(r"(?<![0-9.])(\d+(?:\.\d+)+)(?![0-9.])", candidate)
+        if found is not None:
+            return tuple(int(part) for part in found.group(1).split("."))
+    return None
+
+
+def satisfies_floor(
+    installed: tuple[int, ...],
+    floor: tuple[int, ...],
+) -> bool:
+    """Report whether an installed version is at least the pinned one.
+
+    Compares as integers, never as text: `0.9.140` is above `0.9.9` by number
+    and below it by string order.
+    """
+    width = max(len(installed), len(floor))
+    left = installed + (0,) * (width - len(installed))
+    right = floor + (0,) * (width - len(floor))
+    return left >= right
+
+
+def search_path() -> str:
+    """Build the tool search path the Justfile exports for every recipe.
+
+    Empty entries are dropped. `shutil.which` reads one as the working
+    directory, so an unset PATH would otherwise let a file sitting in the
+    repository root answer for a pinned tool — and doctor runs what it finds.
+    """
+    entries = [str(prefix) for prefix in SEARCH_PREFIXES]
+    entries.extend(os.environ.get("PATH", "").split(os.pathsep))
+    return os.pathsep.join(entry for entry in entries if entry)
+
+
+def resolve(binary: str) -> pathlib.Path | None:
+    """Find one tool the way a recipe does: repository-local, then PATH."""
+    found = shutil.which(binary, path=search_path())
+    return pathlib.Path(found) if found else None
+
+
+def is_repository_local(path: pathlib.Path) -> bool:
+    """Report whether a resolved tool is the copy setup installs."""
+    return path.parent in SEARCH_PREFIXES
+
+
+def node_package_version(
+    binary: pathlib.Path,
+    package: str,
+) -> str | None:
+    """Read a Node tool's version from the package.json beside its binary.
+
+    Asking the binary is not an option: markdownlint-cli2 treats every
+    argument as a glob, so a version query lints the whole repository.
+
+    The repository's own install is read by path, because `npm ci --no-bin-links`
+    and filesystems without symlinks leave `.bin` entries that lead nowhere. The
+    walk up from the resolved binary is what covers a system install, whose shim
+    symlinks into a package directory elsewhere.
+    """
+    candidates = [NODE_MODULES / package]
+    candidates.extend(binary.resolve().parents)
+    for directory in candidates:
+        manifest = directory / "package.json"
+        if not manifest.is_file():
+            continue
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            # An unreadable manifest between here and the owning package is
+            # not the answer; keep looking rather than abandoning the walk.
+            continue
+        if data.get("name") == package:
+            version = data.get("version")
+            return None if version is None else str(version)
+    return None
 
 
 def local_tool_is_exact(tool: dict[str, Any]) -> bool:
@@ -159,36 +260,218 @@ def setup(manifest: dict[str, Any]) -> int:
     return doctor(manifest)
 
 
+class Palette:
+    """ANSI styling that disappears for a pipe, a file, or NO_COLOR."""
+
+    RESET = "\033[0m"
+    CODES = {
+        "bold": "\033[1m",
+        "dim": "\033[2m",
+        "red": "\033[31m",
+        "green": "\033[32m",
+        "yellow": "\033[33m",
+        "cyan": "\033[36m",
+    }
+
+    def __init__(self, enabled: bool) -> None:
+        self.enabled = enabled
+
+    def __call__(self, text: str, *styles: str) -> str:
+        """Wrap text in the named styles, or return it untouched."""
+        if not self.enabled or not text:
+            return text
+        opening = "".join(self.CODES[style] for style in styles)
+        return f"{opening}{text}{self.RESET}"
+
+
+def palette(stream: TextIO | None = None) -> Palette:
+    """Enable color only for an interactive stream without NO_COLOR set."""
+    target = sys.stdout if stream is None else stream
+    interactive = bool(getattr(target, "isatty", lambda: False)())
+    return Palette(interactive and not os.environ.get("NO_COLOR"))
+
+
 class Doctor:
-    """Accumulate gate-prerequisite diagnostics."""
+    """Accumulate gate-prerequisite diagnostics and render them."""
 
-    def __init__(self) -> None:
-        self.failures = 0
+    LABEL_WIDTH = 30
 
-    def report(self, label: str, passed: bool, detail: str) -> None:
-        """Print one diagnostic and remember failures."""
-        marker = "PASS" if passed else "FAIL"
-        print(f"  {marker:<4} {label:<28} {detail}")
-        if not passed:
-            self.failures += 1
+    def __init__(self, style: Palette) -> None:
+        self.style = style
+        self.passes = 0
+        self.system = 0
+        self.failed: list[str] = []
 
-    def command(
+    def section(self, title: str) -> None:
+        """Open a titled group of checks."""
+        print(f"\n{self.style(title, 'bold', 'cyan')}")
+
+    def row(self, marker: str, label: str, detail: str) -> None:
+        """Print one aligned diagnostic line."""
+        print(f"  {marker} {label:<{self.LABEL_WIDTH}} {detail}")
+
+    def ok(self, label: str, detail: str) -> None:
+        """Record one satisfied prerequisite."""
+        self.row(self.style("✓", "green"), label, self.style(detail, "dim"))
+        self.passes += 1
+
+    def ok_system(
         self,
         label: str,
-        command: Sequence[str],
-        *,
-        version: str | None = None,
+        detail: str,
+        path: pathlib.Path,
     ) -> None:
-        """Require one command and optionally its exact version."""
-        status, output = capture(command)
-        first_line = output.splitlines()[0] if output else "no output"
-        passed = status == 0 and (
-            version is None or contains_version(output, version)
+        """Record a pinned tool served from outside the repository."""
+        self.row(
+            self.style("•", "yellow"),
+            label,
+            f"{self.style(detail, 'dim')}  "
+            f"{self.style(f'(system: {path})', 'dim')}",
         )
-        detail = first_line
-        if version is not None and not passed:
-            detail = f"expected {version}; got {first_line}"
-        self.report(label, passed, detail)
+        self.passes += 1
+        self.system += 1
+
+    def fail(self, label: str, detail: str, hint: str) -> None:
+        """Record one missing or mismatched prerequisite."""
+        self.row(
+            self.style("✗", "red"),
+            label,
+            self.style(f"{detail} — {hint}", "red"),
+        )
+        self.failed.append(label)
+
+    def verdict(
+        self,
+        label: str,
+        passed: bool,
+        detail: str,
+        hint: str,
+    ) -> None:
+        """Record a check whose only outcome is present or absent."""
+        if passed:
+            self.ok(label, detail)
+        else:
+            self.fail(label, detail, hint)
+
+    def summary(self) -> int:
+        """Print the closing tally and return the process exit status."""
+        style = self.style
+        counts = (
+            f"{style(f'✓ {self.passes} ok', 'green')}   "
+            f"{style(f'• {self.system} system', 'yellow')}"
+        )
+        print()
+        if self.failed:
+            print(
+                f"{style(f'✗ {len(self.failed)} failed', 'bold', 'red')}"
+                f"   {counts}"
+            )
+            print(style(f"  fix: {', '.join(self.failed)}", "red"))
+            return 1
+        print(f"{style('✓ all good', 'bold', 'green')}   {counts}")
+        return 0
+
+
+def check_bootstrap(
+    checks: Doctor,
+    command: str,
+    args: Sequence[str],
+    version: str | None,
+) -> None:
+    """Check one command that setup itself cannot install."""
+    path = shutil.which(command)
+    if path is None:
+        checks.fail(command, "not found", "install it before setup")
+        return
+    status, output = capture([path, *args])
+    if status != 0:
+        # It ran and refused. Naming a version it never printed would send the
+        # reader after the wrong thing.
+        checks.fail(command, first_line(output), f"exited {status}")
+        return
+    checks.verdict(
+        command,
+        version is None or contains_version(output, version),
+        first_line(output),
+        "no version reported" if version is None else f"expected {version}",
+    )
+
+
+def check_floor(
+    checks: Doctor,
+    label: str,
+    detail: str,
+    installed: tuple[int, ...] | None,
+    pinned: str,
+    hint: str,
+    path: pathlib.Path | None = None,
+) -> None:
+    """Judge one tool against its pinned floor and record the verdict.
+
+    A version that cannot be read is reported as unreadable, never as
+    satisfied: a check that cannot see its input has not passed it.
+    """
+    floor = parse_version(pinned)
+    if floor is None:
+        checks.fail(label, detail, f"unreadable pin {pinned} in the manifest")
+    elif installed is None:
+        checks.fail(label, detail, f"no readable version; {hint}")
+    elif not satisfies_floor(installed, floor):
+        checks.fail(label, detail, f"below the pinned {pinned}; {hint}")
+    else:
+        # ShellCheck names itself on line one and versions itself on line two,
+        # so the banner alone does not always show what was compared.
+        found = ".".join(str(part) for part in installed)
+        shown = detail if found in detail else f"{detail} {found}"
+        if path is None or is_repository_local(path):
+            checks.ok(label, f"{shown}  ≥ {pinned}")
+        else:
+            checks.ok_system(label, f"{shown}  ≥ {pinned}", path)
+
+
+def check_cargo_tool(checks: Doctor, tool: dict[str, Any]) -> None:
+    """Check one pinned Cargo tool wherever a recipe would find it."""
+    binary = tool["binary"]
+    path = resolve(binary)
+    if path is None:
+        checks.fail(binary, "not found", SETUP_HINT)
+        return
+    status, output = capture([str(path), *tool["version_args"]])
+    check_floor(
+        checks,
+        binary,
+        first_line(output),
+        parse_version(output) if status == 0 else None,
+        tool["version"],
+        SETUP_HINT,
+        path,
+    )
+
+
+def check_node_tool(checks: Doctor, tool: dict[str, Any]) -> None:
+    """Check one pinned Node tool without invoking it."""
+    binary = tool["binary"]
+    path = resolve(binary)
+    if path is None:
+        checks.fail(binary, "not found", SETUP_HINT)
+        return
+    actual = node_package_version(path, tool["package"])
+    if actual is None:
+        checks.fail(
+            binary,
+            "version unreadable",
+            f"no {tool['package']} package.json beside it; {SETUP_HINT}",
+        )
+        return
+    check_floor(
+        checks,
+        binary,
+        f"{binary} {actual}",
+        parse_version(actual),
+        tool["version"],
+        SETUP_HINT,
+        path,
+    )
 
 
 def installed_rust_items(
@@ -209,11 +492,89 @@ def component_present(installed: set[str], component: str) -> bool:
     )
 
 
+def rust_item_detail(available: bool, present: bool) -> str:
+    """Describe one rustup component or target so the row matches its marker.
+
+    An absent item reads `missing`. Reporting it as `installed` beside a
+    failing marker is how a missing `rust-src` gets mistaken for a present
+    one, and the compile-fail goldens re-blessed against it.
+    """
+    if not available:
+        return "toolchain unavailable"
+    return "installed" if present else "missing"
+
+
+def check_toolchain(
+    checks: Doctor,
+    label: str,
+    version: str,
+    components: Sequence[str],
+) -> None:
+    """Check one pinned compiler and every component the gates reach."""
+    status, output = capture(["rustup", "run", version, "rustc", "--version"])
+    checks.verdict(
+        label,
+        status == 0 and contains_version(output, version),
+        first_line(output),
+        f"expected {version}; {SETUP_HINT}",
+    )
+    available, installed = installed_rust_items(version, "component")
+    for component in components:
+        present = available and component_present(installed, component)
+        checks.verdict(
+            f"{version} {component}",
+            present,
+            rust_item_detail(available, present),
+            f"rustup component add {component} --toolchain {version}",
+        )
+
+
+def check_targets(
+    checks: Doctor,
+    version: str,
+    targets: Sequence[str],
+) -> None:
+    """Check every cross-compilation target the gates build for."""
+    available, installed = installed_rust_items(version, "target")
+    for target in targets:
+        present = available and target in installed
+        checks.verdict(
+            f"{version} {target}",
+            present,
+            rust_item_detail(available, present),
+            f"rustup target add {target} --toolchain {version}",
+        )
+
+
+def check_system_tool(checks: Doctor, tool: dict[str, Any]) -> None:
+    """Check one tool the operating system package manager owns."""
+    path = shutil.which(tool["binary"])
+    if path is None:
+        checks.fail(tool["binary"], "not found", tool["install_hint"])
+        return
+    status, output = capture([path, *tool["version_args"]])
+    check_floor(
+        checks,
+        tool["binary"],
+        first_line(output),
+        parse_version(output) if status == 0 else None,
+        tool["version"],
+        tool["install_hint"],
+    )
+
+
 def doctor(manifest: dict[str, Any]) -> int:
     """Verify every prerequisite reached by the root gate."""
-    checks = Doctor()
+    style = palette()
+    checks = Doctor(style)
     rust = manifest["rust"]
-    print("bootstrap commands:")
+
+    print(
+        f"\n{style('kamu · doctor', 'bold', 'cyan')}  "
+        f"{style('root-gate prerequisites', 'dim')}"
+    )
+
+    checks.section("Bootstrap commands")
     for command, args, version in (
         ("git", ["--version"], None),
         ("rustup", ["--version"], None),
@@ -223,86 +584,34 @@ def doctor(manifest: dict[str, Any]) -> int:
         ("node", ["--version"], None),
         ("npm", ["--version"], None),
     ):
-        path = shutil.which(command)
-        if path is None:
-            checks.report(command, False, "missing")
-        else:
-            checks.command(command, [path, *args], version=version)
+        check_bootstrap(checks, command, args, version)
 
-    print("Rust toolchains and components:")
-    for label, version, component_key in (
-        ("primary compiler", rust["primary"], "primary_components"),
-        ("MSRV compiler", rust["msrv"], "msrv_components"),
-    ):
-        checks.command(
-            label,
-            ["rustup", "run", version, "rustc", "--version"],
-            version=version,
-        )
-        available, installed = installed_rust_items(version, "component")
-        for component in rust[component_key]:
-            present = available and component_present(installed, component)
-            detail = "toolchain unavailable"
-            if available:
-                detail = "installed" if present else "missing"
-            checks.report(
-                f"{version} {component}",
-                present,
-                detail,
-            )
+    checks.section("Rust toolchains and components")
+    check_toolchain(
+        checks,
+        "primary compiler",
+        rust["primary"],
+        rust["primary_components"],
+    )
+    check_toolchain(
+        checks,
+        "MSRV compiler",
+        rust["msrv"],
+        rust["msrv_components"],
+    )
+    check_targets(checks, rust["primary"], rust["primary_targets"])
 
-    available, targets = installed_rust_items(rust["primary"], "target")
-    for target in rust["primary_targets"]:
-        present = available and target in targets
-        detail = "toolchain unavailable"
-        if available:
-            detail = "installed" if present else "missing"
-        checks.report(
-            f"{rust['primary']} {target}",
-            present,
-            detail,
-        )
-
-    print("repository-local tools:")
+    checks.section("Repository tools")
     for tool in manifest["cargo_tools"]:
-        binary = TOOLS_BIN / tool["binary"]
-        checks.command(
-            tool["binary"],
-            [str(binary), *tool["version_args"]],
-            version=tool["version"],
-        )
-
+        check_cargo_tool(checks, tool)
     for tool in manifest["node_tools"]:
-        package = NODE_MODULES / tool["package"] / "package.json"
-        binary = NODE_MODULES / ".bin" / tool["binary"]
-        actual = None
-        if package.is_file():
-            actual = json.loads(package.read_text(encoding="utf-8")).get(
-                "version"
-            )
-        checks.report(
-            tool["binary"],
-            actual == tool["version"] and binary.is_file(),
-            (
-                str(actual)
-                if actual == tool["version"] and binary.is_file()
-                else f"expected {tool['version']}; got {actual or 'missing'}"
-            ),
-        )
+        check_node_tool(checks, tool)
 
-    print("system tools:")
+    checks.section("System tools")
     for tool in manifest["system_tools"]:
-        path = shutil.which(tool["binary"])
-        if path is None:
-            checks.report(tool["binary"], False, tool["install_hint"])
-        else:
-            checks.command(
-                tool["binary"],
-                [path, *tool["version_args"]],
-                version=tool["version"],
-            )
+        check_system_tool(checks, tool)
 
-    print("vendored data:")
+    checks.section("Vendored data")
     submodule_file = (
         ROOT
         / "crates"
@@ -311,17 +620,14 @@ def doctor(manifest: dict[str, Any]) -> int:
         / "iso3166-csv"
         / "countries.csv"
     )
-    checks.report(
+    checks.verdict(
         "ISO 3166 submodule",
         submodule_file.is_file(),
-        "initialized" if submodule_file.is_file() else "run setup",
+        "initialized",
+        f"not initialized; {SETUP_HINT}",
     )
 
-    if checks.failures:
-        print(f"doctor: {checks.failures} required prerequisite(s) failed")
-        return 1
-    print("doctor: every root-gate prerequisite is ready")
-    return 0
+    return checks.summary()
 
 
 def parser() -> argparse.ArgumentParser:

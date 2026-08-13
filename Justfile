@@ -14,14 +14,18 @@ default:
 # ---------------------------------------------------------------------------
 
 # Install the exact root-gate environment from .config/dev-tools.json.
+# `[no-exit-message]` keeps the script's own report as the whole output; the
+# exit status still travels, so CI and aggregate recipes still see a failure.
 [doc("Install pinned toolchains, targets, and development tools.")]
+[no-exit-message]
 setup:
-    python3 scripts/dev_environment.py setup
+    @python3 scripts/dev_environment.py setup
 
 # Report every prerequisite reached by the root gate.
 [doc("Verify every tool and Rust component required by the gates.")]
+[no-exit-message]
 doctor:
-    python3 scripts/dev_environment.py doctor
+    @python3 scripts/dev_environment.py doctor
 
 # ---------------------------------------------------------------------------
 # Format / fix (mutating)
@@ -501,10 +505,13 @@ gate:
     fi
     exit "$fail"
 
-# Passthrough keeps the lane's recipe inventory in its own Justfile.
+# Passthrough keeps the lane's recipe inventory in its own Justfile. It reports
+# nothing of its own, so `[no-exit-message]` leaves the lane recipe's failure as
+# the whole message; the exit status still travels.
 [doc("Run a recipe in the excluded PostgreSQL extension lane.")]
+[no-exit-message]
 pg *ARGS:
-    cd extensions/money-pg && just {{ ARGS }}
+    @cd extensions/money-pg && just {{ ARGS }}
 
 # The PostgreSQL lane's developer gate. Hours and Docker-backed, but excludes the native YB
 # release proof (`just pg gate-pg-release`).
