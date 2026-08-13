@@ -3,18 +3,55 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import os
 import pathlib
+import tempfile
 import unittest
+from collections.abc import Callable
+from typing import Any, TypeVar
+from unittest import mock
 
+from scripts import dev_environment
 from scripts.dev_environment import (
+    Doctor,
+    Palette,
     cargo_install_command,
+    capture,
+    check_floor,
+    contains_version,
+    is_repository_local,
     load_manifest,
+    node_package_version,
+    palette,
+    parse_version,
+    resolve,
+    satisfies_floor,
     setup_commands,
 )
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+T = TypeVar("T")
+
+
+def executable(directory: pathlib.Path, name: str) -> pathlib.Path:
+    """Create one runnable stub so shutil.which can resolve it."""
+    path = directory / name
+    path.write_text("#!/bin/sh\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def captured(render: Callable[[], T]) -> tuple[T, str]:
+    """Run one reporting call and return its result beside its output."""
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        result = render()
+    return result, buffer.getvalue()
 
 
 class DevelopmentEnvironmentPolicyTests(unittest.TestCase):
@@ -101,6 +138,354 @@ class DevelopmentEnvironmentPolicyTests(unittest.TestCase):
                     tool["version"],
                     lock["packages"][""]["devDependencies"][tool["package"]],
                 )
+
+
+class ToolResolutionTests(unittest.TestCase):
+    """Doctor resolves a tool exactly as an invoked recipe would."""
+
+    @contextlib.contextmanager
+    def workspace(self) -> Any:
+        """Yield a repository-local prefix and a separate system prefix."""
+        with tempfile.TemporaryDirectory() as root:
+            local = pathlib.Path(root) / "local"
+            system = pathlib.Path(root) / "system"
+            local.mkdir()
+            system.mkdir()
+            with mock.patch.object(
+                dev_environment, "SEARCH_PREFIXES", (local,)
+            ), mock.patch.dict(os.environ, {"PATH": str(system)}):
+                yield local, system
+
+    def test_the_repository_local_copy_wins_over_the_system_copy(
+        self,
+    ) -> None:
+        with self.workspace() as (local, system):
+            wanted = executable(local, "taplo")
+            executable(system, "taplo")
+            found = resolve("taplo")
+            self.assertEqual(wanted, found)
+            self.assertTrue(is_repository_local(found))
+
+    def test_resolution_falls_back_to_the_wider_path(self) -> None:
+        with self.workspace() as (_, system):
+            wanted = executable(system, "taplo")
+            found = resolve("taplo")
+            self.assertEqual(wanted, found)
+            self.assertFalse(is_repository_local(found))
+
+    def test_an_absent_tool_resolves_to_nothing(self) -> None:
+        with self.workspace():
+            self.assertIsNone(resolve("taplo"))
+
+    def test_a_missing_binary_never_reports_a_host_path(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            absent = pathlib.Path(root) / "nowhere" / "taplo"
+            status, output = capture([str(absent)])
+            self.assertEqual(127, status)
+            self.assertNotIn(root, output)
+
+
+class NodeVersionTests(unittest.TestCase):
+    """A Node tool's version is read from disk, never asked for."""
+
+    def build(
+        self,
+        root: str,
+        name: str,
+        version: str,
+    ) -> pathlib.Path:
+        """Lay out a Node package with its bin shim inside it."""
+        package = pathlib.Path(root) / "lib" / name
+        package.mkdir(parents=True)
+        (package / "package.json").write_text(
+            json.dumps({"name": name, "version": version}),
+            encoding="utf-8",
+        )
+        return executable(package, f"{name}-bin.mjs")
+
+    def test_the_version_comes_from_the_package_beside_the_binary(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            binary = self.build(root, "markdownlint-cli2", "0.23.2")
+            self.assertEqual(
+                "0.23.2",
+                node_package_version(binary, "markdownlint-cli2"),
+            )
+
+    def test_a_bin_symlink_is_followed_to_its_package(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            binary = self.build(root, "markdownlint-cli2", "0.23.2")
+            shims = pathlib.Path(root) / ".bin"
+            shims.mkdir()
+            link = shims / "markdownlint-cli2"
+            link.symlink_to(binary)
+            self.assertEqual(
+                "0.23.2",
+                node_package_version(link, "markdownlint-cli2"),
+            )
+
+    def test_an_unreadable_version_is_reported_as_unknown(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            binary = self.build(root, "markdownlint-cli2", "0.23.2")
+            self.assertIsNone(node_package_version(binary, "other-package"))
+
+
+class PaletteTests(unittest.TestCase):
+    """Styling is for a terminal, and only ever for a terminal."""
+
+    @contextlib.contextmanager
+    def without_no_color(self) -> Any:
+        """Run with NO_COLOR unset whatever the caller's shell exported."""
+        with mock.patch.dict(os.environ):
+            os.environ.pop("NO_COLOR", None)
+            yield
+
+    def test_a_disabled_palette_emits_no_escape_codes(self) -> None:
+        style = Palette(enabled=False)
+        self.assertEqual("taplo", style("taplo", "bold", "red"))
+
+    def test_an_enabled_palette_wraps_and_resets(self) -> None:
+        style = Palette(enabled=True)
+        self.assertEqual(
+            f"{Palette.CODES['red']}taplo{Palette.RESET}",
+            style("taplo", "red"),
+        )
+
+    def test_color_is_off_for_a_redirected_stream(self) -> None:
+        with self.without_no_color():
+            self.assertFalse(palette(io.StringIO()).enabled)
+
+    def test_no_color_disables_an_interactive_stream(self) -> None:
+        stream = mock.Mock()
+        stream.isatty.return_value = True
+        with mock.patch.dict(os.environ, {"NO_COLOR": "1"}):
+            self.assertFalse(palette(stream).enabled)
+
+    def test_an_interactive_stream_without_no_color_is_styled(self) -> None:
+        stream = mock.Mock()
+        stream.isatty.return_value = True
+        with self.without_no_color():
+            self.assertTrue(palette(stream).enabled)
+
+
+class DoctorReportingTests(unittest.TestCase):
+    """The tally decides the exit status; every failure names a remedy."""
+
+    def doctor(self) -> Doctor:
+        return Doctor(Palette(enabled=False))
+
+    def test_a_clean_run_exits_zero(self) -> None:
+        checks = self.doctor()
+
+        def render() -> int:
+            checks.ok("taplo", "taplo 0.10.0")
+            return checks.summary()
+
+        status, output = captured(render)
+        self.assertEqual(0, status)
+        self.assertIn("all good", output)
+
+    def test_a_failure_exits_one_and_lists_what_to_fix(self) -> None:
+        checks = self.doctor()
+
+        def render() -> int:
+            checks.ok("taplo", "taplo 0.10.0")
+            checks.fail("typos", "typos-cli 1.49.0", "pinned 1.48.0")
+            return checks.summary()
+
+        status, output = captured(render)
+        self.assertEqual(1, status)
+        self.assertIn("1 failed", output)
+        self.assertIn("fix: typos", output)
+
+    def test_a_failing_row_carries_its_remedy(self) -> None:
+        checks = self.doctor()
+        _, output = captured(
+            lambda: checks.fail("typos", "not found", "run just setup")
+        )
+        self.assertIn("typos", output)
+        self.assertIn("run just setup", output)
+
+    def test_a_system_copy_passes_and_is_counted_apart(self) -> None:
+        checks = self.doctor()
+        _, output = captured(
+            lambda: checks.ok_system(
+                "taplo",
+                "taplo 0.10.0",
+                pathlib.Path("/usr/bin/taplo"),
+            )
+        )
+        self.assertEqual([], checks.failed)
+        self.assertEqual(1, checks.passes)
+        self.assertEqual(1, checks.system)
+        self.assertIn("system: /usr/bin/taplo", output)
+
+    def test_every_manifest_label_fits_the_reported_column(self) -> None:
+        manifest = load_manifest()
+        rust = manifest["rust"]
+        labels = [
+            f"{rust['primary']} {item}"
+            for item in (
+                *rust["primary_components"],
+                *rust["primary_targets"],
+            )
+        ]
+        labels += [f"{rust['msrv']} {item}" for item in rust["msrv_components"]]
+        for group in ("cargo_tools", "node_tools", "system_tools"):
+            labels += [tool["binary"] for tool in manifest[group]]
+        for label in labels:
+            with self.subTest(label=label):
+                self.assertLessEqual(len(label), Doctor.LABEL_WIDTH)
+
+
+class VersionParsingTests(unittest.TestCase):
+    """Every banner doctor probes must yield the version it displays."""
+
+    BANNERS = (
+        ("just 1.58.0", (1, 58, 0)),
+        ("taplo 0.10.0", (0, 10, 0)),
+        ("typos-cli 1.49.0", (1, 49, 0)),
+        ("cargo-llvm-cov 0.8.7", (0, 8, 7)),
+        ("cargo-deny 0.20.2", (0, 20, 2)),
+        ("cargo-nextest 0.9.143", (0, 9, 143)),
+        ("markdownlint-cli2 v0.22.0 (markdownlint v0.40.0)", (0, 22, 0)),
+        ("git version 2.55.0", (2, 55, 0)),
+        ("rustup 1.29.0 (2026-03-23)", (1, 29, 0)),
+        ("node v24.18.0", (24, 18, 0)),
+        ("npm 11.16.0", (11, 16, 0)),
+        ("Python 3.14.6", (3, 14, 6)),
+    )
+
+    def test_every_probed_banner_parses(self) -> None:
+        for banner, expected in self.BANNERS:
+            with self.subTest(banner=banner):
+                self.assertEqual(expected, parse_version(banner))
+
+    def test_a_build_date_is_not_mistaken_for_a_version(self) -> None:
+        banner = "rustc 1.96.0 (ac68faa20 2026-05-25)"
+        self.assertEqual((1, 96, 0), parse_version(banner))
+
+    def test_the_version_may_sit_below_the_first_line(self) -> None:
+        # ShellCheck names itself first and versions itself second.
+        banner = (
+            "ShellCheck - shell script analysis tool\n"
+            "version: 0.11.0\n"
+            "license: GNU General Public License, version 3"
+        )
+        self.assertEqual((0, 11, 0), parse_version(banner))
+
+    def test_output_without_a_version_parses_to_nothing(self) -> None:
+        for banner in ("", "no output", "not executable", "command not found"):
+            with self.subTest(banner=banner):
+                self.assertIsNone(parse_version(banner))
+
+
+class VersionFloorTests(unittest.TestCase):
+    """The pin is a floor, and the comparison is numeric."""
+
+    def test_an_equal_version_satisfies_the_floor(self) -> None:
+        self.assertTrue(satisfies_floor((0, 10, 0), (0, 10, 0)))
+
+    def test_a_newer_version_satisfies_the_floor(self) -> None:
+        self.assertTrue(satisfies_floor((1, 58, 0), (1, 57, 0)))
+
+    def test_an_older_version_does_not(self) -> None:
+        self.assertFalse(satisfies_floor((0, 22, 0), (0, 23, 2)))
+
+    def test_the_comparison_is_numeric_and_not_lexical(self) -> None:
+        # "0.9.140" sorts below "0.9.9" as text and above it as numbers.
+        self.assertTrue(satisfies_floor((0, 9, 140), (0, 9, 9)))
+        self.assertFalse(satisfies_floor((0, 9, 9), (0, 9, 140)))
+
+    def test_a_shorter_version_is_padded_not_truncated(self) -> None:
+        self.assertTrue(satisfies_floor((1, 58), (1, 58, 0)))
+        self.assertFalse(satisfies_floor((1, 58), (1, 58, 1)))
+        self.assertTrue(satisfies_floor((2,), (1, 99, 99)))
+
+
+class FloorVerdictTests(unittest.TestCase):
+    """check_floor turns a parsed version into a recorded verdict."""
+
+    def doctor(self) -> Doctor:
+        return Doctor(Palette(enabled=False))
+
+    def judge(self, installed, pinned, path=None):
+        """Run one floor verdict and return the doctor beside its output."""
+        checks = self.doctor()
+        _, output = captured(
+            lambda: check_floor(
+                checks,
+                "taplo",
+                "taplo banner",
+                installed,
+                pinned,
+                "run just setup",
+                path,
+            )
+        )
+        return checks, output
+
+    def test_a_satisfied_floor_shows_the_comparison(self) -> None:
+        checks, output = self.judge((1, 58, 0), "1.57.0")
+        self.assertEqual([], checks.failed)
+        self.assertIn("≥ 1.57.0", output)
+
+    def test_a_version_below_the_floor_fails_with_its_remedy(self) -> None:
+        checks, output = self.judge((0, 22, 0), "0.23.2")
+        self.assertEqual(["taplo"], checks.failed)
+        self.assertIn("below the pinned 0.23.2", output)
+        self.assertIn("run just setup", output)
+
+    def test_an_unreadable_version_fails_rather_than_passing(self) -> None:
+        checks, output = self.judge(None, "0.10.0")
+        self.assertEqual(["taplo"], checks.failed)
+        self.assertIn("no readable version", output)
+
+    def test_an_unreadable_pin_is_reported_against_the_manifest(self) -> None:
+        checks, output = self.judge((0, 10, 0), "not-a-version")
+        self.assertEqual(["taplo"], checks.failed)
+        self.assertIn("unreadable pin", output)
+
+    def test_a_version_absent_from_the_banner_is_still_shown(self) -> None:
+        # ShellCheck's first line carries no version; the row must still say
+        # what was actually compared.
+        checks = self.doctor()
+        _, output = captured(
+            lambda: check_floor(
+                checks,
+                "shellcheck",
+                "ShellCheck - shell script analysis tool",
+                (0, 11, 0),
+                "0.11.0",
+                "install it",
+            )
+        )
+        self.assertEqual([], checks.failed)
+        self.assertIn("0.11.0  ≥ 0.11.0", output)
+
+    def test_a_system_copy_above_the_floor_still_counts_as_system(self) -> None:
+        checks, output = self.judge(
+            (1, 58, 0),
+            "1.57.0",
+            pathlib.Path("/usr/bin/just"),
+        )
+        self.assertEqual([], checks.failed)
+        self.assertEqual(1, checks.system)
+        self.assertIn("system: /usr/bin/just", output)
+
+
+class ToolchainIdentityTests(unittest.TestCase):
+    """Rust toolchains are addressed by exact name, so they are not floors."""
+
+    def test_a_newer_toolchain_does_not_satisfy_an_exact_pin(self) -> None:
+        banner = "rustc 1.97.0 (aaaaaaaaa 2026-07-01)"
+        self.assertFalse(contains_version(banner, "1.96.0"))
+        self.assertTrue(contains_version(banner, "1.97.0"))
+
+    def test_the_exact_check_is_not_fooled_by_a_longer_version(self) -> None:
+        self.assertFalse(contains_version("rustc 1.96.01", "1.96.0"))
+        self.assertFalse(contains_version("rustc 11.96.0", "1.96.0"))
 
 
 if __name__ == "__main__":

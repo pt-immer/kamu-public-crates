@@ -125,6 +125,24 @@ cross targets, then runs `just doctor`. ShellCheck remains an operating-system
 package; setup prints the required version when it is absent.
 `VERBOSE=1` exposes full output behind compact aggregate recipes.
 
+The Justfile exports `.tools/bin` and `node_modules/.bin` ahead of `PATH`, so a
+recipe runs the repository-local tool where setup installed one and the system
+copy where it did not. `just doctor` resolves in that same order and names the
+copy it found: `✓` repository-local, `•` system, `✗` absent, unreadable, or below
+its pin.
+
+Pinned tool versions are floors, not equalities. Any tool at or above its
+`.config/dev-tools.json` version passes, and the row prints the comparison.
+`just setup` still installs the exact pin and every workflow still installs it,
+so a tool above the floor is running something CI is not: for `taplo`, `typos`,
+`markdownlint-cli2` and `shellcheck`, whose output is itself a gate verdict, that
+can pass locally and fail in CI. Rust toolchains stay exact, because
+`rustup run <version>` addresses one by name — an identity, not a floor.
+
+Doctor colors an interactive stdout only and honors `NO_COLOR`. `setup` and
+`doctor` carry `[no-exit-message]`, so a failure is the script's own report; the
+exit status still travels.
+
 Both container images compile their dependencies in a layer of their own, keyed
 on the manifests, so editing lane source recompiles `kamu-money-pg` and nothing
 beneath it. `KMONEY_BUILD_CACHE_DIR` makes `test-matrix.sh` and the `yb-build`
