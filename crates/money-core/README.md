@@ -127,9 +127,9 @@ Credit, provenance and the redistribution position are in
 
 ## Design
 
-[`DESIGN.md`](DESIGN.md) carries the current C1–C10 contract and points each
-invariant to executable evidence. It also records the alternatives deliberately
-excluded from the API.
+[`DESIGN.md`](DESIGN.md) carries the shape, the constraints other systems
+impose, and the alternatives deliberately excluded from the API. What the crate
+promises is stated on the types and proved by their tests.
 
 ## Examples
 
