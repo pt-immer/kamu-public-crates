@@ -1,0 +1,47 @@
+error[E0432]: unresolved import `kamu_money_core::currency`
+  --> tests/ui/removed_compat_paths.rs:11:22
+   |
+11 | use kamu_money_core::currency::StaticCurrency;
+   |                      ^^^^^^^^ could not find `currency` in `kamu_money_core`
+
+error[E0432]: unresolved import `kamu_money_core::domain`
+  --> tests/ui/removed_compat_paths.rs:12:22
+   |
+12 | use kamu_money_core::domain::SCALE;
+   |                      ^^^^^^ could not find `domain` in `kamu_money_core`
+
+error[E0432]: unresolved import `kamu_money_core::error`
+  --> tests/ui/removed_compat_paths.rs:13:22
+   |
+13 | use kamu_money_core::error::AmountError;
+   |                      ^^^^^ could not find `error` in `kamu_money_core`
+
+error[E0432]: unresolved import `kamu_money_core::money`
+  --> tests/ui/removed_compat_paths.rs:14:22
+   |
+14 | use kamu_money_core::money::Money;
+   |                      ^^^^^ could not find `money` in `kamu_money_core`
+
+error[E0433]: cannot find `ParseMoneyError` in `kamu_money_core`
+  --> tests/ui/removed_compat_paths.rs:20:30
+   |
+20 |     let _ = kamu_money_core::ParseMoneyError::InvalidSyntax;
+   |                              ^^^^^^^^^^^^^^^ could not find `ParseMoneyError` in `kamu_money_core`
+   |
+help: an enum with a similar name exists
+   |
+20 -     let _ = kamu_money_core::ParseMoneyError::InvalidSyntax;
+20 +     let _ = kamu_money_core::MoneyError::InvalidSyntax;
+   |
+
+error[E0425]: cannot find type `UntaggedDivision` in crate `kamu_money_core`
+  --> tests/ui/removed_compat_paths.rs:18:36
+   |
+18 |     let _: Option<kamu_money_core::UntaggedDivision> = None;
+   |                                    ^^^^^^^^^^^^^^^^ not found in `kamu_money_core`
+
+error[E0425]: cannot find value `DOMAIN_MAX` in crate `kamu_money_core`
+  --> tests/ui/removed_compat_paths.rs:19:30
+   |
+19 |     let _ = kamu_money_core::DOMAIN_MAX;
+   |                              ^^^^^^^^^^ not found in `kamu_money_core`

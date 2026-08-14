@@ -12,10 +12,12 @@
 //! are compared. A const-evaluation failure is a build failure, so the corpus not compiling is
 //! itself the negative result.
 
+use kamu_money_core::Money;
+use kamu_money_core::advanced::domain::DOMAIN_MAX;
+use kamu_money_core::errors::{AmountError, ParseMoneyError};
 use kamu_money_core::iso::USD;
-
+use kamu_money_core::money;
 use kamu_money_core::text::parse_amount;
-use kamu_money_core::{DOMAIN_MAX, Money, ParseMoneyError};
 
 /// Parse each literal at compile time and again at run time, and require agreement.
 ///
@@ -86,7 +88,7 @@ fn the_domain_edge_parses_to_the_domain_edge() {
     assert_eq!(DOMAIN_BOTTOM, Ok(-DOMAIN_MAX));
     assert_eq!(
         ABOVE_DOMAIN,
-        Err(ParseMoneyError::Amount(kamu_money_core::AmountError::out_of_domain(
+        Err(ParseMoneyError::Amount(AmountError::out_of_domain(
             1_000_000_000_000_000_000_000_000_000_000_000_000
         )))
     );
@@ -125,10 +127,10 @@ fn the_rejected_forms_are_rejected_for_the_stated_reason() {
 // `money!` itself. Every one of these is a `const`, so the macro is doing its work at compile
 // time rather than being tested only as an expression.
 
-const RENT: Money<USD> = kamu_money_core::money!(USD, "1500.00");
-const REFUND: Money<USD> = kamu_money_core::money!(USD, "-1500.00");
-const SMALLEST: Money<USD> = kamu_money_core::money!(USD, "0.000000000000000001");
-const EDGE: Money<USD> = kamu_money_core::money!(USD, "999999999999999999.999999999999999999");
+const RENT: Money<USD> = money!(USD, "1500.00");
+const REFUND: Money<USD> = money!(USD, "-1500.00");
+const SMALLEST: Money<USD> = money!(USD, "0.000000000000000001");
+const EDGE: Money<USD> = money!(USD, "999999999999999999.999999999999999999");
 
 #[test]
 fn the_macro_reads_a_literal_as_the_amount_a_reviewer_reads() {
@@ -157,8 +159,5 @@ fn the_macro_and_the_runtime_parser_cannot_disagree() {
 
 #[test]
 fn the_macro_is_usable_as_an_ordinary_expression() {
-    assert_eq!(
-        (kamu_money_core::money!(USD, "10.50") + kamu_money_core::money!(USD, "0.50")).units(),
-        11_000_000_000_000_000_000
-    );
+    assert_eq!((money!(USD, "10.50") + money!(USD, "0.50")).units(), 11_000_000_000_000_000_000);
 }

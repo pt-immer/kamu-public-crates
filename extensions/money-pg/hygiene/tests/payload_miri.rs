@@ -3,7 +3,8 @@
 #[path = "../../kamu-money-pg/src/safe/payload.rs"]
 mod payload;
 
-use kamu_money_core::{DOMAIN_MAX, Iso4217};
+use kamu_money_core::Iso4217;
+use kamu_money_core::advanced::domain::DOMAIN_MAX;
 use payload::{
     OutOfDomain, PAYLOAD_BYTES, PINNED_PAYLOAD_BYTES, Payload, PinnedPayload, ValidationError,
     validate_payload, validate_pinned,

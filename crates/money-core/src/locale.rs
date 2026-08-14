@@ -82,7 +82,7 @@ impl FractionDigits {
     }
 }
 
-const _: () = assert!(crate::SCALE == 18);
+const _: () = assert!(crate::domain_impl::SCALE == 18);
 
 /// How one locale shows one currency.
 ///

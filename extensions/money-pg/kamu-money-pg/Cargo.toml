@@ -47,7 +47,7 @@ pgrx = "=0.19.2"
 #
 # Recipes inject a local path patch without rewriting this plain registry
 # requirement. Until 0.1.0 is published, bare Cargo resolution fails explicitly.
-kamu-money-core = "0.1"
+kamu-money-core = "0.2"
 tempfile = { version = "3", optional = true }
 
 [build-dependencies]
@@ -55,7 +55,7 @@ tempfile = { version = "3", optional = true }
 # second list, so the `Iso4217` enum, the currency markers and the SQL types
 # cannot disagree about a code, an exponent or a name. Drift is not detected
 # here; it is unrepresentable.
-kamu-money-core = "0.1"
+kamu-money-core = "0.2"
 
 [dependencies.pgrx-bench]
 version = "=0.19.2"

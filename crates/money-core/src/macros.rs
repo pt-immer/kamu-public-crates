@@ -32,26 +32,17 @@
 /// an amount that [`FromStr`](core::str::FromStr) would reject.
 ///
 /// ```
-/// use kamu_money_core::{Money, iso::USD};
+/// use kamu_money_core::{money, Money, iso::USD};
 ///
-/// const RENT: Money<USD> = kamu_money_core::money!(USD, "1500.00");
+/// const RENT: Money<USD> = money!(USD, "1500.00");
 /// assert_eq!(RENT.units(), 1_500_000_000_000_000_000_000);
 ///
 /// // Usable as an ordinary expression too.
-/// assert_eq!(kamu_money_core::money!(USD, "-0.000000000000000001").units(), -1);
+/// assert_eq!(money!(USD, "-0.000000000000000001").units(), -1);
 /// ```
 ///
 /// The currency is a type, so the literal carries no currency code; a tagged `"USD 1500.00"`
 /// string is the *runtime* form, parsed by `FromStr`.
-///
-/// # Reach it by path until 0.2.0
-///
-/// The examples qualify the macro rather than importing it, because
-/// `money` is *also* the deprecated compatibility module kept until 0.2.0 (hidden from these
-/// docs, which is why it is not linked here).
-/// A `use kamu_money_core::money;` imports both names and inherits that deprecation warning;
-/// the macro still works, and the warning is about the module. Removing the module resolves
-/// this, and removing it is itself the breaking change 0.2.0 already owns.
 #[macro_export]
 macro_rules! money {
     ($currency:ty, $literal:literal) => {{
@@ -68,10 +59,10 @@ macro_rules! money {
             },
             // The arms are split so the build failure names what is wrong with the literal.
             // `Display` is not const, so the message cannot carry the offending value.
-            Err($crate::ParseMoneyError::ExcessPrecision { .. }) => {
+            Err($crate::errors::ParseMoneyError::ExcessPrecision { .. }) => {
                 panic!("money! literal carries more fractional digits than the canonical scale")
             }
-            Err($crate::ParseMoneyError::Amount(_)) => {
+            Err($crate::errors::ParseMoneyError::Amount(_)) => {
                 panic!("money! literal is outside the money domain")
             }
             Err(_) => panic!("money! literal is not a valid decimal amount"),

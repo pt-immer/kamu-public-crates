@@ -1,4 +1,8 @@
-//! Public browsing levels and one-release compatibility paths.
+//! Public browsing levels.
+//!
+//! The pre-facade compatibility paths this file used to exercise were removed in 0.2.0.
+//! `tests/ui/removed_compat_paths.rs` now asserts they are gone, so the removal stays enforced
+//! rather than merely done.
 
 use core::num::NonZeroU32;
 use kamu_money_core::advanced::{arithmetic, domain, stable_hash};
@@ -24,18 +28,15 @@ fn common_code_stays_at_the_root_and_details_are_grouped() {
 }
 
 #[test]
-#[allow(deprecated)]
-fn old_paths_remain_as_compiler_guided_migration_shims() {
-    use kamu_money_core::currency::StaticCurrency as OldStaticCurrency;
-    use kamu_money_core::domain::SCALE as OLD_SCALE;
-    use kamu_money_core::error::AmountError as OldAmountError;
-    use kamu_money_core::money::Money as OldMoney;
+fn every_name_the_compatibility_paths_offered_has_a_home() {
+    // The replacements, exercised as a set. Each of these was reachable from the crate root or a
+    // module alias before 0.2.0, and the migration note on the removed item named this path.
+    use kamu_money_core::advanced::residue::UntaggedDivision;
+    use kamu_money_core::errors::{AllocationError, LocaleError, ParseMoneyError, RateError, WireError};
 
-    let value: OldMoney<USD> = OldMoney::try_from_major(1).unwrap();
-    let _: OldAmountError = AmountError::out_of_domain(domain::DOMAIN_MAX + 1);
-    let _: kamu_money_core::AmountError = AmountError::out_of_domain(domain::DOMAIN_MAX + 1);
-    let _: Option<kamu_money_core::UntaggedDivision> = None;
-    assert_eq!(value.code(), <USD as OldStaticCurrency>::CODE);
-    assert_eq!(OLD_SCALE, domain::SCALE);
-    assert_eq!(kamu_money_core::SCALE, domain::SCALE);
+    let _: Option<UntaggedDivision> = None;
+    let _: Option<(AllocationError, LocaleError, ParseMoneyError, RateError, WireError)> = None;
+    let _: AmountError = AmountError::out_of_domain(domain::DOMAIN_MAX + 1);
+    assert_eq!(domain::SCALE, 18);
+    assert_eq!(<USD as StaticCurrency>::CODE, Money::<USD>::try_from_major(1).unwrap().code());
 }
