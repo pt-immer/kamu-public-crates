@@ -41,6 +41,23 @@ impl Rounding {
         Self::Ceil,
     ];
 
+    /// Position of `self` in [`ALL`](Self::ALL).
+    ///
+    /// Exhaustive on purpose. A new mode fails to compile here, and the assertions below then
+    /// fail until `ALL` carries it too — which is what stops a mode from existing while
+    /// `from_name`, `names` and every test that iterates `ALL` quietly omit it.
+    const fn index(self) -> usize {
+        match self {
+            Self::HalfEven => 0,
+            Self::HalfAwayFromZero => 1,
+            Self::HalfTowardZero => 2,
+            Self::TowardZero => 3,
+            Self::AwayFromZero => 4,
+            Self::Floor => 5,
+            Self::Ceil => 6,
+        }
+    }
+
     /// The canonical `snake_case` name, for a config file, a wire, or a SQL argument.
     ///
     /// Deliberately not `Display`: these are identifiers to be matched, not prose to be shown
@@ -75,6 +92,15 @@ impl Rounding {
         Self::ALL.iter().map(|m| m.as_str()).collect::<Vec<_>>().join(", ")
     }
 }
+
+const _: () = {
+    assert!(Rounding::ALL.len() == 7);
+    let mut i = 0;
+    while i < Rounding::ALL.len() {
+        assert!(Rounding::ALL[i].index() == i);
+        i = i.saturating_add(1);
+    }
+};
 
 /// Divide `num` by `den`, rounding per `mode`.
 ///
