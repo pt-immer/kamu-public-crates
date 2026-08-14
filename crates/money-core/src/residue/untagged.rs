@@ -5,7 +5,7 @@
 /// Prefer [`Division`](crate::Division) in typed Rust code. This form exposes raw units because
 /// adapters such as a PostgreSQL extension learn currency identity at runtime.
 #[must_use = "resolve this division with .take_residue() or .discard_deliberately()"]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UntaggedDivision {
     quotient: i128,
     residue: i128,
