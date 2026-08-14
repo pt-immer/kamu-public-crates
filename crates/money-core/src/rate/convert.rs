@@ -1,11 +1,11 @@
-//! FX rates and typed money conversion.
+//! Applying a rate: one leg, or two with a single rounding at the end.
 
 use crate::Money;
 use crate::StaticCurrency;
-use crate::domain::{POW10_SCALE, in_domain};
-use crate::errors::{AmountError, RateError};
+use crate::domain::POW10_SCALE;
+use crate::errors::RateError;
+use crate::rate::Rate;
 use crate::rounding::{Rounding, div_round_i256};
-use core::marker::PhantomData;
 use ethnum::I256;
 
 /// `POW10_SCALE^2`: the divisor for a two-leg conversion, which applies the scale twice.
@@ -45,75 +45,6 @@ fn apply_rate_pair(units: i128, first: i128, second: i128, mode: Rounding) -> Op
     let (quotient, _below_one_unit) = div_round_i256(product, I256::from(POW10_SCALE_SQUARED), mode);
 
     i128::try_from(quotient).ok()
-}
-
-/// A directed FX rate: how many `Quote` units one `Base` unit buys.
-///
-/// The value uses the crate's fixed [`SCALE`](crate::advanced::domain::SCALE).
-///
-/// The pair is carried in the type, so `Money<USD>` can only be converted by a
-/// `Rate<USD, IDR>` and the result can only be `Money<IDR>` — a mismatched pair does not
-/// compile.
-///
-/// Rates are strictly positive and domain-bounded. Every constructor and decoding adapter
-/// enforces those runtime invariants.
-///
-/// There is deliberately no `inverse()` and no `compose()`: real FX has bid and ask, so
-/// inverting or composing mid-rates fabricates a price nobody can trade at. Every pair is
-/// stored in both directions; multi-leg conversion is [`Money::convert_via`], which rounds
-/// once.
-pub struct Rate<Base: StaticCurrency, Quote: StaticCurrency> {
-    units: i128,
-    // The value is currency-agnostic, so the phantom pair carries both type parameters.
-    _pair: PhantomData<(Base, Quote)>,
-}
-
-// Manual impls avoid unnecessary `Clone`/`Copy` bounds on the phantom parameters.
-impl<Base: StaticCurrency, Quote: StaticCurrency> Clone for Rate<Base, Quote> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<Base: StaticCurrency, Quote: StaticCurrency> Copy for Rate<Base, Quote> {}
-impl<Base: StaticCurrency, Quote: StaticCurrency> PartialEq for Rate<Base, Quote> {
-    fn eq(&self, o: &Self) -> bool {
-        self.units == o.units
-    }
-}
-impl<Base: StaticCurrency, Quote: StaticCurrency> Eq for Rate<Base, Quote> {}
-impl<Base: StaticCurrency, Quote: StaticCurrency> core::fmt::Debug for Rate<Base, Quote> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "Rate({} units, {}->{})", self.units, Base::CODE.alpha3(), Quote::CODE.alpha3())
-    }
-}
-
-impl<Base: StaticCurrency, Quote: StaticCurrency> Rate<Base, Quote> {
-    /// Construct from canonical units, reporting **why** a value was refused.
-    ///
-    /// Every text, serde, PostgreSQL, and sqlx ingress reaches this invariant owner.
-    ///
-    /// # Errors
-    /// [`RateError::Amount`] if the magnitude leaves the domain, and
-    /// [`RateError::NonPositive`] if `units <= 0`. The domain is tested **first**, so
-    /// `i128::MIN` is reported as the magnitude bug it is rather than as a sign bug, while an
-    /// in-domain `-2` is reported as the sign bug it is.
-    #[inline]
-    pub const fn try_from_units(units: i128) -> Result<Self, RateError> {
-        if !in_domain(units) {
-            return Err(RateError::Amount(AmountError::out_of_domain(units)));
-        }
-        if units <= 0 {
-            return Err(RateError::NonPositive { attempted_units: units });
-        }
-        Ok(Self { units, _pair: PhantomData })
-    }
-
-    /// The canonical units. Read-only: reconstructing requires a checked constructor.
-    #[inline]
-    #[must_use]
-    pub const fn units(&self) -> i128 {
-        self.units
-    }
 }
 
 impl<C: StaticCurrency> Money<C> {
@@ -180,16 +111,17 @@ impl<C: StaticCurrency> Money<C> {
 }
 
 #[cfg(test)]
+// The small-end cases state a relative resolution a human reads, which is what `f64` is for
+// here; every value it touches has already been asserted exactly in canonical units above.
+#[allow(clippy::as_conversions, clippy::cast_precision_loss)]
 mod tests {
-    use crate::Money;
-    use crate::Rate;
-    use crate::domain::{DOMAIN_MAX, POW10_SCALE};
-    use crate::errors::{AmountError, RateError};
+    use crate::domain::{DOMAIN_MAX, POW10_SCALE, in_domain};
+    use crate::errors::RateError;
     use crate::iso::{EUR, IDR, Iso4217, USD};
-    use crate::rounding::Rounding;
+    use crate::{Money, Rate, Rounding};
     use ethnum::I256;
+    use proptest::prelude::*;
 
-    /// `major` whole currency units, as a rate.
     fn rate<Base: crate::StaticCurrency, Quote: crate::StaticCurrency>(major: i128) -> Rate<Base, Quote> {
         Rate::try_from_units(major.checked_mul(POW10_SCALE).unwrap()).unwrap()
     }
@@ -200,42 +132,6 @@ mod tests {
         let usd = Money::<USD>::try_from_major(10).unwrap();
         let got = usd.convert(rate::<USD, IDR>(16_000), Rounding::HalfEven).unwrap();
         assert_eq!(got, Money::<IDR>::try_from_major(160_000).unwrap());
-    }
-
-    #[test]
-    fn a_zero_or_negative_rate_is_refused_at_construction() {
-        assert_eq!(
-            Rate::<USD, IDR>::try_from_units(0),
-            Err(RateError::NonPositive { attempted_units: 0 }),
-            "a zero rate would send the money to zero, silently and with no residue"
-        );
-        assert_eq!(
-            Rate::<USD, IDR>::try_from_units(-2 * POW10_SCALE),
-            Err(RateError::NonPositive { attempted_units: -2 * POW10_SCALE }),
-            "a negative rate would flip the sign of the money passing through it"
-        );
-
-        assert!(Rate::<USD, IDR>::try_from_units(0).is_err());
-        assert!(Rate::<USD, IDR>::try_from_units(-1).is_err());
-
-        // The smallest representable positive rate remains valid.
-        assert!(Rate::<USD, IDR>::try_from_units(1).is_ok(), "1e-18 is positive and in domain");
-    }
-
-    /// Magnitude and sign failures remain distinguishable. Domain is tested first, so
-    /// `i128::MIN` reports its magnitude failure.
-    #[test]
-    fn the_two_rate_refusals_are_reported_separately() {
-        assert_eq!(
-            Rate::<USD, IDR>::try_from_units(i128::MIN),
-            Err(RateError::Amount(AmountError::out_of_domain(i128::MIN))),
-            "out of domain AND negative: the magnitude is the useful fact"
-        );
-        assert_eq!(
-            Rate::<USD, IDR>::try_from_units(-DOMAIN_MAX),
-            Err(RateError::NonPositive { attempted_units: -DOMAIN_MAX }),
-            "in domain, so the sign is the only thing wrong with it"
-        );
     }
 
     /// `convert_via` rounds once, at the end.
@@ -352,16 +248,236 @@ mod tests {
         }
     }
 
-    /// The magnitude bound is `Money`'s, unchanged. Only the sign rule differs between the two
-    /// types, and it differs because only one of them is a price.
+    /// Widest operand bound that keeps a one-leg result in the domain by construction:
+    /// `1e26 * 1e26 / 1e18 = 1e34`, comfortably inside `DOMAIN_MAX` (`1e36 - 1`).
+    const IN_DOMAIN_OPERAND: i128 = 100_000_000_000_000_000_000_000_000;
+
+    /// Same, for two legs: `1e23 * 1e23 * 1e23 / 1e36 = 1e33`.
+    const IN_DOMAIN_OPERAND_VIA: i128 = 100_000_000_000_000_000_000_000;
+
+    fn usd(units: i128) -> Money<USD> {
+        Money::<USD>::try_from_units(units).unwrap()
+    }
+
+    proptest! {
+        /// Conversion never panics and never wraps, anywhere in the domain, under any mode.
+        ///
+        /// Full-domain sampling primarily exercises totality and overflow refusal. Constrained
+        /// properties below cover successful arithmetic.
+        ///
+        /// Money spans both signs; rates start at one because they are strictly positive.
+        #[test]
+        fn prop_convert_never_panics_anywhere_in_the_domain(
+            units in -DOMAIN_MAX..=DOMAIN_MAX,
+            rate_units in 1..=DOMAIN_MAX,
+        ) {
+            let rate = Rate::<USD, IDR>::try_from_units(rate_units).unwrap();
+            for mode in Rounding::ALL {
+                match usd(units).convert(rate, *mode) {
+                    Ok(out) => prop_assert!(in_domain(out.units()), "{mode:?}"),
+                    Err(e) => prop_assert_eq!(
+                        e,
+                        RateError::ConversionOverflow {
+                            from: Iso4217::USD,
+                            to: Iso4217::IDR,
+                        },
+                        "{:?}", mode
+                    ),
+                }
+            }
+        }
+
+        /// An amount and rate large enough to leave the domain must be refused, not wrapped.
+        ///
+        /// The `Err` branch, asserted deliberately rather than reached by accident.
+        #[test]
+        fn prop_convert_refuses_results_that_leave_the_domain(
+            units in (DOMAIN_MAX / 1_000)..=DOMAIN_MAX,
+            rate_units in (DOMAIN_MAX / 1_000)..=DOMAIN_MAX,
+        ) {
+            let rate = Rate::<USD, IDR>::try_from_units(rate_units).unwrap();
+            for mode in Rounding::ALL {
+                prop_assert_eq!(
+                    usd(units).convert(rate, *mode),
+                    Err(RateError::ConversionOverflow {
+                        from: Iso4217::USD,
+                        to: Iso4217::IDR,
+                    }),
+                    "{:?}", mode
+                );
+            }
+        }
+
+        /// A rate of exactly 1.0 preserves the units and changes only the currency.
+        ///
+        /// This pins the scale handling on its own. An off-by-one-order divisor — dividing by
+        /// `10^17` or `10^19` — still produces plausible money for most inputs and would survive
+        /// an example test; this property rejects either error immediately.
+        #[test]
+        fn prop_a_unit_rate_moves_the_currency_and_nothing_else(
+            units in -DOMAIN_MAX..=DOMAIN_MAX,
+        ) {
+            let one = Rate::<USD, IDR>::try_from_units(POW10_SCALE).unwrap();
+            for mode in Rounding::ALL {
+                let out = usd(units).convert(one, *mode).unwrap();
+                prop_assert_eq!(out.units(), units, "{:?}", mode);
+                prop_assert_eq!(out.code(), Iso4217::IDR);
+            }
+        }
+
+        /// A whole-number rate is exact, and every mode must agree — checked against an
+        /// independently computed expectation rather than against another code path.
+        ///
+        /// The oracle is plain `i128` multiplication, independent of the conversion path.
+        #[test]
+        fn prop_a_whole_number_rate_is_exact_under_every_mode(
+            units in -IN_DOMAIN_OPERAND..=IN_DOMAIN_OPERAND,
+            rate_major in 1i128..=1_000_000_000,
+        ) {
+            let rate = Rate::<USD, IDR>::try_from_units(
+                rate_major.checked_mul(POW10_SCALE).unwrap()).unwrap();
+            let expected = units.checked_mul(rate_major).unwrap();
+            for mode in Rounding::ALL {
+                let out = usd(units).convert(rate, *mode).unwrap();
+                prop_assert_eq!(out.units(), expected, "{:?}", mode);
+            }
+        }
+
+        /// The same, through a bridge: two whole-number rates leave nothing to round, so the
+        /// two-leg result must equal the plain product under every mode.
+        #[test]
+        fn prop_whole_number_rates_are_exact_through_a_bridge(
+            units in -IN_DOMAIN_OPERAND_VIA..=IN_DOMAIN_OPERAND_VIA,
+            first_major in 1i128..=1_000,
+            second_major in 1i128..=1_000,
+        ) {
+            let first = Rate::<USD, EUR>::try_from_units(
+                first_major.checked_mul(POW10_SCALE).unwrap()).unwrap();
+            let second = Rate::<EUR, IDR>::try_from_units(
+                second_major.checked_mul(POW10_SCALE).unwrap()).unwrap();
+            let expected = units
+                .checked_mul(first_major).unwrap()
+                .checked_mul(second_major).unwrap();
+            for mode in Rounding::ALL {
+                let out = usd(units).convert_via(first, second, *mode).unwrap();
+                prop_assert_eq!(out.units(), expected, "{:?}", mode);
+            }
+        }
+
+        /// When rounding **cannot** differ, `convert_via` and two sequential conversions must
+        /// agree exactly.
+        ///
+        /// Whole-number rates make the intermediate exact, so there is no remainder for the
+        /// materialised balance to lose. That isolates the claim: `convert_via` differs from
+        /// sequential conversion ONLY by where it rounds, never by what it computes. The
+        /// companion unit test shows the other side — where rounding does differ, sequential
+        /// destroys the money outright.
+        #[test]
+        fn prop_convert_via_matches_sequential_when_the_intermediate_is_exact(
+            major in -1_000_000_000i128..=1_000_000_000,
+            first_major in 1i128..=1_000,
+            second_major in 1i128..=1_000,
+        ) {
+            let money = usd(major.checked_mul(POW10_SCALE).unwrap());
+            let first = Rate::<USD, EUR>::try_from_units(
+                first_major.checked_mul(POW10_SCALE).unwrap()).unwrap();
+            let second = Rate::<EUR, IDR>::try_from_units(
+                second_major.checked_mul(POW10_SCALE).unwrap()).unwrap();
+
+            for mode in Rounding::ALL {
+                let sequential = money
+                    .convert(first, *mode)
+                    .and_then(|mid| mid.convert(second, *mode))
+                    .unwrap();
+                let via = money.convert_via(first, second, *mode).unwrap();
+                prop_assert_eq!(sequential, via, "{:?}", mode);
+            }
+        }
+    }
+
+    /// Significant decimal digits available to a rate of a given magnitude.
+    fn significant_digits(units: i128) -> u32 {
+        units.unsigned_abs().checked_ilog10().map_or(0, |d| d.saturating_add(1))
+    }
+
+    /// Significant-digit headroom per decade.
     #[test]
-    fn rate_construction_enforces_the_same_magnitude_bound_as_money() {
-        assert!(Rate::<USD, IDR>::try_from_units(DOMAIN_MAX).is_ok());
-        assert!(Rate::<USD, IDR>::try_from_units(DOMAIN_MAX + 1).is_err());
-        assert!(Rate::<USD, IDR>::try_from_units(i128::MIN).is_err(), "i128::MIN must not sneak in");
-        // The upper bound is shared with `Money`; the lower bound is not, and this is the pair
-        // that says so.
-        assert!(Money::<USD>::try_from_units(-DOMAIN_MAX).is_ok(), "money is signed");
-        assert!(Rate::<USD, IDR>::try_from_units(-DOMAIN_MAX).is_err(), "a rate is not");
+    fn the_significant_digits_available_at_each_magnitude() {
+        // (rate magnitude as a power of ten, units behind it, significant digits)
+        let rows: &[(i32, i128, u32)] = &[
+            (0, POW10_SCALE, 19), // 1.0
+            (-3, 1_000_000_000_000_000, 16),
+            (-6, 1_000_000_000_000, 13),
+            (-9, 1_000_000_000, 10),
+            (-13, 100_000, 6), // the case the contract named
+            (-15, 1_000, 4),
+            (-17, 10, 2),
+            (-18, 1, 1), // one unit: the floor
+        ];
+        for &(exponent, units, expected) in rows {
+            assert_eq!(significant_digits(units), expected, "rate 1e{exponent} has {units} units");
+            assert!(Rate::<USD, IDR>::try_from_units(units).is_ok(), "1e{exponent} must be representable");
+        }
+    }
+
+    /// **The contract's number was right.** A rate of `1e-13` holds six digits, so the seventh is
+    /// not merely imprecise — it does not exist, and `try_from_units` cannot round to it.
+    #[test]
+    fn a_rate_near_1e_minus_13_carries_six_significant_digits() {
+        let rate = 100_000i128; // 1e-13 at scale 18
+        assert_eq!(significant_digits(rate), 6);
+
+        // The next representable value up is one part in 100_000 away: ~1e-5 relative resolution.
+        let next = rate + 1;
+        assert_eq!(significant_digits(next), 6);
+        let relative_step = 1.0f64 / (rate as f64);
+        assert!(
+            (relative_step - 1e-5).abs() < 1e-9,
+            "resolution at 1e-13 is {relative_step}, expected ~1e-5"
+        );
+    }
+
+    /// The floor: one unit is a usable rate, and it converts without collapsing to zero — but the
+    /// money must be large enough to survive it. This is the honest limit.
+    #[test]
+    fn the_smallest_representable_rate_still_converts() {
+        let smallest = Rate::<USD, IDR>::try_from_units(1).expect("1e-18 is in domain");
+
+        // A big enough amount survives: 1e18 units * 1e-18 = 1 unit.
+        let big = Money::<USD>::try_from_units(POW10_SCALE).expect("in domain");
+        let out = big.convert(smallest, Rounding::TowardZero).expect("stays in domain");
+        assert_eq!(out.units(), 1, "1.0 USD at 1e-18 is one IDR unit");
+
+        // Anything smaller rounds to nothing — named, not hidden.
+        let small = Money::<USD>::try_from_units(POW10_SCALE - 1).expect("in domain");
+        let gone = small.convert(smallest, Rounding::TowardZero).expect("stays in domain");
+        assert_eq!(
+            gone.units(),
+            0,
+            "below 1.0 USD, a 1e-18 rate rounds to zero — the rate has no digits left to carry it"
+        );
+    }
+
+    /// A realistic hyperinflation counter-direction, end to end. The forward rate is huge and the
+    /// reverse is tiny, and both must be storable because there is no `inverse()`.
+    #[test]
+    fn both_directions_of_a_hyperinflation_pair_are_representable() {
+        // Forward: 1 USD = 3,000,000 IDR-like units.
+        let forward = Rate::<USD, IDR>::try_from_units(3_000_000 * POW10_SCALE).expect("in domain");
+        // Reverse: 1/3e6 = 3.3333...e-7, which at scale 18 is 333_333_333_333 units.
+        let reverse = Rate::<IDR, USD>::try_from_units(333_333_333_333).expect("in domain");
+
+        assert_eq!(significant_digits(reverse.units()), 12, "12 digits survive");
+
+        // A round trip loses at most the truncation, and it is bounded rather than silent.
+        let start = Money::<USD>::try_from_major(1).expect("in domain");
+        let there = start.convert(forward, Rounding::TowardZero).expect("in domain");
+        let back = there.convert(reverse, Rounding::TowardZero).expect("in domain");
+
+        let drift = (start.units() - back.units()).abs();
+        assert!(
+            drift < POW10_SCALE / 1_000_000,
+            "round-trip drift {drift} units must stay below 1e-6 of a major unit"
+        );
     }
 }
