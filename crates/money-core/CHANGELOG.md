@@ -4,6 +4,43 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-08-14
+
+### Removed
+
+Every compatibility path deprecated in 0.1.0 with the note `removed in 0.2.0`.
+All were `#[doc(hidden)]`, and each replacement below is the one its
+deprecation note named.
+
+- Module aliases: `allocate` and `arith` (use `advanced::arithmetic`, or
+  `allocation`), `currency` (use root `StaticCurrency`), `domain` (use
+  `advanced::domain`), `error` (use `errors`), `money` (use root `Money`),
+  `rate` (use root `Rate`), `residue` (use root `Division` and `Residue`, or
+  `advanced::residue`), `rounding` (use root `Rounding`), `stable_hash` (use
+  `advanced::stable_hash`).
+- Empty placeholder modules `pg` and `sqlx_pg` (use `adapters::postgres` and
+  `adapters::sqlx`).
+- Root re-exports `DOMAIN_MAX`, `POW10_SCALE` and `SCALE` (use
+  `advanced::domain`); `AllocationError`, `AmountError`, `LocaleError`,
+  `ParseMoneyError`, `RateError` and `WireError` (use `errors`); and
+  `UntaggedDivision` (use `advanced::residue`).
+
+The crate root keeps `StaticCurrency`, `MoneyError`, `Iso4217`, `Money`,
+`Rate`, `Division`, `Residue`, `Rounding` and `money!`. `MoneyError` is the
+umbrella error and stays at the root; the narrow per-operation errors live in
+`errors`.
+
+`tests/ui/removed_compat_paths.rs` compiles as a downstream crate and asserts
+these names no longer resolve, so the removal is a contract rather than an
+absence.
+
+### Changed
+
+- `money!` can now be imported: `use kamu_money_core::money;`. In 0.1.4 that
+  name was also the deprecated `money` module, so importing it inherited a
+  deprecation warning and the macro had to be reached by path. Removing the
+  module resolves it, and the macro's documentation drops the workaround.
+
 ## [0.1.4] — 2026-08-14
 
 ### Added

@@ -5,7 +5,8 @@
 //! text form, whose pinned input function proves the tag before accepting it.
 
 use super::{kmoney_mixed, raise, validated_or_error};
-use kamu_money_core::{ParseMoneyError, text};
+use kamu_money_core::errors::ParseMoneyError;
+use kamu_money_core::text;
 use pgrx::prelude::*;
 
 #[pg_extern(immutable, parallel_safe, requires = ["money_shell_types"])]
@@ -164,7 +165,7 @@ mod tests {
         error = "kmoney_mixed: stored USD amount with 1000000000000000000000000000000000000 units is outside the domain |units| <= 10^36 - 1"
     )]
     fn the_conversion_out_of_mixed_refuses_corrupt_units() {
-        let corrupt = kmoney_mixed::new(kamu_money_core::DOMAIN_MAX + 1, 840);
+        let corrupt = kmoney_mixed::new(kamu_money_core::advanced::domain::DOMAIN_MAX + 1, 840);
         let _ = super::kmoney_mixed_out(corrupt);
     }
 }

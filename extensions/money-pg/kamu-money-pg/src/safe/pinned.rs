@@ -12,7 +12,8 @@
 //! trust.
 
 use kamu_money_core::advanced::arithmetic::UnitSum;
-use kamu_money_core::{Money, ParseMoneyError, StaticCurrency, text};
+use kamu_money_core::errors::ParseMoneyError;
+use kamu_money_core::{Money, StaticCurrency, text};
 
 use super::payload::{PinnedPayload, validate_pinned};
 use super::raise;
