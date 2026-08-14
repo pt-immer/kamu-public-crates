@@ -5,8 +5,8 @@
 //! rather than merely done.
 
 use core::num::NonZeroU32;
+use kamu_money_core::SplitParts;
 use kamu_money_core::advanced::{arithmetic, domain, stable_hash};
-use kamu_money_core::allocation::SplitParts;
 use kamu_money_core::errors::AmountError;
 use kamu_money_core::iso::USD;
 use kamu_money_core::{Money, StaticCurrency};

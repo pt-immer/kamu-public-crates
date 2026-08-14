@@ -71,3 +71,60 @@ pub fn allocate_units(units: i128, weights: &[u32]) -> Result<Vec<i128>, Allocat
 
     Ok(parts)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::domain::DOMAIN_MAX;
+    use crate::errors::{AllocationError, AmountError};
+
+    /// The raw allocator reports both invalid weights and invalid amounts.
+    #[test]
+    fn the_runtime_allocator_refuses_bad_weights_without_panicking() {
+        use crate::arithmetic::allocate_units;
+
+        assert_eq!(allocate_units(1, &[]), Err(AllocationError::InvalidWeights { weights: 0 }));
+        assert_eq!(allocate_units(1, &[0, 0]), Err(AllocationError::InvalidWeights { weights: 2 }));
+        // The out-of-domain arm remains distinguishable.
+        assert_eq!(
+            allocate_units(DOMAIN_MAX + 1, &[1, 1]),
+            Err(AllocationError::Amount(AmountError::out_of_domain(DOMAIN_MAX + 1)))
+        );
+        // A single non-zero weight among zeros is allocatable, so the check is "all zero", not "any zero".
+        assert_eq!(allocate_units(10, &[0, 1, 0]).unwrap(), vec![0, 10, 0]);
+    }
+    /// Zero-weight recipients must receive nothing, including truncation remainders. Conservation
+    /// alone cannot distinguish `[1, 0, 0]` from `[0, 1, 0]`, so assert the distribution directly.
+    #[test]
+    fn the_allocator_never_pays_a_zero_weight_recipient() {
+        use crate::arithmetic::allocate_units;
+
+        // The odd unit belongs to the first positive-weight slot.
+        assert_eq!(allocate_units(1, &[0, 1, 1]).unwrap(), vec![0, 1, 0]);
+        assert_eq!(allocate_units(-1, &[0, 1, 1]).unwrap(), vec![0, -1, 0]);
+        // Interleaved zeros are skipped too: 7 over weights (3, 3) leaves a 1-unit remainder that
+        // must reach the first positive slot (index 1), never the zero at index 0.
+        assert_eq!(allocate_units(7, &[0, 3, 0, 3, 0]).unwrap(), vec![0, 4, 0, 3, 0]);
+
+        // The general property, swept: every zero-weight index gets exactly 0, and the total is
+        // still conserved, for positive and negative amounts across several zero patterns.
+        for units in [1_i128, 7, 100, 999_999, -1, -7, -100, DOMAIN_MAX] {
+            for weights in
+                [&[0u32, 1, 1][..], &[1, 0, 1], &[1, 1, 0], &[0, 3, 0, 3, 0], &[0, 0, 1], &[7, 0, 0, 2, 0, 1]]
+            {
+                let parts = allocate_units(units, weights).unwrap();
+                for (i, &w) in weights.iter().enumerate() {
+                    assert!(
+                        w != 0 || parts[i] == 0,
+                        "units={units} weights={weights:?}: paid {} to the zero-weight slot at {i}",
+                        parts[i]
+                    );
+                }
+                assert_eq!(
+                    parts.iter().sum::<i128>(),
+                    units,
+                    "units={units} weights={weights:?}: not conserved"
+                );
+            }
+        }
+    }
+}

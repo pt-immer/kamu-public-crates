@@ -43,6 +43,7 @@
     clippy::missing_const_for_fn,
     clippy::use_self
 )]
+mod allocation;
 mod arithmetic;
 mod currency;
 mod domain;
@@ -58,7 +59,6 @@ mod stable_hash;
 
 pub mod adapters;
 pub mod advanced;
-pub mod allocation;
 pub mod errors;
 pub mod iso;
 pub mod locale;
@@ -67,6 +67,7 @@ pub mod text;
 #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 pub mod wire;
 
+pub use allocation::SplitParts;
 pub use currency::StaticCurrency;
 pub use errors::MoneyError;
 pub use iso::Iso4217;
