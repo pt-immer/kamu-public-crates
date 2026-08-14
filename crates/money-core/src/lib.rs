@@ -43,31 +43,18 @@
     clippy::missing_const_for_fn,
     clippy::use_self
 )]
-#[path = "allocate.rs"]
-mod allocate_impl;
-#[path = "arith.rs"]
-mod arith_impl;
-#[path = "currency.rs"]
-mod currency_impl;
-#[path = "domain.rs"]
-mod domain_impl;
-#[path = "error.rs"]
-mod error_impl;
-#[path = "macros.rs"]
-mod macros_impl;
-#[path = "money.rs"]
-mod money_impl;
-#[path = "rate.rs"]
-mod rate_impl;
-#[path = "residue.rs"]
-mod residue_impl;
-#[path = "rounding.rs"]
-mod rounding_impl;
+mod arithmetic;
+mod currency;
+mod domain;
+mod macros;
+mod money;
+mod rate;
+mod residue;
+mod rounding;
 mod sealed {
     pub trait Sealed {}
 }
-#[path = "stable_hash.rs"]
-mod stable_hash_impl;
+mod stable_hash;
 
 pub mod adapters;
 pub mod advanced;
@@ -80,10 +67,10 @@ pub mod text;
 #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 pub mod wire;
 
-pub use currency_impl::StaticCurrency;
-pub use error_impl::MoneyError;
+pub use currency::StaticCurrency;
+pub use errors::MoneyError;
 pub use iso::Iso4217;
-pub use money_impl::Money;
-pub use rate_impl::Rate;
-pub use residue_impl::{Division, Residue};
-pub use rounding_impl::Rounding;
+pub use money::Money;
+pub use rate::Rate;
+pub use residue::{Division, Residue};
+pub use rounding::Rounding;

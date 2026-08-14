@@ -2,9 +2,9 @@
 
 use crate::Money;
 use crate::StaticCurrency;
-use crate::domain_impl::{POW10_SCALE, in_domain};
-use crate::error_impl::{AmountError, RateError};
-use crate::rounding_impl::{Rounding, div_round_i256};
+use crate::domain::{POW10_SCALE, in_domain};
+use crate::errors::{AmountError, RateError};
+use crate::rounding::{Rounding, div_round_i256};
 use core::marker::PhantomData;
 use ethnum::I256;
 
@@ -183,10 +183,10 @@ impl<C: StaticCurrency> Money<C> {
 mod tests {
     use crate::Money;
     use crate::Rate;
-    use crate::domain_impl::{DOMAIN_MAX, POW10_SCALE};
-    use crate::error_impl::{AmountError, RateError};
+    use crate::domain::{DOMAIN_MAX, POW10_SCALE};
+    use crate::errors::{AmountError, RateError};
     use crate::iso::{EUR, IDR, Iso4217, USD};
-    use crate::rounding_impl::Rounding;
+    use crate::rounding::Rounding;
     use ethnum::I256;
 
     /// `major` whole currency units, as a rate.

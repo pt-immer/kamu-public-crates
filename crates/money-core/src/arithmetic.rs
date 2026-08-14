@@ -2,9 +2,9 @@
 
 use crate::Money;
 use crate::StaticCurrency;
-use crate::error_impl::AmountError;
-use crate::residue_impl::{Division, UntaggedDivision};
-use crate::rounding_impl::{Rounding, div_round_i256};
+use crate::errors::{AllocationError, AmountError};
+use crate::residue::{Division, UntaggedDivision};
+use crate::rounding::{Rounding, div_round_i256};
 use core::num::NonZeroU32;
 use core::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 use ethnum::I256;
@@ -150,12 +150,12 @@ impl<C: StaticCurrency> Money<C> {
 pub const fn add_units(a: i128, b: i128) -> Option<i128> {
     // Raw callers do not carry Money's invariant. Check operands as well as the result so
     // out-of-domain values cannot cancel into a valid-looking amount.
-    if !crate::domain_impl::in_domain(a) || !crate::domain_impl::in_domain(b) {
+    if !crate::domain::in_domain(a) || !crate::domain::in_domain(b) {
         return None;
     }
     match a.checked_add(b) {
         Some(v) => {
-            if crate::domain_impl::in_domain(v) {
+            if crate::domain::in_domain(v) {
                 Some(v)
             } else {
                 None
@@ -173,12 +173,12 @@ pub const fn add_units(a: i128, b: i128) -> Option<i128> {
 pub const fn sub_units(a: i128, b: i128) -> Option<i128> {
     // Operands enforced, not assumed — see `add_units`. Without this,
     // `sub_units(i128::MAX, i128::MAX)` returns `Some(0)`.
-    if !crate::domain_impl::in_domain(a) || !crate::domain_impl::in_domain(b) {
+    if !crate::domain::in_domain(a) || !crate::domain::in_domain(b) {
         return None;
     }
     match a.checked_sub(b) {
         Some(v) => {
-            if crate::domain_impl::in_domain(v) {
+            if crate::domain::in_domain(v) {
                 Some(v)
             } else {
                 None
@@ -250,7 +250,7 @@ impl UnitSum {
     /// each term is below 1e36 and `I256::MAX` is ~5.7e76, so that needs ~5.7e40 in-domain terms
     /// — but reachable for one that arrived through [`Self::from_le_bytes`].
     pub fn add_units(self, units: i128) -> Result<Self, AmountError> {
-        if !crate::domain_impl::in_domain(units) {
+        if !crate::domain::in_domain(units) {
             return Err(AmountError::out_of_domain(units));
         }
         match self.0.checked_add(I256::from(units)) {
@@ -290,7 +290,7 @@ impl UnitSum {
         let Ok(attempted) = i128::try_from(self.0) else {
             return Err(AmountError::wide_out_of_domain(self.to_le_bytes()));
         };
-        if crate::domain_impl::in_domain(attempted) {
+        if crate::domain::in_domain(attempted) {
             Ok(attempted)
         } else {
             Err(AmountError::out_of_domain(attempted))
@@ -396,7 +396,7 @@ impl<C: StaticCurrency> Money<C> {
 /// Panics only if the rounding kernel returns a quotient larger than the dividend or a
 /// residue at least as large as the divisor.
 pub fn div_int_units(units: i128, n: NonZeroU32, mode: Rounding) -> Result<UntaggedDivision, AmountError> {
-    if !crate::domain_impl::in_domain(units) {
+    if !crate::domain::in_domain(units) {
         return Err(AmountError::out_of_domain(units));
     }
     let (q, r) = div_round_i256(I256::from(units), I256::from(i128::from(n.get())), mode);
@@ -409,9 +409,9 @@ pub fn div_int_units(units: i128, n: NonZeroU32, mode: Rounding) -> Result<Untag
 #[cfg(test)]
 mod tests {
     use crate::Money;
-    use crate::arith_impl::{UnitSum, sum_units};
-    use crate::domain_impl::DOMAIN_MAX;
-    use crate::error_impl::AmountError;
+    use crate::arithmetic::{UnitSum, sum_units};
+    use crate::domain::DOMAIN_MAX;
+    use crate::errors::AmountError;
     use crate::iso::USD;
     use ethnum::I256;
 
@@ -723,7 +723,7 @@ mod tests {
         }
     }
 
-    use crate::rounding_impl::Rounding;
+    use crate::rounding::Rounding;
     use core::num::NonZeroU32;
 
     #[test]
@@ -753,4 +753,72 @@ mod tests {
             m(DOMAIN_MAX).div_int(NonZeroU32::new(7).unwrap(), Rounding::TowardZero).take_residue();
         assert_eq!(share.units() * 7 + res.take_units(), DOMAIN_MAX);
     }
+}
+
+/// Distribute `units` across `weights`, conserving the total exactly.
+///
+/// The non-generic core of [`Money::allocate`], for callers that only learn the currency at
+/// run time. The currency is irrelevant to the arithmetic: this
+/// conserves at the canonical scale, which is the only scale money has here.
+///
+/// A **zero weight** is allowed and receives **exactly zero** — including none of the truncation
+/// remainder. A weight of zero is "this recipient has no claim"; handing it a rounding unit
+/// would conserve the total while paying the wrong party, which conservation tests cannot see.
+/// The remainder is distributed only among positive-weight positions.
+///
+/// # Errors
+/// Returns [`AllocationError::Amount`] when `units` is outside the money domain, or
+/// [`AllocationError::InvalidWeights`] when `weights` is empty or all zero.
+///
+/// # Panics
+/// Panics only if an internal remainder or domain invariant is broken.
+pub fn allocate_units(units: i128, weights: &[u32]) -> Result<Vec<i128>, AllocationError> {
+    if !crate::domain::in_domain(units) {
+        return Err(AmountError::out_of_domain(units).into());
+    }
+    let total_w: i128 = weights.iter().map(|&w| i128::from(w)).sum();
+    if weights.is_empty() || total_w == 0 {
+        return Err(AllocationError::InvalidWeights { weights: weights.len() });
+    }
+
+    let mut parts: Vec<i128> = Vec::with_capacity(weights.len());
+    let mut remainder = units;
+
+    for &w in weights {
+        // The product can reach ~4.3e45, beyond i128 but far below I256::MAX.
+        let num = I256::from(units)
+            .checked_mul(I256::from(i128::from(w)))
+            .expect("|units * w| <= 4.3e45, ~31 orders of magnitude below I256::MAX");
+
+        // State truncation explicitly. The returned remainder is denominator-relative,
+        // while the canonical-unit shortfall is tracked below.
+        let (share, _) = div_round_i256(num, I256::from(total_w), Rounding::TowardZero);
+        let share = i128::try_from(share).expect("|share| <= |units| <= DOMAIN_MAX");
+        parts.push(share);
+
+        // Every share carries the sign of `units` and the partial sum grows monotonically
+        // toward it, so `remainder` only ever shrinks: |remainder| <= |units| <= DOMAIN_MAX.
+        remainder = remainder
+            .checked_sub(share)
+            .expect("|remainder| <= |units| <= DOMAIN_MAX, ~170x below i128::MAX");
+    }
+
+    // Each positive share loses less than one unit; zero-weight shares lose none. Therefore the
+    // remainder is smaller than the number of positive weights.
+    let step = remainder.signum();
+    let bump = usize::try_from(remainder.unsigned_abs())
+        .expect("|remainder| < count of positive weights, which is a usize");
+    let positive = weights.iter().filter(|&&w| w != 0).count();
+    assert!(
+        bump < positive,
+        "allocate: {bump} leftover units for {positive} positive-weight parts — conservation is \
+         no longer provable",
+    );
+
+    // Only positive-weight positions have a claim on the remainder.
+    parts.iter_mut().zip(weights).filter(|&(_, &w)| w != 0).take(bump).for_each(|(part, _)| {
+        *part = part.checked_add(step).expect("|part| <= |units| <= DOMAIN_MAX, ~170x below i128::MAX");
+    });
+
+    Ok(parts)
 }

@@ -6,7 +6,7 @@ error[E0277]: cannot add `Money<kamu_money_core::iso::IDR>` to `Money<kamu_money
    |
    = help: the trait `Add<Money<kamu_money_core::iso::IDR>>` is not implemented for `Money<kamu_money_core::iso::USD>`
 help: `Money<C>` implements trait `Add<Rhs>`
-  --> src/arith.rs
+  --> src/arithmetic.rs
    |
    | impl<C: StaticCurrency> Add for Money<C> {
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Add`

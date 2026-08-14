@@ -64,7 +64,7 @@ pub const fn fold_to_i32(hash: u64) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{fold_to_i32, stable_hash};
-    use crate::domain_impl::DOMAIN_MAX;
+    use crate::domain::DOMAIN_MAX;
     use std::collections::BTreeSet;
 
     /// Golden vectors computed independently from the documented algorithm.

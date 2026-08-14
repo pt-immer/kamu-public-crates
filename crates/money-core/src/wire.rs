@@ -44,7 +44,7 @@
 use crate::Money;
 use crate::Rate;
 use crate::StaticCurrency;
-use crate::error_impl::{RateError, WireError};
+use crate::errors::{RateError, WireError};
 use crate::iso::Iso4217;
 use crate::text::{parse_amount, parse_rate_amount, render_amount, render_rate};
 use core::fmt;

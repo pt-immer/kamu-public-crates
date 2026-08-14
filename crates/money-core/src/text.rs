@@ -30,8 +30,8 @@
 use crate::Money;
 use crate::Rate;
 use crate::StaticCurrency;
-use crate::domain_impl::{POW10_SCALE, SCALE, in_domain};
-use crate::error_impl::{AmountError, ParseMoneyError, RateError};
+use crate::domain::{POW10_SCALE, SCALE, in_domain};
+use crate::errors::{AmountError, ParseMoneyError, RateError};
 use crate::iso::Iso4217;
 use core::fmt;
 use core::str::FromStr;
@@ -708,7 +708,7 @@ mod tests {
 
     #[test]
     fn display_and_parse_agree_on_the_domain_edges() {
-        for units in [crate::domain_impl::DOMAIN_MAX, -crate::domain_impl::DOMAIN_MAX, 0, 1, -1] {
+        for units in [crate::domain::DOMAIN_MAX, -crate::domain::DOMAIN_MAX, 0, 1, -1] {
             let m = Money::<IDR>::try_from_units(units).unwrap();
             assert_eq!(Money::<IDR>::from_str(&m.to_string()).unwrap(), m, "{units}");
         }

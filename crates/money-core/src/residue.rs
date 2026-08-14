@@ -12,7 +12,7 @@
 
 use crate::Money;
 use crate::StaticCurrency;
-use crate::error_impl::AmountError;
+use crate::errors::AmountError;
 use crate::iso::Iso4217;
 use core::marker::PhantomData;
 
@@ -117,7 +117,7 @@ impl<C: StaticCurrency> Residue<C> {
     ///
     /// Returns [`AmountError`] outside the fixed money domain.
     pub const fn try_from_units(units: i128) -> Result<Self, AmountError> {
-        if crate::domain_impl::in_domain(units) {
+        if crate::domain::in_domain(units) {
             Ok(Self::from_units_unchecked(units))
         } else {
             Err(AmountError::out_of_domain(units))

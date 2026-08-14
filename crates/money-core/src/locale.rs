@@ -34,7 +34,7 @@
 
 use crate::Money;
 use crate::StaticCurrency;
-use crate::error_impl::{AmountError, LocaleError};
+use crate::errors::{AmountError, LocaleError};
 use crate::iso::Iso4217;
 use crate::text::fixed_point_parts;
 
@@ -82,7 +82,7 @@ impl FractionDigits {
     }
 }
 
-const _: () = assert!(crate::domain_impl::SCALE == 18);
+const _: () = assert!(crate::domain::SCALE == 18);
 
 /// How one locale shows one currency.
 ///
@@ -262,7 +262,7 @@ impl<'a> LocalePolicy<'a> {
         if currency != self.currency {
             return Err(LocaleError::WrongCurrency { expected: self.currency, found: currency });
         }
-        if !crate::domain_impl::in_domain(units) {
+        if !crate::domain::in_domain(units) {
             return Err(AmountError::out_of_domain(units).into());
         }
 

@@ -7,6 +7,10 @@
 //! One case rather than several, because the committed `.stderr` then also pins that each name
 //! fails for its own reason — a module that no longer exists resolves differently from a root
 //! re-export that no longer exists.
+//!
+//! `currency`, `domain` and `money` fail as `E0603` private rather than `E0432` absent: the
+//! crate's own modules carry those names. The refusal is the same, and making one of them `pub`
+//! would compile this file and fail the suite.
 
 use kamu_money_core::currency::StaticCurrency;
 use kamu_money_core::domain::SCALE;
