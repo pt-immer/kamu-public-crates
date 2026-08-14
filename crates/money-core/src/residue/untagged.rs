@@ -35,3 +35,23 @@ impl UntaggedDivision {
         self.residue
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::Rounding;
+    use crate::arithmetic::div_int_units;
+    use core::num::NonZeroU32;
+
+    #[test]
+    fn untagged_division_exposes_the_same_two_decisions_for_adapters() {
+        let three = NonZeroU32::new(3).unwrap();
+
+        let division = div_int_units(10, three, Rounding::TowardZero).unwrap();
+        assert_eq!(division.residue_units(), 1);
+        assert_eq!(format!("{division:?}"), "UntaggedDivision { quotient: 3, residue: 1 }");
+        assert_eq!(division.take_residue(), (3, 1));
+
+        let quotient = div_int_units(10, three, Rounding::TowardZero).unwrap().discard_deliberately();
+        assert_eq!(quotient, 3);
+    }
+}

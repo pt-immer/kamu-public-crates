@@ -82,10 +82,15 @@ impl<C: StaticCurrency> Neg for &Money<C> {
 }
 
 #[cfg(test)]
+// This module's subject IS the operator surface, so `+` and `-` on `Money` are the thing under
+// test rather than an unchecked shortcut, and `a + b` is the oracle they are checked against.
+// The strategy halves the domain, so neither can overflow.
+#[allow(clippy::arithmetic_side_effects)]
 mod tests {
     use crate::Money;
     use crate::domain::DOMAIN_MAX;
     use crate::iso::USD;
+    use proptest::prelude::*;
 
     fn m(u: i128) -> Money<USD> {
         Money::<USD>::try_from_units(u).unwrap()
@@ -117,5 +122,22 @@ mod tests {
         let e = std::panic::catch_unwind(|| m(DOMAIN_MAX) + m(1)).unwrap_err();
         let msg = e.downcast_ref::<String>().map_or("", String::as_str);
         assert!(msg.contains(&(DOMAIN_MAX + 1).to_string()), "must report what was attempted: {msg}");
+    }
+
+    proptest::proptest! {
+    #[test]
+    fn prop_add_never_rounds(a in -DOMAIN_MAX/2..=DOMAIN_MAX/2, b in -DOMAIN_MAX/2..=DOMAIN_MAX/2) {
+        // Halving the range keeps the sum in-domain, so this is total.
+        // The result is the exact integer sum at the fixed scale.
+        let s = Money::<USD>::try_from_units(a).unwrap() + Money::<USD>::try_from_units(b).unwrap();
+        prop_assert_eq!(s.units(), a + b);
+    }
+
+    #[test]
+    fn prop_sub_is_the_inverse_of_add(a in -DOMAIN_MAX/2..=DOMAIN_MAX/2, b in -DOMAIN_MAX/2..=DOMAIN_MAX/2) {
+        let x = Money::<USD>::try_from_units(a).unwrap();
+        let y = Money::<USD>::try_from_units(b).unwrap();
+        prop_assert_eq!((x + y - y).units(), a);
+    }
     }
 }

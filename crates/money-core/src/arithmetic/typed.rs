@@ -132,11 +132,15 @@ impl<C: StaticCurrency> Money<C> {
 }
 
 #[cfg(test)]
+// `q * n + residue` is the conservation oracle, computed independently of the code under test.
+// The quotient is bounded by the dividend and the divisor is a `NonZeroU32`, so it is total.
+#[allow(clippy::arithmetic_side_effects)]
 mod tests {
     use crate::Money;
     use crate::domain::DOMAIN_MAX;
     use crate::errors::AmountError;
     use crate::iso::USD;
+    use proptest::prelude::*;
 
     fn m(u: i128) -> Money<USD> {
         Money::<USD>::try_from_units(u).unwrap()
@@ -220,5 +224,27 @@ mod tests {
         let (share, res) =
             m(DOMAIN_MAX).div_int(NonZeroU32::new(7).unwrap(), Rounding::TowardZero).take_residue();
         assert_eq!(share.units() * 7 + res.take_units(), DOMAIN_MAX);
+    }
+
+    proptest::proptest! {
+    #[test]
+    fn prop_div_int_conserves(u in -DOMAIN_MAX..=DOMAIN_MAX, n in 1u32..=1000, mi in 0usize..Rounding::ALL.len()) {
+        // Derive the range so new rounding modes enter the property automatically.
+        use core::num::NonZeroU32;
+        let mode = Rounding::ALL[mi];
+        let (q, r) = Money::<USD>::try_from_units(u)
+            .unwrap()
+            .div_int(NonZeroU32::new(n).unwrap(), mode)
+            .take_residue();
+        // q*n + residue == u, exactly, for every mode and every input.
+        prop_assert_eq!(q.units() * i128::from(n) + r.take_units(), u);
+    }
+
+    #[test]
+    fn prop_try_sum_equals_fold(v in prop::collection::vec(-1_000_000_000i128..=1_000_000_000, 0..50)) {
+        // The generated total stays within the domain.
+        let ms: Vec<Money<USD>> = v.iter().map(|&u| Money::<USD>::try_from_units(u).unwrap()).collect();
+        prop_assert_eq!(Money::<USD>::try_sum(&ms).unwrap().units(), v.iter().sum::<i128>());
+    }
     }
 }

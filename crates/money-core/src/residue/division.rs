@@ -52,3 +52,43 @@ impl<C: StaticCurrency> core::fmt::Debug for Division<C> {
             .finish()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::iso::USD;
+    use crate::{Money, Rounding};
+    use core::num::NonZeroU32;
+
+    /// `div_int` returns one value, and there is no way to reach the quotient
+    /// without saying what happens to the residue.
+    #[test]
+    fn a_division_cannot_yield_its_quotient_without_a_decision() {
+        let ten = || Money::<USD>::try_from_units(10_000_000_000_000_000_000).unwrap();
+        let three = NonZeroU32::new(3).unwrap();
+
+        // Take the residue and post it.
+        let division = ten().div_int(three, Rounding::TowardZero);
+        assert_eq!(division.residue_units(), 1);
+        assert_eq!(
+            format!("{division:?}"),
+            "Division { currency: \"USD\", quotient: 3333333333333333333, residue: 1 }"
+        );
+        let (share, residue) = division.take_residue();
+        assert_eq!(share.units(), 3_333_333_333_333_333_333);
+        assert_eq!(residue.take_units(), 1, "the lost unit is handed back");
+
+        // Or discard it explicitly.
+        let share = ten().div_int(three, Rounding::TowardZero).discard_deliberately();
+        assert_eq!(share.units(), 3_333_333_333_333_333_333);
+    }
+
+    /// Dropping an undecided `Division` is safe.
+    ///
+    /// No money was handed out because the quotient never escaped.
+    #[test]
+    fn dropping_an_undecided_division_is_silent_because_nothing_escaped() {
+        let m = Money::<USD>::try_from_units(10_000_000_000_000_000_000).unwrap();
+        let _ = m.div_int(NonZeroU32::new(3).unwrap(), Rounding::TowardZero);
+        // Reaching here without a panic is the assertion.
+    }
+}

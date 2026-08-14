@@ -61,3 +61,44 @@ impl<C: StaticCurrency> core::fmt::Debug for Residue<C> {
         f.debug_struct("Residue").field("currency", &C::CODE.alpha3()).field("units", &self.units).finish()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::Residue;
+    use crate::domain::DOMAIN_MAX;
+    use crate::errors::AmountError;
+    use crate::iso::USD;
+
+    #[test]
+    fn residue_constructor_enforces_the_amount_domain() {
+        let residue = Residue::<USD>::try_from_units(7).unwrap();
+        assert_eq!(residue.units(), 7);
+        assert_eq!(residue.code().alpha3(), "USD");
+        assert_eq!(format!("{residue:?}"), "Residue { currency: \"USD\", units: 7 }");
+
+        assert_eq!(
+            Residue::<USD>::try_from_units(DOMAIN_MAX + 1).unwrap_err(),
+            AmountError::out_of_domain(DOMAIN_MAX + 1)
+        );
+        assert_eq!(
+            Residue::<USD>::try_from_units(-DOMAIN_MAX - 1).unwrap_err(),
+            AmountError::out_of_domain(-DOMAIN_MAX - 1)
+        );
+    }
+
+    #[test]
+    fn discard_deliberately_is_silent() {
+        Residue::<USD>::try_from_units(7).unwrap().discard_deliberately();
+    }
+
+    #[test]
+    fn take_units_absorbs() {
+        let r = Residue::<USD>::try_from_units(7).unwrap();
+        assert_eq!(r.take_units(), 7);
+    }
+
+    #[test]
+    fn dropping_a_residue_never_panics() {
+        drop(Residue::<USD>::try_from_units(1).unwrap());
+    }
+}

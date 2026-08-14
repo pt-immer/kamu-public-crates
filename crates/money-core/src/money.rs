@@ -135,6 +135,7 @@ mod tests {
     use super::*;
     use crate::domain::DOMAIN_MAX;
     use crate::iso::{IDR, Iso4217, USD};
+    use proptest::prelude::*;
 
     #[test]
     fn construction_enforces_the_domain() {
@@ -216,5 +217,22 @@ mod tests {
             "major range is 10^(PRECISION-SCALE) - 1, whatever SCALE happens to be"
         );
         assert!(Money::<USD>::try_from_major(0).is_ok());
+    }
+
+    proptest::proptest! {
+    /// Weighted bands exercise accepted and rejected values on every run. Separate example tests
+    /// pin exact boundaries that random sampling is unlikely to hit.
+    #[test]
+    fn prop_constructor_accepts_exactly_the_domain(
+        u in prop_oneof![
+            2 => -DOMAIN_MAX..=DOMAIN_MAX,
+            1 => (DOMAIN_MAX + 1)..=i128::MAX,
+            1 => i128::MIN..=(-DOMAIN_MAX - 1),
+        ],
+    ) {
+        // Use an independent literal range rather than the implementation predicate.
+        let inside = (-DOMAIN_MAX..=DOMAIN_MAX).contains(&u);
+        prop_assert_eq!(Money::<USD>::try_from_units(u).is_ok(), inside);
+    }
     }
 }
