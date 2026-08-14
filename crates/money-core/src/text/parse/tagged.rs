@@ -7,7 +7,7 @@ use crate::iso::Iso4217;
 
 /// Split `"<ISO> <amount>"` into its currency and its still-unparsed amount.
 ///
-/// Separate from [`parse`](crate::text::parse) so that [`Money`](crate::Money)'s `FromStr` can compare the code against `C`
+/// Separate from [`parse`](crate::text::parse()) so that [`Money`](crate::Money)'s `FromStr` can compare the code against `C`
 /// *before* reading the digits. Getting `WrongCurrency` back from `"IDR not-a-number"` is more
 /// use at an API boundary than `InvalidSyntax`, and a single combined parser could not offer
 /// that ordering to one caller and the plain answer to the other.
@@ -24,7 +24,7 @@ pub(crate) fn split_tagged(text: &str) -> Result<(Iso4217, &str), ParseMoneyErro
 /// [`ParseMoneyError::PositiveMagnitudeOverflow`] or
 /// [`ParseMoneyError::NegativeMagnitudeOverflow`] when the signed canonical-unit
 /// value cannot fit `i128`,
-/// and [`ParseMoneyError::Amount`](crate::errors::ParseMoneyError::Amount) outside the money domain.
+/// and [`ParseMoneyError::Amount`] outside the money domain.
 /// `const`, so a literal can be checked where it is written — which is what
 /// [`money!`](crate::money!) is built on. It remains the crate's only parser: a const twin could
 /// accept a literal this one rejects, and nothing would notice until a golden moved.

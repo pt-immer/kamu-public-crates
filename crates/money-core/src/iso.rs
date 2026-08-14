@@ -151,13 +151,14 @@ mod tests {
 
     use core::fmt::Write as _;
 
-    /// FNV-1a 64. Inline so the pin adds no dependency; the input is canonical
-    /// ASCII, so no hasher subtlety applies.
+    /// FNV-1a 64, over the crate's own FNV constants so the pin cannot be measuring a
+    /// different algorithm from the one `stable_hash` persists with. No finaliser: this
+    /// digest is a change detector, not a stored key.
     fn fnv1a64(bytes: &[u8]) -> u64 {
-        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut hash = crate::stable_hash::FNV_OFFSET_BASIS;
         for &b in bytes {
             hash ^= u64::from(b);
-            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            hash = hash.wrapping_mul(crate::stable_hash::FNV_PRIME);
         }
         hash
     }

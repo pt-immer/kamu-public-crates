@@ -84,7 +84,7 @@ impl<C: StaticCurrency> Money<C> {
     /// # Errors
     /// [`AmountError`] if the total is outside the domain.
     ///
-    /// A `Result`, and not a [`Division`](crate::Division)-style product type. Division splits
+    /// A `Result`, and not a [`Division`]-style product type. Division splits
     /// one amount into two parts and bounds its residue by the divisor, so the residue is
     /// always money and can always be handed back. An overflowing sum splits nothing, creates
     /// no obligation, and bounds its excess by nothing: two terms at the domain edge overshoot
@@ -106,7 +106,7 @@ impl<C: StaticCurrency> Money<C> {
 impl<C: StaticCurrency> Money<C> {
     /// Divide by a positive integer, rounding per `mode`.
     ///
-    /// Returns a [`Division`](crate::Division) — the quotient and the residue **bundled**, not a tuple. There
+    /// Returns a [`Division`] — the quotient and the residue **bundled**, not a tuple. There
     /// is no way to reach the money without deciding what happens to the residue:
     /// [`Division::take_residue`] hands you both, [`Division::discard_deliberately`] throws
     /// the residue away by name. The identity `quotient * n + residue == self.units()` holds

@@ -57,10 +57,7 @@ impl<'de, C: StaticCurrency> Deserialize<'de> for Money<C> {
         let raw = MoneyIn::deserialize(d)?;
         // The redundancy is the point: it catches an IDR amount in a USD field.
         if raw.currency != C::CODE {
-            return Err(to_de_error(&WireError::WrongCurrency(CurrencyMismatch {
-                expected: C::CODE,
-                found: raw.currency,
-            })));
+            return Err(to_de_error(&WireError::WrongCurrency(CurrencyMismatch::new(C::CODE, raw.currency))));
         }
         // Parse the amount field directly. Reconstructing a tagged string here
         // allocated and then made the text parser split a tag already checked
@@ -86,16 +83,13 @@ impl<'de, Base: StaticCurrency, Quote: StaticCurrency> Deserialize<'de> for Rate
         }
         let raw = RateIn::deserialize(d)?;
         if raw.base != Base::CODE {
-            return Err(to_de_error(&WireError::WrongCurrency(CurrencyMismatch {
-                expected: Base::CODE,
-                found: raw.base,
-            })));
+            return Err(to_de_error(&WireError::WrongCurrency(CurrencyMismatch::new(Base::CODE, raw.base))));
         }
         if raw.quote != Quote::CODE {
-            return Err(to_de_error(&WireError::WrongCurrency(CurrencyMismatch {
-                expected: Quote::CODE,
-                found: raw.quote,
-            })));
+            return Err(to_de_error(&WireError::WrongCurrency(CurrencyMismatch::new(
+                Quote::CODE,
+                raw.quote,
+            ))));
         }
         rate_from_amount(raw.rate.as_ref()).map_err(|e| to_de_error(&e))
     }
@@ -305,7 +299,7 @@ mod tests {
             prop_assert_eq!(via_structured, m);
         }
 
-        /// Non-positive ingress cases live in `rate_ingress.rs`; this property covers valid values.
+        /// Non-positive ingress cases live in `crate::rate::price`; this property covers valid values.
         #[test]
         fn prop_rate_round_trips_through_both_shapes(units in 1..=DOMAIN_MAX) {
             #[derive(Serialize, Deserialize, PartialEq, Debug)]

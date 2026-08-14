@@ -58,25 +58,25 @@ fn to_de_error<E: de::Error>(e: &impl fmt::Display) -> E {
     E::custom(format_args!("{e}"))
 }
 
-pub(super) fn money_from_units<C: StaticCurrency, E: de::Error>(units: i128) -> Result<Money<C>, E> {
+fn money_from_units<C: StaticCurrency, E: de::Error>(units: i128) -> Result<Money<C>, E> {
     Money::<C>::try_from_units(units).map_err(|error| to_de_error(&error))
 }
 
 // Unlike its `Money` twin above, this cannot synthesise the error: a `Rate` is refused for two
 // different reasons (magnitude, sign) and the deserialiser is a feed ingress, so it forwards
 // whichever one the constructor gave rather than assuming domain overflow.
-pub(super) fn rate_from_units<Base: StaticCurrency, Quote: StaticCurrency, E: de::Error>(
+fn rate_from_units<Base: StaticCurrency, Quote: StaticCurrency, E: de::Error>(
     units: i128,
 ) -> Result<Rate<Base, Quote>, E> {
     Rate::try_from_units(units).map_err(|e| to_de_error(&e))
 }
 
-pub(super) fn money_from_amount<C: StaticCurrency>(amount: &str) -> Result<Money<C>, WireError> {
+fn money_from_amount<C: StaticCurrency>(amount: &str) -> Result<Money<C>, WireError> {
     let units = parse_amount(amount)?;
     Ok(Money::try_from_units(units)?)
 }
 
-pub(super) fn rate_from_amount<Base: StaticCurrency, Quote: StaticCurrency>(
+fn rate_from_amount<Base: StaticCurrency, Quote: StaticCurrency>(
     amount: &str,
 ) -> Result<Rate<Base, Quote>, WireError> {
     let units = parse_rate_amount(amount).map_err(RateError::from)?;
@@ -86,50 +86,36 @@ pub(super) fn rate_from_amount<Base: StaticCurrency, Quote: StaticCurrency>(
 // Both serde modes share these tagged binary helpers. The standards-assigned ISO numeric code
 // remains stable if the generated enum changes order.
 
-pub(super) fn money_to_binary<C: StaticCurrency, S: Serializer>(
-    m: Money<C>,
-    s: S,
-) -> Result<S::Ok, S::Error> {
+fn money_to_binary<C: StaticCurrency, S: Serializer>(m: Money<C>, s: S) -> Result<S::Ok, S::Error> {
     (C::CODE, m.units()).serialize(s)
 }
 
-pub(super) fn money_from_binary<'de, C: StaticCurrency, D: Deserializer<'de>>(
-    d: D,
-) -> Result<Money<C>, D::Error> {
+fn money_from_binary<'de, C: StaticCurrency, D: Deserializer<'de>>(d: D) -> Result<Money<C>, D::Error> {
     let (code, units) = <(Iso4217, i128)>::deserialize(d)?;
     if code != C::CODE {
-        return Err(to_de_error(&WireError::WrongCurrency(CurrencyMismatch {
-            expected: C::CODE,
-            found: code,
-        })));
+        return Err(to_de_error(&WireError::WrongCurrency(CurrencyMismatch::new(C::CODE, code))));
     }
     money_from_units(units)
 }
 
-pub(super) fn rate_to_binary<Base: StaticCurrency, Quote: StaticCurrency, S: Serializer>(
+fn rate_to_binary<Base: StaticCurrency, Quote: StaticCurrency, S: Serializer>(
     r: Rate<Base, Quote>,
     s: S,
 ) -> Result<S::Ok, S::Error> {
     (Base::CODE, Quote::CODE, r.units()).serialize(s)
 }
 
-pub(super) fn rate_from_binary<'de, Base: StaticCurrency, Quote: StaticCurrency, D: Deserializer<'de>>(
+fn rate_from_binary<'de, Base: StaticCurrency, Quote: StaticCurrency, D: Deserializer<'de>>(
     d: D,
 ) -> Result<Rate<Base, Quote>, D::Error> {
     let (base, quote, units) = <(Iso4217, Iso4217, i128)>::deserialize(d)?;
     // Both ends are checked, in declaration order, because a refactor moves a rate's pair far
     // more easily than its magnitude.
     if base != Base::CODE {
-        return Err(to_de_error(&WireError::WrongCurrency(CurrencyMismatch {
-            expected: Base::CODE,
-            found: base,
-        })));
+        return Err(to_de_error(&WireError::WrongCurrency(CurrencyMismatch::new(Base::CODE, base))));
     }
     if quote != Quote::CODE {
-        return Err(to_de_error(&WireError::WrongCurrency(CurrencyMismatch {
-            expected: Quote::CODE,
-            found: quote,
-        })));
+        return Err(to_de_error(&WireError::WrongCurrency(CurrencyMismatch::new(Quote::CODE, quote))));
     }
     rate_from_units(units)
 }

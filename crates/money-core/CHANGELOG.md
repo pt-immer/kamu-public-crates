@@ -12,8 +12,8 @@ Every compatibility path deprecated in 0.1.0 with the note `removed in 0.2.0`.
 All were `#[doc(hidden)]`, and each replacement below is the one its
 deprecation note named.
 
-- Module aliases: `allocate` and `arith` (use `advanced::arithmetic`, or
-  `allocation`), `currency` (use root `StaticCurrency`), `domain` (use
+- Module aliases: `allocate` and `arith` (use `advanced::arithmetic`, or root
+  `SplitParts`), `currency` (use root `StaticCurrency`), `domain` (use
   `advanced::domain`), `error` (use `errors`), `money` (use root `Money`),
   `rate` (use root `Rate`), `residue` (use root `Division` and `Residue`, or
   `advanced::residue`), `rounding` (use root `Rounding`), `stable_hash` (use
@@ -24,18 +24,35 @@ deprecation note named.
   `advanced::domain`); `AllocationError`, `AmountError`, `LocaleError`,
   `ParseMoneyError`, `RateError` and `WireError` (use `errors`); and
   `UntaggedDivision` (use `advanced::residue`).
+- The `allocation` module. Its only public item, `SplitParts`, is now a crate-root
+  re-export: `use kamu_money_core::SplitParts;`.
+- `Copy` and `Clone` on `UntaggedDivision`. Both exits consume it, and neither a
+  copy nor a clone can now release the quotient a second time after the residue
+  has already been posted. `Division<C>` has never had either.
 
 The crate root keeps `StaticCurrency`, `MoneyError`, `Iso4217`, `Money`,
-`Rate`, `Division`, `Residue`, `Rounding` and `money!`. `MoneyError` is the
-umbrella error and stays at the root; the narrow per-operation errors live in
-`errors`.
+`Rate`, `Division`, `Residue`, `Rounding`, `SplitParts` and `money!`.
+`MoneyError` is the umbrella error and stays at the root; the narrow
+per-operation errors live in `errors`.
 
 `tests/ui/removed_compat_paths.rs` compiles as a downstream crate and asserts
 these names no longer resolve, so the removal is a contract rather than an
 absence.
 
+### Added
+
+- `errors::CurrencyMismatch`, the expected/found pair behind every
+  `WrongCurrency` refusal. It is `#[non_exhaustive]`, like every other type in
+  `errors`, and `MoneyError::Currency` absorbs it so the umbrella covers all
+  seven.
+
 ### Changed
 
+- `ParseMoneyError::WrongCurrency`, `LocaleError::WrongCurrency` and
+  `WireError::WrongCurrency` carry one `errors::CurrencyMismatch` instead of
+  their own `expected` and `found` fields. The rendered message is unchanged;
+  `WrongCurrency { expected, found }` in a pattern becomes
+  `WrongCurrency(CurrencyMismatch { expected, found })`.
 - `money!` can now be imported: `use kamu_money_core::money;`. In 0.1.4 that
   name was also the deprecated `money` module, so importing it inherited a
   deprecation warning and the macro had to be reached by path. Removing the

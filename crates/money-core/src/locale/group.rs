@@ -43,7 +43,7 @@ mod tests {
     use crate::locale::EN_USD;
     use crate::locale::LocalePolicy;
 
-    /// Grouping is exercised through the public API in `tests/locale.rs`; these pin the
+    /// Grouping is exercised through the public API in `super::render`; these pin the
     /// degenerate inputs that have no reachable public spelling.
     #[test]
     fn grouping_handles_its_degenerate_inputs() {

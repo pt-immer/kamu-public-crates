@@ -33,10 +33,7 @@ impl LocalePolicy<'_> {
     /// accept — the failure this crate exists to prevent, arriving through its last surface.
     pub fn render_units(&self, units: i128, currency: Iso4217) -> Result<String, LocaleError> {
         if currency != self.currency() {
-            return Err(LocaleError::WrongCurrency(CurrencyMismatch {
-                expected: self.currency(),
-                found: currency,
-            }));
+            return Err(LocaleError::WrongCurrency(CurrencyMismatch::new(self.currency(), currency)));
         }
         if !crate::domain::in_domain(units) {
             return Err(AmountError::out_of_domain(units).into());
@@ -69,14 +66,11 @@ mod tests {
     use crate::errors::CurrencyMismatch;
     use crate::errors::LocaleError;
     use crate::iso::{EUR, IDR, JPY, USD, XAU};
-    use crate::locale::{DE_EUR, EN_USD, FractionDigits, ID_IDR, JA_JPY, LocalePolicy, SymbolPosition};
+    use crate::locale::{
+        DE_EUR, EN_USD, FractionDigits, ID_IDR, JA_JPY, LocalePolicy, SymbolPosition, idr_16000_50,
+    };
     use crate::{Iso4217, Money, text};
     use proptest::prelude::*;
-
-    /// 16 000.50 IDR.
-    fn idr_16000_50() -> Money<IDR> {
-        Money::<IDR>::try_from_units(16_000 * POW10_SCALE + POW10_SCALE / 2).expect("in domain")
-    }
 
     /// **The headline property.** Applying a policy does not move the canonical form.
     ///
@@ -160,7 +154,7 @@ mod tests {
         let usd = Money::<USD>::try_from_major(10).unwrap();
         assert_eq!(
             ID_IDR.render(usd),
-            Err(LocaleError::WrongCurrency(CurrencyMismatch { expected: Iso4217::IDR, found: Iso4217::USD }))
+            Err(LocaleError::WrongCurrency(CurrencyMismatch::new(Iso4217::IDR, Iso4217::USD)))
         );
         // Same check on the runtime path, where the currency is a value rather than a type.
         assert!(ID_IDR.render_units(1, Iso4217::USD).is_err());

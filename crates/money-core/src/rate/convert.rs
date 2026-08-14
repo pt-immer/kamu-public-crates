@@ -334,8 +334,7 @@ mod tests {
             units in -IN_DOMAIN_OPERAND..=IN_DOMAIN_OPERAND,
             rate_major in 1i128..=1_000_000_000,
         ) {
-            let rate = Rate::<USD, IDR>::try_from_units(
-                rate_major.checked_mul(POW10_SCALE).unwrap()).unwrap();
+            let rate = rate::<USD, IDR>(rate_major);
             let expected = units.checked_mul(rate_major).unwrap();
             for mode in Rounding::ALL {
                 let out = usd(units).convert(rate, *mode).unwrap();
@@ -351,10 +350,8 @@ mod tests {
             first_major in 1i128..=1_000,
             second_major in 1i128..=1_000,
         ) {
-            let first = Rate::<USD, EUR>::try_from_units(
-                first_major.checked_mul(POW10_SCALE).unwrap()).unwrap();
-            let second = Rate::<EUR, IDR>::try_from_units(
-                second_major.checked_mul(POW10_SCALE).unwrap()).unwrap();
+            let first = rate::<USD, EUR>(first_major);
+            let second = rate::<EUR, IDR>(second_major);
             let expected = units
                 .checked_mul(first_major).unwrap()
                 .checked_mul(second_major).unwrap();
@@ -378,11 +375,9 @@ mod tests {
             first_major in 1i128..=1_000,
             second_major in 1i128..=1_000,
         ) {
-            let money = usd(major.checked_mul(POW10_SCALE).unwrap());
-            let first = Rate::<USD, EUR>::try_from_units(
-                first_major.checked_mul(POW10_SCALE).unwrap()).unwrap();
-            let second = Rate::<EUR, IDR>::try_from_units(
-                second_major.checked_mul(POW10_SCALE).unwrap()).unwrap();
+            let money = Money::<USD>::try_from_major(major).unwrap();
+            let first = rate::<USD, EUR>(first_major);
+            let second = rate::<EUR, IDR>(second_major);
 
             for mode in Rounding::ALL {
                 let sequential = money

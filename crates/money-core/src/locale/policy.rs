@@ -154,36 +154,43 @@ impl<'a> LocalePolicy<'a> {
         self
     }
     /// The currency this policy is for.
+    #[inline]
     #[must_use]
     pub const fn currency(&self) -> Iso4217 {
         self.currency
     }
     /// The symbol, including any space it carries.
+    #[inline]
     #[must_use]
     pub const fn symbol(&self) -> &'a str {
         self.symbol
     }
     /// Where the symbol sits.
+    #[inline]
     #[must_use]
     pub const fn symbol_position(&self) -> SymbolPosition {
         self.symbol_position
     }
     /// The group separator.
+    #[inline]
     #[must_use]
     pub const fn group_separator(&self) -> &'a str {
         self.group_separator
     }
     /// The decimal separator.
+    #[inline]
     #[must_use]
     pub const fn decimal_separator(&self) -> &'a str {
         self.decimal_separator
     }
     /// The grouping sizes, right-to-left, last repeating.
+    #[inline]
     #[must_use]
     pub const fn grouping(&self) -> &'a [u8] {
         self.grouping
     }
     /// The **minimum** fraction width. Never a maximum.
+    #[inline]
     #[must_use]
     pub const fn min_fraction_digits(&self) -> FractionDigits {
         self.min_fraction_digits
@@ -228,13 +235,8 @@ pub const JA_JPY: LocalePolicy<'static> = LocalePolicy::new(Iso4217::JPY, "￥")
 mod tests {
     use super::*;
     use crate::Money;
-    use crate::domain::POW10_SCALE;
-    use crate::iso::{IDR, USD};
-
-    /// 16 000.50 IDR.
-    fn idr_16000_50() -> Money<IDR> {
-        Money::<IDR>::try_from_units(16_000 * POW10_SCALE + POW10_SCALE / 2).expect("in domain")
-    }
+    use crate::iso::USD;
+    use crate::locale::idr_16000_50;
 
     /// Heap-owned inputs prove that policies accept non-`'static` locale data.
     #[test]

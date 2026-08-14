@@ -44,7 +44,7 @@ bytes = { workspace = true, optional = true }
 ethnum = { workspace = true }
 postgres-types = { workspace = true, optional = true }
 # `derive` and `std` on top of the workspace entry, which is `default-features = false`
-# because kamu-iso3166 hand-writes its impls and is no_std. `wire.rs` uses
+# because kamu-iso3166 hand-writes its impls and is no_std. `src/wire/` uses
 # `#[derive(Serialize, Deserialize)]` and this crate is std-only, so it asks for both here
 # rather than widening the workspace default for everyone.
 serde = { workspace = true, optional = true, features = ["derive", "std"] }

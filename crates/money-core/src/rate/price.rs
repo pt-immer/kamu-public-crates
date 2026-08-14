@@ -94,16 +94,16 @@ mod tests {
             "a zero rate would send the money to zero, silently and with no residue"
         );
         assert_eq!(
-            Rate::<USD, IDR>::try_from_units(-2 * POW10_SCALE),
-            Err(RateError::NonPositive { attempted_units: -2 * POW10_SCALE }),
+            Rate::<USD, IDR>::try_from_units(minus_two()),
+            Err(RateError::NonPositive { attempted_units: minus_two() }),
             "a negative rate would flip the sign of the money passing through it"
         );
 
-        assert!(Rate::<USD, IDR>::try_from_units(0).is_err());
         assert!(Rate::<USD, IDR>::try_from_units(-1).is_err());
 
-        // The smallest representable positive rate remains valid.
+        // Positive controls prevent a reject-everything implementation from passing.
         assert!(Rate::<USD, IDR>::try_from_units(1).is_ok(), "1e-18 is positive and in domain");
+        assert!(Rate::<USD, IDR>::try_from_units(2 * POW10_SCALE).is_ok());
     }
 
     /// Magnitude and sign failures remain distinguishable. Domain is tested first, so
@@ -138,18 +138,6 @@ mod tests {
     /// `-2.0` as canonical units.
     fn minus_two() -> i128 {
         -2 * POW10_SCALE
-    }
-
-    #[test]
-    fn the_raw_constructor_refuses_zero_and_negatives() {
-        assert_eq!(Rate::<USD, IDR>::try_from_units(0), Err(RateError::NonPositive { attempted_units: 0 }));
-        assert_eq!(
-            Rate::<USD, IDR>::try_from_units(minus_two()),
-            Err(RateError::NonPositive { attempted_units: minus_two() })
-        );
-        // Positive controls prevent a reject-everything implementation from passing.
-        assert!(Rate::<USD, IDR>::try_from_units(1).is_ok());
-        assert!(Rate::<USD, IDR>::try_from_units(2 * POW10_SCALE).is_ok());
     }
 
     #[test]

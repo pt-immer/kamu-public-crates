@@ -48,18 +48,18 @@ pub(crate) fn render_fixed_point(units: i128, min_dp: usize) -> String {
 }
 /// Render `units` as `"<ISO> <amount>"` for a currency known only at **run time**.
 ///
-/// The non-generic twin of [`Money`](crate::Money)'s [`Display`](core::fmt::Display), used by runtime-currency
+/// The non-generic twin of [`Money`]'s [`Display`](core::fmt::Display), used by runtime-currency
 /// boundaries such as PostgreSQL. Sharing this implementation prevents adapter-specific trim
 /// rules.
 /// # Errors
 /// [`AmountError`] if `units` is outside the domain.
 ///
 /// The check is not defensive padding. Without it this function emitted **canonical-looking
-/// text that its own [`parse`](crate::text::parse) refuses** — `render(i128::MAX, USD)` produced
+/// text that its own [`parse`](crate::text::parse()) refuses** — `render(i128::MAX, USD)` produced
 /// `"USD 170141183460469231731.687303715884105727"`, which the parser rejects as
 /// [`ParseMoneyError::Amount`](crate::errors::ParseMoneyError::Amount). A renderer whose output its parser rejects is a silent corruption
 /// waiting for a caller that trusts the pair, which is exactly what an adapter does.
-/// [`Money`](crate::Money)'s `Display` cannot reach this arm: `Money<C>` is in-domain by construction.
+/// [`Money`]'s `Display` cannot reach this arm: `Money<C>` is in-domain by construction.
 pub fn render(units: i128, currency: Iso4217) -> Result<String, AmountError> {
     if !in_domain(units) {
         return Err(AmountError::out_of_domain(units));

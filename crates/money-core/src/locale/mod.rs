@@ -37,3 +37,12 @@ mod policy;
 mod render;
 
 pub use policy::{DE_EUR, EN_USD, FractionDigits, ID_IDR, JA_JPY, LocalePolicy, SymbolPosition};
+
+/// 16 000.50 IDR, the anchor both leaves assert against. One definition, so the two cannot
+/// drift into asserting different things while both still pass.
+#[cfg(test)]
+fn idr_16000_50() -> crate::Money<crate::iso::IDR> {
+    use crate::domain::POW10_SCALE;
+    crate::Money::<crate::iso::IDR>::try_from_units(16_000 * POW10_SCALE + POW10_SCALE / 2)
+        .expect("in domain")
+}

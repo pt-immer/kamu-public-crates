@@ -72,19 +72,11 @@ impl<Base: StaticCurrency, Quote: StaticCurrency> FromStr for Rate<Base, Quote> 
 
         let base = Iso4217::from_alpha3(base).ok_or(ParseMoneyError::InvalidSyntax)?;
         if base != Base::CODE {
-            return Err(ParseMoneyError::WrongCurrency(CurrencyMismatch {
-                expected: Base::CODE,
-                found: base,
-            })
-            .into());
+            return Err(ParseMoneyError::WrongCurrency(CurrencyMismatch::new(Base::CODE, base)).into());
         }
         let quote = Iso4217::from_alpha3(quote).ok_or(ParseMoneyError::InvalidSyntax)?;
         if quote != Quote::CODE {
-            return Err(ParseMoneyError::WrongCurrency(CurrencyMismatch {
-                expected: Quote::CODE,
-                found: quote,
-            })
-            .into());
+            return Err(ParseMoneyError::WrongCurrency(CurrencyMismatch::new(Quote::CODE, quote)).into());
         }
 
         let units = parse_fixed_point(amount)?;
@@ -108,14 +100,14 @@ impl<C: StaticCurrency> FromStr for Money<C> {
     /// [`ParseMoneyError::InvalidSyntax`] for malformed input;
     /// [`ParseMoneyError::ExcessPrecision`] for more than [`SCALE`](crate::advanced::domain::SCALE) fractional digits;
     /// a sign-specific magnitude overflow when the canonical-unit value cannot fit `i128`;
-    /// and [`ParseMoneyError::Amount`](crate::errors::ParseMoneyError::Amount) outside the fixed domain.
+    /// and [`ParseMoneyError::Amount`] outside the fixed domain.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // Split first, compare the currency, and only then read the digits — so
         // `"IDR not-a-number"` into a `Money<USD>` reports the currency, which is the useful
         // error at a boundary. Calling `parse` here instead would report the digits.
         let (code, amount) = split_tagged(s)?;
         if code != C::CODE {
-            return Err(ParseMoneyError::WrongCurrency(CurrencyMismatch { expected: C::CODE, found: code }));
+            return Err(ParseMoneyError::WrongCurrency(CurrencyMismatch::new(C::CODE, code)));
         }
 
         let units = parse_amount(amount)?;
@@ -155,10 +147,10 @@ mod tests {
     fn parsing_the_wrong_currency_is_an_error() {
         assert_eq!(
             Money::<USD>::from_str("IDR 10.50"),
-            Err(ParseMoneyError::WrongCurrency(CurrencyMismatch {
-                expected: crate::Iso4217::USD,
-                found: crate::Iso4217::IDR
-            }))
+            Err(ParseMoneyError::WrongCurrency(CurrencyMismatch::new(
+                crate::Iso4217::USD,
+                crate::Iso4217::IDR
+            )))
         );
     }
     #[test]
@@ -257,7 +249,6 @@ mod tests {
     }
 
     proptest! {
-        #[test]
         /// Rates are strictly positive.
         #[test]
         fn prop_rate_parse_of_render_is_the_identity(units in 1..=DOMAIN_MAX) {
@@ -281,10 +272,7 @@ mod tests {
         // back: it names the actual mistake at an API boundary.
         assert_eq!(
             Money::<USD>::from_str("IDR not-a-number"),
-            Err(ParseMoneyError::WrongCurrency(CurrencyMismatch {
-                expected: Iso4217::USD,
-                found: Iso4217::IDR
-            }))
+            Err(ParseMoneyError::WrongCurrency(CurrencyMismatch::new(Iso4217::USD, Iso4217::IDR)))
         );
     }
 

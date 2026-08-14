@@ -27,16 +27,16 @@
 //! `parse(render(v)) == v` holds for all `v`, but the converse does not — `"USD 10.5"` parses
 //! and re-renders as `"USD 10.50"`. The pair is therefore a **retraction**, not a bijection.
 
+use crate::domain::SCALE;
+
 /// [`SCALE`] as `usize`, for string widths and byte offsets.
 ///
 /// `SCALE as usize` would be lossless on every platform this crate can build for, but
 /// `clippy::as_conversions` is denied crate-wide precisely so that "provably fine here" is
 /// never the reason a cast ships. `usize::try_from` states the proof instead of assuming it,
-/// and is not const, which [`parse_fixed_point`] needs. So the width is written once as a
-/// literal and *tied* to [`SCALE`] by an assertion the compiler evaluates: move [`SCALE`] and
-/// this fails to build, rather than parsing at a width that no longer matches the scale.
-use crate::domain::SCALE;
-
+/// and is not const, which `parse_fixed_point` needs. So the width is written once as a literal
+/// and *tied* to [`SCALE`] by an assertion the compiler evaluates: move [`SCALE`] and this fails
+/// to build, rather than parsing at a width that no longer matches the scale.
 pub(crate) const SCALE_USIZE: usize = 18;
 const _: () = assert!(SCALE == 18);
 

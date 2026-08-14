@@ -167,7 +167,8 @@ pub(crate) const fn parse_fixed_point(text: &str) -> Result<i128, ParseMoneyErro
 
 /// Parse the bare decimal carried by a structured rate representation.
 ///
-/// Unlike [`parse_amount`], this does not apply the money domain. [`Rate`]'s
+/// Unlike [`parse_amount`](crate::text::parse_amount), this does not apply the money domain.
+/// [`Rate`](crate::Rate)'s
 /// constructor owns both the domain and strictly-positive checks, so every rate
 /// ingress reaches the same validation edge.
 #[cfg(feature = "serde")]

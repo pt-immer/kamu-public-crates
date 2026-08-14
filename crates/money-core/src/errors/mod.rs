@@ -28,6 +28,9 @@ use thiserror::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum MoneyError {
+    /// A currency did not match the one required.
+    #[error(transparent)]
+    Currency(#[from] CurrencyMismatch),
     /// Amount construction or arithmetic failed.
     #[error(transparent)]
     Amount(#[from] AmountError),
