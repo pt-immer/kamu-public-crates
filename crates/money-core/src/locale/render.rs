@@ -5,7 +5,7 @@ use super::group::group;
 use super::{LocalePolicy, SymbolPosition};
 use crate::Money;
 use crate::StaticCurrency;
-use crate::errors::{AmountError, LocaleError};
+use crate::errors::{AmountError, CurrencyMismatch, LocaleError};
 use crate::iso::Iso4217;
 use crate::text::fixed_point_parts;
 
@@ -33,7 +33,10 @@ impl LocalePolicy<'_> {
     /// accept — the failure this crate exists to prevent, arriving through its last surface.
     pub fn render_units(&self, units: i128, currency: Iso4217) -> Result<String, LocaleError> {
         if currency != self.currency() {
-            return Err(LocaleError::WrongCurrency { expected: self.currency(), found: currency });
+            return Err(LocaleError::WrongCurrency(CurrencyMismatch {
+                expected: self.currency(),
+                found: currency,
+            }));
         }
         if !crate::domain::in_domain(units) {
             return Err(AmountError::out_of_domain(units).into());
@@ -63,6 +66,7 @@ impl LocalePolicy<'_> {
 #[cfg(test)]
 mod tests {
     use crate::domain::{DOMAIN_MAX, POW10_SCALE};
+    use crate::errors::CurrencyMismatch;
     use crate::errors::LocaleError;
     use crate::iso::{EUR, IDR, JPY, USD, XAU};
     use crate::locale::{DE_EUR, EN_USD, FractionDigits, ID_IDR, JA_JPY, LocalePolicy, SymbolPosition};
@@ -156,7 +160,7 @@ mod tests {
         let usd = Money::<USD>::try_from_major(10).unwrap();
         assert_eq!(
             ID_IDR.render(usd),
-            Err(LocaleError::WrongCurrency { expected: Iso4217::IDR, found: Iso4217::USD })
+            Err(LocaleError::WrongCurrency(CurrencyMismatch { expected: Iso4217::IDR, found: Iso4217::USD }))
         );
         // Same check on the runtime path, where the currency is a value rather than a type.
         assert!(ID_IDR.render_units(1, Iso4217::USD).is_err());

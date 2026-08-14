@@ -5,7 +5,7 @@ use super::render::{render, render_fixed_point};
 use crate::Money;
 use crate::Rate;
 use crate::StaticCurrency;
-use crate::errors::{ParseMoneyError, RateError};
+use crate::errors::{CurrencyMismatch, ParseMoneyError, RateError};
 use crate::iso::Iso4217;
 use core::fmt;
 use core::str::FromStr;
@@ -72,11 +72,19 @@ impl<Base: StaticCurrency, Quote: StaticCurrency> FromStr for Rate<Base, Quote> 
 
         let base = Iso4217::from_alpha3(base).ok_or(ParseMoneyError::InvalidSyntax)?;
         if base != Base::CODE {
-            return Err(ParseMoneyError::WrongCurrency { expected: Base::CODE, found: base }.into());
+            return Err(ParseMoneyError::WrongCurrency(CurrencyMismatch {
+                expected: Base::CODE,
+                found: base,
+            })
+            .into());
         }
         let quote = Iso4217::from_alpha3(quote).ok_or(ParseMoneyError::InvalidSyntax)?;
         if quote != Quote::CODE {
-            return Err(ParseMoneyError::WrongCurrency { expected: Quote::CODE, found: quote }.into());
+            return Err(ParseMoneyError::WrongCurrency(CurrencyMismatch {
+                expected: Quote::CODE,
+                found: quote,
+            })
+            .into());
         }
 
         let units = parse_fixed_point(amount)?;
@@ -107,7 +115,7 @@ impl<C: StaticCurrency> FromStr for Money<C> {
         // error at a boundary. Calling `parse` here instead would report the digits.
         let (code, amount) = split_tagged(s)?;
         if code != C::CODE {
-            return Err(ParseMoneyError::WrongCurrency { expected: C::CODE, found: code });
+            return Err(ParseMoneyError::WrongCurrency(CurrencyMismatch { expected: C::CODE, found: code }));
         }
 
         let units = parse_amount(amount)?;
@@ -118,6 +126,7 @@ impl<C: StaticCurrency> FromStr for Money<C> {
 #[cfg(test)]
 mod tests {
     use crate::domain::{DOMAIN_MAX, POW10_SCALE};
+    use crate::errors::CurrencyMismatch;
     use crate::errors::ParseMoneyError;
     use crate::iso::{IDR, JPY, KWD, USD};
     use crate::{Iso4217, Money, Rate};
@@ -146,7 +155,10 @@ mod tests {
     fn parsing_the_wrong_currency_is_an_error() {
         assert_eq!(
             Money::<USD>::from_str("IDR 10.50"),
-            Err(ParseMoneyError::WrongCurrency { expected: crate::Iso4217::USD, found: crate::Iso4217::IDR })
+            Err(ParseMoneyError::WrongCurrency(CurrencyMismatch {
+                expected: crate::Iso4217::USD,
+                found: crate::Iso4217::IDR
+            }))
         );
     }
     #[test]
@@ -269,7 +281,10 @@ mod tests {
         // back: it names the actual mistake at an API boundary.
         assert_eq!(
             Money::<USD>::from_str("IDR not-a-number"),
-            Err(ParseMoneyError::WrongCurrency { expected: Iso4217::USD, found: Iso4217::IDR })
+            Err(ParseMoneyError::WrongCurrency(CurrencyMismatch {
+                expected: Iso4217::USD,
+                found: Iso4217::IDR
+            }))
         );
     }
 

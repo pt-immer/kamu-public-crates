@@ -6,6 +6,7 @@
 mod allocation;
 mod amount;
 mod locale;
+mod mismatch;
 mod parse;
 mod rate;
 mod wire;
@@ -13,6 +14,7 @@ mod wire;
 pub use allocation::AllocationError;
 pub use amount::AmountError;
 pub use locale::LocaleError;
+pub use mismatch::CurrencyMismatch;
 pub use parse::ParseMoneyError;
 pub use rate::RateError;
 pub use wire::WireError;

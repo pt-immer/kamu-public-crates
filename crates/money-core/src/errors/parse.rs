@@ -1,8 +1,8 @@
 //! Failures of money and rate text parsing.
 
 use super::AmountError;
+use super::CurrencyMismatch;
 use crate::domain::SCALE;
-use crate::iso::Iso4217;
 use thiserror::Error;
 
 /// Failure to parse a monetary amount or tagged money literal.
@@ -25,17 +25,8 @@ pub enum ParseMoneyError {
     #[error("negative money magnitude exceeds the parser range")]
     NegativeMagnitudeOverflow,
     /// A tagged literal names a different currency from the target type.
-    #[error(
-        "wrong currency: expected {}, found {}",
-        expected.alpha3(),
-        found.alpha3()
-    )]
-    WrongCurrency {
-        /// Currency required by the target type.
-        expected: Iso4217,
-        /// Currency named by the input.
-        found: Iso4217,
-    },
+    #[error(transparent)]
+    WrongCurrency(#[from] CurrencyMismatch),
     /// The parsed value fits `i128` but lies outside the money domain.
     #[error(transparent)]
     Amount(#[from] AmountError),

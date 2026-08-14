@@ -1,8 +1,8 @@
 //! Failures of locale policy configuration and rendering.
 
 use super::AmountError;
+use super::CurrencyMismatch;
 use crate::domain::SCALE;
-use crate::iso::Iso4217;
 use thiserror::Error;
 
 /// Failure to configure or apply a locale display policy.
@@ -13,17 +13,8 @@ pub enum LocaleError {
     #[error(transparent)]
     Amount(#[from] AmountError),
     /// The policy belongs to a different currency.
-    #[error(
-        "wrong currency: expected {}, found {}",
-        expected.alpha3(),
-        found.alpha3()
-    )]
-    WrongCurrency {
-        /// Currency configured by the policy.
-        expected: Iso4217,
-        /// Currency of the value being rendered.
-        found: Iso4217,
-    },
+    #[error(transparent)]
+    WrongCurrency(#[from] CurrencyMismatch),
     /// A minimum fraction width exceeds the fixed scale.
     #[error("{digits} fraction digits exceeds the supported scale of {SCALE}")]
     FractionDigitsOutOfRange {

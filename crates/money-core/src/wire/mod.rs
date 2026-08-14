@@ -41,7 +41,7 @@
 //! a division is unresolved local state; neither is a durable value to recreate
 //! from untrusted input.
 
-use crate::errors::{RateError, WireError};
+use crate::errors::{CurrencyMismatch, RateError, WireError};
 use crate::iso::Iso4217;
 use crate::text::{parse_amount, parse_rate_amount};
 use crate::{Money, Rate, StaticCurrency};
@@ -98,7 +98,10 @@ pub(super) fn money_from_binary<'de, C: StaticCurrency, D: Deserializer<'de>>(
 ) -> Result<Money<C>, D::Error> {
     let (code, units) = <(Iso4217, i128)>::deserialize(d)?;
     if code != C::CODE {
-        return Err(to_de_error(&WireError::WrongCurrency { expected: C::CODE, found: code }));
+        return Err(to_de_error(&WireError::WrongCurrency(CurrencyMismatch {
+            expected: C::CODE,
+            found: code,
+        })));
     }
     money_from_units(units)
 }
@@ -117,10 +120,16 @@ pub(super) fn rate_from_binary<'de, Base: StaticCurrency, Quote: StaticCurrency,
     // Both ends are checked, in declaration order, because a refactor moves a rate's pair far
     // more easily than its magnitude.
     if base != Base::CODE {
-        return Err(to_de_error(&WireError::WrongCurrency { expected: Base::CODE, found: base }));
+        return Err(to_de_error(&WireError::WrongCurrency(CurrencyMismatch {
+            expected: Base::CODE,
+            found: base,
+        })));
     }
     if quote != Quote::CODE {
-        return Err(to_de_error(&WireError::WrongCurrency { expected: Quote::CODE, found: quote }));
+        return Err(to_de_error(&WireError::WrongCurrency(CurrencyMismatch {
+            expected: Quote::CODE,
+            found: quote,
+        })));
     }
     rate_from_units(units)
 }

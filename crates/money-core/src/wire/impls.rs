@@ -4,7 +4,7 @@ use super::{
     money_from_amount, money_from_binary, money_to_binary, rate_from_amount, rate_from_binary,
     rate_to_binary, to_de_error,
 };
-use crate::errors::WireError;
+use crate::errors::{CurrencyMismatch, WireError};
 use crate::iso::Iso4217;
 use crate::text::{render_amount, render_rate};
 use crate::{Money, Rate, StaticCurrency};
@@ -57,7 +57,10 @@ impl<'de, C: StaticCurrency> Deserialize<'de> for Money<C> {
         let raw = MoneyIn::deserialize(d)?;
         // The redundancy is the point: it catches an IDR amount in a USD field.
         if raw.currency != C::CODE {
-            return Err(to_de_error(&WireError::WrongCurrency { expected: C::CODE, found: raw.currency }));
+            return Err(to_de_error(&WireError::WrongCurrency(CurrencyMismatch {
+                expected: C::CODE,
+                found: raw.currency,
+            })));
         }
         // Parse the amount field directly. Reconstructing a tagged string here
         // allocated and then made the text parser split a tag already checked
@@ -83,10 +86,16 @@ impl<'de, Base: StaticCurrency, Quote: StaticCurrency> Deserialize<'de> for Rate
         }
         let raw = RateIn::deserialize(d)?;
         if raw.base != Base::CODE {
-            return Err(to_de_error(&WireError::WrongCurrency { expected: Base::CODE, found: raw.base }));
+            return Err(to_de_error(&WireError::WrongCurrency(CurrencyMismatch {
+                expected: Base::CODE,
+                found: raw.base,
+            })));
         }
         if raw.quote != Quote::CODE {
-            return Err(to_de_error(&WireError::WrongCurrency { expected: Quote::CODE, found: raw.quote }));
+            return Err(to_de_error(&WireError::WrongCurrency(CurrencyMismatch {
+                expected: Quote::CODE,
+                found: raw.quote,
+            })));
         }
         rate_from_amount(raw.rate.as_ref()).map_err(|e| to_de_error(&e))
     }
