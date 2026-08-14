@@ -18,7 +18,7 @@ use core::marker::PhantomData;
 ///
 /// There is deliberately no `inverse()` and no `compose()`: real FX has bid and ask, so
 /// inverting or composing mid-rates fabricates a price nobody can trade at. Every pair is
-/// stored in both directions; multi-leg conversion is [`Money::convert_via`], which rounds
+/// stored in both directions; multi-leg conversion is [`Money::convert_via`](crate::Money::convert_via), which rounds
 /// once.
 pub struct Rate<Base: StaticCurrency, Quote: StaticCurrency> {
     units: i128,

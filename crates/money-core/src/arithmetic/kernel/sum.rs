@@ -5,7 +5,7 @@ use ethnum::I256;
 
 /// Sum canonical units exactly, checking the domain **once**, at the end.
 ///
-/// Shared by [`Money::try_sum`] and `kamu-money-pg`'s `sum()` aggregates.
+/// Shared by [`Money::try_sum`](crate::Money::try_sum) and `kamu-money-pg`'s `sum()` aggregates.
 ///
 /// Accumulating in [`I256`] and narrowing once avoids an `i128` fold whose transient partial
 /// sum leaves the domain before the final total returns to it. That behavior would make

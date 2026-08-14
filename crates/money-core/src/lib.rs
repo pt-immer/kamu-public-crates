@@ -18,7 +18,6 @@
 //!
 //! The crate root holds the common path. Browse deeper only when needed:
 //!
-//! - [`allocation`] names lazy split results;
 //! - [`locale`] and [`text`] own display and canonical text;
 //! - [`errors`] groups narrow operation errors;
 //! - [`advanced`] exposes raw-unit kernels, domain constants, residue internals,

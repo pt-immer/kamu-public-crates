@@ -73,9 +73,9 @@ impl<C: StaticCurrency> Money<C> {
 impl<C: StaticCurrency> Money<C> {
     /// Sum any number of amounts, exactly, failing only if the **total** leaves the domain.
     ///
-    /// Replaces `iter().sum()`, which would fold through panicking [`Add`] and become
+    /// Replaces `iter().sum()`, which would fold through panicking [`Add`](core::ops::Add) and become
     /// order-dependent when a partial sum leaves the domain. This method accumulates in
-    /// [`I256`] and checks only the final total.
+    /// `I256` and checks only the final total.
     ///
     /// The item type enforces one currency; runtime adapters must enforce that rule themselves.
     ///
@@ -106,7 +106,7 @@ impl<C: StaticCurrency> Money<C> {
 impl<C: StaticCurrency> Money<C> {
     /// Divide by a positive integer, rounding per `mode`.
     ///
-    /// Returns a [`Division`] — the quotient and the residue **bundled**, not a tuple. There
+    /// Returns a [`Division`](crate::Division) — the quotient and the residue **bundled**, not a tuple. There
     /// is no way to reach the money without deciding what happens to the residue:
     /// [`Division::take_residue`] hands you both, [`Division::discard_deliberately`] throws
     /// the residue away by name. The identity `quotient * n + residue == self.units()` holds
@@ -117,7 +117,7 @@ impl<C: StaticCurrency> Money<C> {
     /// handed out, so nothing left the ledger.
     ///
     /// This is **not** how you split a payment N ways: these shares will not sum back to the
-    /// whole. Use [`Money::allocate`] for that.
+    /// whole. Use [`Money::allocate`](crate::Money::allocate) for that.
     ///
     /// # Panics
     /// Panics only if the shared raw kernel rejects a typed, in-domain amount.

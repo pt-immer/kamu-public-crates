@@ -1,6 +1,6 @@
 //! Explicit accounting for units moved by integer division.
 //!
-//! [`Division`] keeps quotient and residue together. A caller cannot obtain the
+//! [`Division`](crate::Division) keeps quotient and residue together. A caller cannot obtain the
 //! quotient without choosing [`Division::take_residue`] or
 //! [`Division::discard_deliberately`]. Dropping an undecided division is safe:
 //! no quotient escaped.

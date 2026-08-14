@@ -8,8 +8,8 @@ use crate::Money;
 use crate::StaticCurrency;
 use core::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 
-/// Panics on domain overflow, matching integer `Add`. Use [`Money::checked_add`] when overflow
-/// is recoverable, or [`Money::try_add`] when the rejected total is worth reporting.
+/// Panics on domain overflow, matching integer `Add`. Use [`Money::checked_add`](crate::Money::checked_add) when overflow
+/// is recoverable, or [`Money::try_add`](crate::Money::try_add) when the rejected total is worth reporting.
 impl<C: StaticCurrency> Add for Money<C> {
     type Output = Self;
     #[inline]

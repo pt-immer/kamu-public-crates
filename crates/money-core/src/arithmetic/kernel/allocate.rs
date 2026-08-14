@@ -6,7 +6,7 @@ use ethnum::I256;
 
 /// Distribute `units` across `weights`, conserving the total exactly.
 ///
-/// The non-generic core of [`Money::allocate`], for callers that only learn the currency at
+/// The non-generic core of [`Money::allocate`](crate::Money::allocate), for callers that only learn the currency at
 /// run time. The currency is irrelevant to the arithmetic: this
 /// conserves at the canonical scale, which is the only scale money has here.
 ///

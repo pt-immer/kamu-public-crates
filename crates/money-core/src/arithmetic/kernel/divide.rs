@@ -6,7 +6,7 @@ use crate::rounding::{Rounding, div_round_i256};
 use core::num::NonZeroU32;
 use ethnum::I256;
 
-/// The non-generic core of [`Money::div_int`], in canonical units.
+/// The non-generic core of [`Money::div_int`](crate::Money::div_int), in canonical units.
 ///
 /// For adapters that learn the currency at run time; see [`UntaggedDivision`] for why this is
 /// not the API a Rust program should reach for.

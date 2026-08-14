@@ -3,8 +3,8 @@
 /// Add two canonical unit counts. `None` if **either operand** or the result is outside the
 /// domain.
 ///
-/// This is the shared `Money`/`kamu-money-pg` addition kernel: [`Money::try_add`] — and through
-/// it [`Money::checked_add`] and `+` — plus `kamu-money-pg`'s generated `<type>_add` functions
+/// This is the shared `Money`/`kamu-money-pg` addition kernel: [`Money::try_add`](crate::Money::try_add) — and through
+/// it [`Money::checked_add`](crate::Money::checked_add) and `+` — plus `kamu-money-pg`'s generated `<type>_add` functions
 /// all delegate here.
 #[inline]
 #[must_use]
@@ -27,8 +27,8 @@ pub const fn add_units(a: i128, b: i128) -> Option<i128> {
 }
 
 /// Subtract two canonical unit counts. `None` if **either operand** or the result is outside
-/// the domain. The units-level kernel behind [`Money::try_sub`] — and through it
-/// [`Money::checked_sub`] and `-` — and `kamu-money-pg`'s generated `<type>_sub` functions.
+/// the domain. The units-level kernel behind [`Money::try_sub`](crate::Money::try_sub) — and through it
+/// [`Money::checked_sub`](crate::Money::checked_sub) and `-` — and `kamu-money-pg`'s generated `<type>_sub` functions.
 #[inline]
 #[must_use]
 pub const fn sub_units(a: i128, b: i128) -> Option<i128> {

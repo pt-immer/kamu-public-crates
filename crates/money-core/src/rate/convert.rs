@@ -30,7 +30,7 @@ fn apply_rate(units: i128, rate_units: i128, mode: Rounding) -> Option<i128> {
     i128::try_from(quotient).ok()
 }
 
-/// The two-leg kernel. Rounds **once**, at the end — see [`Money::convert_via`] for why that
+/// The two-leg kernel. Rounds **once**, at the end — see [`Money::convert_via`](crate::Money::convert_via) for why that
 /// is a ledger requirement rather than a precision one.
 fn apply_rate_pair(units: i128, first: i128, second: i128, mode: Rounding) -> Option<i128> {
     // First leg: |m * r1| <= 1e72, the same proof as `apply_rate`. Cannot fail.

@@ -51,7 +51,7 @@ impl<C: StaticCurrency> Money<C> {
     }
 }
 
-/// The lazy half of [`Money::split`], returned by [`Money::split`].
+/// The lazy half of [`Money::split`](crate::Money::split), returned by [`Money::split`](crate::Money::split).
 ///
 /// Holds O(1) state and allocates nothing; large counts cost iteration time, not memory.
 pub struct SplitParts<C: StaticCurrency> {
