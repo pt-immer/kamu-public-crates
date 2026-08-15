@@ -370,7 +370,7 @@ jobs:
       - run: just publish-all
 
   coverage-iso3166:
-    name: coverage (kamu-iso3166 >= 98% lines)
+    name: coverage (kamu-iso3166)
     needs: changes
     if: ${{ needs.changes.outputs.iso == 'true' }}
     runs-on: ubuntu-latest
@@ -393,7 +393,7 @@ jobs:
           path: target/lcov.info
 
   coverage-logging:
-    name: coverage (kamu-logging >= 88% lines)
+    name: coverage (kamu-logging)
     needs: changes
     if: ${{ needs.changes.outputs.log == 'true' }}
     runs-on: ubuntu-latest
@@ -427,7 +427,7 @@ jobs:
       - run: just build-wasm-snap
 
   coverage-snap-crypto:
-    name: coverage (kamu-snap-crypto >= 70% lines)
+    name: coverage (kamu-snap-crypto)
     needs: changes
     if: ${{ needs.changes.outputs.snap == 'true' }}
     runs-on: ubuntu-latest
@@ -444,7 +444,7 @@ jobs:
       - run: just cov-snap-crypto
 
   coverage-snap-response:
-    name: coverage (kamu-snap-response >= 85% lines)
+    name: coverage (kamu-snap-response)
     needs: changes
     if: ${{ needs.changes.outputs.snap == 'true' }}
     runs-on: ubuntu-latest
@@ -527,7 +527,7 @@ jobs:
       - run: just doc-money
 
   coverage-money:
-    name: coverage (kamu-money-core >= 86% lines)
+    name: coverage (kamu-money-core)
     needs: changes
     if: ${{ needs.changes.outputs.money == 'true' }}
     runs-on: ubuntu-latest

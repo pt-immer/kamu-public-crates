@@ -8,6 +8,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import tempfile
 import unittest
 from collections.abc import Callable
@@ -73,6 +74,43 @@ class DevelopmentEnvironmentPolicyTests(unittest.TestCase):
             self.assertIn(f'"{component}"', toolchain)
         for target in rust["primary_targets"]:
             self.assertIn(f'"{target}"', toolchain)
+
+    def test_every_msrv_copy_is_bound_to_the_tool_manifest(self) -> None:
+        """`rust.msrv` is the floor; nothing else may state a different one.
+
+        Each site below enforces the MSRV somewhere the others cannot reach —
+        Cargo refuses an older toolchain, the CI matrix is what actually
+        compiles against it, and the Worker example is a separate workspace
+        that cannot inherit the root manifest.
+        """
+        msrv = self.manifest["rust"]["msrv"]
+        major_minor = ".".join(msrv.split(".")[:2])
+
+        manifests = (
+            ROOT / "Cargo.toml",
+            ROOT / "crates" / "logging" / "examples" / "cloudflare-worker" / "Cargo.toml",
+        )
+        for manifest in manifests:
+            with self.subTest(manifest=str(manifest.relative_to(ROOT))):
+                declared = re.search(
+                    r'(?m)^rust-version = "([0-9.]+)"$',
+                    manifest.read_text(encoding="utf-8"),
+                )
+                self.assertIsNotNone(declared, "no rust-version to bind")
+                self.assertEqual(
+                    major_minor,
+                    ".".join(declared.group(1).split(".")[:2]),
+                )
+
+        workflow = (
+            ROOT / ".github" / "workflows" / "on-pr-synced.yml"
+        ).read_text(encoding="utf-8")
+        matrices = re.findall(r"(?m)^        toolchain: \[(.+)\]$", workflow)
+        self.assertTrue(matrices, "no toolchain matrix to bind")
+        for matrix in matrices:
+            with self.subTest(matrix=matrix):
+                pinned = re.findall(r'"([0-9][0-9.]*)"', matrix)
+                self.assertEqual([msrv], pinned)
 
     def test_setup_commands_install_every_required_rust_item(self) -> None:
         commands = setup_commands(self.manifest)

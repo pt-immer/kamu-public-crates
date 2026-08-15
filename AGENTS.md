@@ -31,10 +31,11 @@ Repository-wide policy remains at the root. In particular, `lint-shell` and
 
 ## Hard invariants
 
-- The public workspace uses Edition 2024 and MSRV 1.94.0. Its primary and
-  compile-fail toolchain is pinned to Rust 1.96.0; CI also tests current stable
-  and exact MSRV. The extension lane uses Rust 1.96.0 because pgrx 0.19.2
-  requires it.
+- The public workspace uses Edition 2024. `.config/dev-tools.json` owns both
+  Rust versions: `rust.msrv` is the floor the root manifest declares and CI
+  tests exactly, and `rust.primary` is the toolchain that pins compile-fail
+  goldens. Every other copy is bound to it by `test_dev_environment.py`. The
+  extension lane pins its own toolchain because pgrx 0.19.2 requires it.
 - Never run workspace-wide `--all-features`. `kamu-logging` has mutually
   exclusive native and wasm feature sets; pgrx features select one PostgreSQL
   major. Use the feature matrices in the Justfiles.
@@ -226,10 +227,9 @@ their commands.
   flags.
 - The root gate stays Docker-free. Docker-dependent coverage belongs to CI or
   the extension gate and must be named as non-coverage when omitted.
-- Coverage floors are `kamu-iso3166` 98%, `kamu-logging` 88%,
-  `kamu-money-core` 86%, `kamu-snap-crypto` 70%, and
-  `kamu-snap-response` 85%. The four thin framework adapters are
-  behavior/compile-tested but have no percentage floor.
+- Each line-coverage floor lives in its `cov-*` recipe and nowhere else, beside
+  the reason it sits where it does. Five crates have one; the four thin
+  framework adapters are behavior/compile-tested without a percentage floor.
 - A floor is set only after measurement. New behavior lands with tests.
 - Markdown fences need languages, tables must lint, and Taplo owns TOML
   formatting.
