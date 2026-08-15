@@ -1,8 +1,9 @@
 # Clippy configuration for the PostgreSQL extension lane.
 # Clippy searches parent directories, so this file exists to stop the lane
-# inheriting the published workspace's lower MSRV. It tracks the series of
-# `rust-toolchain.toml`, which is the file rustup obeys, and `pins.rs` binds the
-# two rather than leaving them to be aligned by hand.
+# inheriting the published workspace's lower MSRV. Clippy prefers this value
+# over `Cargo.toml`'s `rust-version` and reports a disagreement as a warning no
+# `-D warnings` promotes, so `pins.rs` holds this, that `rust-version`, and the
+# `rust-toolchain.toml` series to one value rather than to each other by hand.
 msrv = "1.96"
 
 # A child clippy.toml replaces rather than merges the parent configuration.

@@ -32,6 +32,11 @@ fn gates_compose_every_required_check() {
          covered by any required check"
     );
     assert!(
+        workflow.contains("just pg doc-pg"),
+        "a CI job must run `just pg doc-pg`; no CI job runs `gate-offline`, so composing it there \
+         is not what reaches a required check"
+    );
+    assert!(
         support::recipe_dependencies(&lane_dump, "gate-pg").contains(&"gate-offline"),
         "gate-pg must compose gate-offline"
     );
@@ -86,6 +91,77 @@ fn release_gate_covers_one_immutable_deployable_artifact() {
     assert!(
         !release.contains("just yb-ab"),
         "release gate must pass its resolved image to _yb-ab-ref, not resolve a mutable tag again"
+    );
+}
+
+/// Anchored on the SUBCOMMAND rather than on `cargo doc`, because a toolchain selector sits
+/// between the two: `cargo +nightly doc` is the same invocation and would evade a substring.
+fn runs_rustdoc(line: &str) -> bool {
+    let tokens: Vec<&str> = line.split_whitespace().collect();
+    tokens.contains(&"cargo") && (tokens.contains(&"doc") || tokens.contains(&"rustdoc"))
+}
+
+/// The variable and the deny must meet on ONE line. A body-wide search accepts
+/// `RUSTFLAGS=-Dwarnings` beside an empty `RUSTDOCFLAGS`, which denies rustdoc nothing.
+/// Spacing is normalized so the check does not turn on how the flag is written.
+fn denies_rustdoc_warnings(body: &str) -> bool {
+    body.replace("-D warnings", "-Dwarnings")
+        .lines()
+        .any(|line| line.contains("RUSTDOCFLAGS") && line.contains("-Dwarnings"))
+}
+
+/// rustdoc over this crate documents nothing it is not told to, and warns about nothing it is not
+/// told to deny.
+///
+/// Every `#[pg_extern]` and `#[pg_operator]` is a private `fn` and `ffi` and `safe` are private
+/// modules, so without `--document-private-items` the input set is the generated `pub struct` per
+/// currency and nothing else. Without `-D warnings` a resolved input set produces warnings nothing
+/// fails on. Either lever alone leaves a gate that cannot fail, so both are required of every
+/// recipe that runs rustdoc rather than of the recipes that happen to run one today.
+#[test]
+fn every_lane_rustdoc_reads_the_private_surface_and_denies_warnings() {
+    for bad in ["cargo test --doc", "cargo +nightly miri test", "echo cargo doctor"] {
+        assert!(!runs_rustdoc(bad), "positive control must not match `{bad}`");
+    }
+    for good in ["cargo doc -p kamu-money-pg", "cargo +nightly doc", "cargo rustdoc -- -D warnings"] {
+        assert!(runs_rustdoc(good), "positive control must match `{good}`");
+    }
+    for bad in ["RUSTFLAGS=-Dwarnings\nexport RUSTDOCFLAGS=\"\"", "cargo doc --document-private-items"] {
+        assert!(!denies_rustdoc_warnings(bad), "positive control must not accept `{bad}`");
+    }
+    for good in ["RUSTDOCFLAGS=-Dwarnings cargo doc", "export RUSTDOCFLAGS=\"-D warnings\""] {
+        assert!(denies_rustdoc_warnings(good), "positive control must accept `{good}`");
+    }
+
+    let dump = support::just_dump(&support::lane_root());
+    let names: Vec<String> =
+        dump["recipes"].as_object().expect("just dump must contain recipes").keys().cloned().collect();
+    let mut checked = 0;
+    let mut offenders = Vec::new();
+    for name in names {
+        let body = support::recipe_body(&dump, &name);
+        let invocations: Vec<&str> = body.lines().filter(|line| runs_rustdoc(line)).collect();
+        if invocations.is_empty() {
+            continue;
+        }
+        checked += 1;
+        // The deny may be written on the invocation or exported above it, so it is the BODY
+        // that must carry it rather than the invocation line.
+        if !denies_rustdoc_warnings(&body) {
+            offenders.push(format!("{name}: runs rustdoc without RUSTDOCFLAGS denying warnings"));
+        }
+        for line in invocations {
+            if !line.contains("--document-private-items") {
+                offenders.push(format!("{name}: {}", line.trim()));
+            }
+        }
+    }
+    assert!(checked > 0, "no lane recipe runs rustdoc -- this guard would pass vacuously; re-point it");
+    assert!(
+        offenders.is_empty(),
+        "rustdoc keeps only the generated public types without `--document-private-items`, and \
+         warns without failing without `-D warnings`:\n{}",
+        offenders.join("\n")
     );
 }
 

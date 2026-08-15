@@ -1,6 +1,6 @@
 //! The lane pins two toolchains, and each is ONE fact spelled in many places: pgrx across
-//! manifests, Dockerfiles, the tool manifest and CI, and Rust across `rust-toolchain.toml`
-//! and three container images.
+//! manifests, Dockerfiles, the tool manifest and CI, and Rust across `rust-toolchain.toml`,
+//! three container images, `clippy.toml` and the lane manifest.
 //!
 //! The two disagree differently, which is why both are here.
 //!
@@ -195,13 +195,23 @@ fn every_container_starts_from_the_pinned_rust_toolchain() {
     }
 }
 
+/// The series of the pinned toolchain, which is what a floor is spelled in.
+///
+/// It carries its own shape control rather than borrowing the container guard's:
+/// taking two components of `stable` yields `stable`, which would then be
+/// compared against a version and reported as drift.
+fn pinned_toolchain_series() -> String {
+    let channel = pinned_toolchain();
+    let parts: Vec<&str> = channel.split('.').collect();
+    assert_eq!(parts.len(), 3, "a series can only be taken from an exact patch version, not `{channel}`");
+    parts[..2].join(".")
+}
+
 #[test]
 fn clippy_lints_against_the_pinned_toolchain() {
     // Clippy decides which lints apply from this, so a stale value lints the
-    // lane against a Rust it no longer builds with. It takes the series rather
-    // than the exact patch every other pin here wants.
-    let channel = pinned_toolchain();
-    let series = channel.split('.').take(2).collect::<Vec<_>>().join(".");
+    // lane against a Rust it no longer builds with.
+    let series = pinned_toolchain_series();
 
     let path = support::lane_root().join("clippy.toml");
     let declared = support::manifest(&path)
@@ -213,7 +223,32 @@ fn clippy_lints_against_the_pinned_toolchain() {
     assert_eq!(
         series,
         declared,
-        "{} lints against {declared} while rustup builds with {channel}",
+        "{} lints against `{declared}` while the lane builds with `{series}`",
+        path.display()
+    );
+}
+
+#[test]
+fn the_lane_manifest_declares_the_pinned_toolchain_series() {
+    // The third spelling, and the one Cargo itself enforces. Clippy compares it
+    // against `clippy.toml` too, and reports a disagreement as a session
+    // warning rather than a lint -- so `-D warnings` does not promote it and no
+    // other gate here would fail on the drift.
+    let series = pinned_toolchain_series();
+
+    let path = support::lane_root().join("Cargo.toml");
+    let declared = support::manifest(&path)
+        .get("workspace")
+        .and_then(|workspace| workspace.get("package"))
+        .and_then(|package| package.get("rust-version"))
+        .and_then(toml::Value::as_str)
+        .unwrap_or_else(|| panic!("{} must declare workspace.package.rust-version", path.display()))
+        .to_owned();
+
+    assert_eq!(
+        series,
+        declared,
+        "{} promises Rust `{declared}` while the lane builds with `{series}`",
         path.display()
     );
 }
