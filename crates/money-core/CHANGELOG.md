@@ -4,7 +4,7 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] — 2026-08-14
+## [0.2.0] — 2026-08-16
 
 ### Removed
 
@@ -45,6 +45,13 @@ absence.
   `WrongCurrency` refusal. It is `#[non_exhaustive]`, like every other type in
   `errors`, and `MoneyError::Currency` absorbs it so the umbrella covers all
   seven.
+- A guarantee ledger in the documentation. `Money`, `Rate` and the residue types
+  now state what they do **not** prove alongside what they do. Three of those
+  facts were previously written nowhere: that exact representation decides no
+  question of tax, FX, allocation or rounding policy; that a `Rate` carries no
+  observation time, so nothing in the type prevents applying a stale one; and
+  that conversion discards its sub-canonical-unit remainder without returning a
+  `Residue`, unlike `Money::div_int`.
 
 ### Changed
 

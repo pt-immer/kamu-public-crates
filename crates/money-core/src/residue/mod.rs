@@ -9,6 +9,11 @@
 //! Rust does not provide linear types, so code can still suppress the lint and
 //! drop a bare residue. The API makes that choice visible without introducing a
 //! panic in `Drop`, including during cancellation or unwinding.
+//!
+//! [`UntaggedDivision`] enforces the same thing at the same strength: it is
+//! neither `Copy` nor `Clone`, so its quotient cannot be released a second time
+//! after the residue has been decided. What it gives up is the currency, which
+//! it carries nowhere.
 
 mod division;
 mod obligation;

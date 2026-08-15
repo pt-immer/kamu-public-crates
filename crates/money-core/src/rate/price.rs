@@ -9,17 +9,27 @@ use core::marker::PhantomData;
 ///
 /// The value uses the crate's fixed [`SCALE`](crate::advanced::domain::SCALE).
 ///
-/// The pair is carried in the type, so `Money<USD>` can only be converted by a
-/// `Rate<USD, IDR>` and the result can only be `Money<IDR>` — a mismatched pair does not
-/// compile.
+/// # What this type proves
 ///
-/// Rates are strictly positive and domain-bounded. Every constructor and decoding adapter
-/// enforces those runtime invariants.
+/// - **The pair, at compile time.** `Money<USD>` can only be converted by a `Rate<USD, IDR>`, and
+///   the result can only be `Money<IDR>` — a mismatched pair does not compile.
+/// - **Positivity and domain.** Rates are strictly positive and domain-bounded. Every constructor
+///   and every decoding adapter enforces those runtime invariants.
+/// - **One rounding per conversion.** [`Money::convert_via`](crate::Money::convert_via) rounds
+///   once across both legs, so no bridge balance the holder never held is materialized.
 ///
-/// There is deliberately no `inverse()` and no `compose()`: real FX has bid and ask, so
-/// inverting or composing mid-rates fabricates a price nobody can trade at. Every pair is
-/// stored in both directions; multi-leg conversion is [`Money::convert_via`](crate::Money::convert_via), which rounds
-/// once.
+/// # What this type does not prove
+///
+/// - **A rate is a mid-rate, not a tradeable price.** There is no bid and no ask, which is exactly
+///   why `inverse()` and `compose()` are deliberately absent: inverting or composing a mid-rate
+///   fabricates a price nobody can trade at. Store every pair in both directions instead.
+/// - **It carries no observation time.** A `Rate` makes no claim about *when* it was true, and
+///   nothing in the type prevents applying an arbitrarily stale one. Whichever service owns the
+///   quote owns its freshness; that fact is temporal and belongs at run time, with the owner.
+/// - **Conversion loss below one canonical unit is discarded silently.** Unlike
+///   [`Money::div_int`](crate::Money::div_int), conversion returns no
+///   [`Residue`](crate::Residue). The discarded part is bounded below `10^-18` of a unit, but it
+///   is a loss, and nothing hands it back.
 pub struct Rate<Base: StaticCurrency, Quote: StaticCurrency> {
     units: i128,
     // The value is currency-agnostic, so the phantom pair carries both type parameters.

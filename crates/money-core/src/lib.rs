@@ -23,6 +23,13 @@
 //! - [`advanced`] exposes raw-unit kernels, domain constants, residue internals,
 //!   and stable hashing;
 //! - feature-gated `wire` and [`adapters`] expose boundary integrations.
+//!
+//! # What this crate is not
+//!
+//! It represents amounts. It does not model tax, accounting rules, or FX policy, and exactness
+//! does not stand in for any of them: an amount this crate can hold and carry without error is
+//! still only as right as the decision that produced it. Each type states its own guarantees
+//! beside the things it deliberately does not guarantee — start with [`Money`] and [`Rate`].
 // Enables per-item "Available on crate feature ..." banners on docs.rs. `cfg_attr` keeps the
 // nightly-only feature out of stable builds.
 #![cfg_attr(docsrs, feature(doc_cfg))]

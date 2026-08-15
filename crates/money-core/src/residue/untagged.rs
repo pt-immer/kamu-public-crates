@@ -3,7 +3,11 @@
 /// Runtime-currency division result for adapters.
 ///
 /// Prefer [`Division`](crate::Division) in typed Rust code. This form exposes raw units because
-/// adapters such as a PostgreSQL extension learn currency identity at runtime.
+/// adapters such as a PostgreSQL extension learn currency identity at run time.
+///
+/// The residue enforcement is not weaker for it. Both exits consume `self`, and the type is
+/// neither `Copy` nor `Clone`, so the quotient cannot be released a second time once the residue
+/// has been decided. The single thing it does not carry is the currency.
 #[must_use = "resolve this division with .take_residue() or .discard_deliberately()"]
 #[derive(Debug, PartialEq, Eq)]
 pub struct UntaggedDivision {
