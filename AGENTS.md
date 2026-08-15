@@ -227,7 +227,7 @@ their commands.
 - The root gate stays Docker-free. Docker-dependent coverage belongs to CI or
   the extension gate and must be named as non-coverage when omitted.
 - Coverage floors are `kamu-iso3166` 98%, `kamu-logging` 88%,
-  `kamu-money-core` 80%, `kamu-snap-crypto` 70%, and
+  `kamu-money-core` 86%, `kamu-snap-crypto` 70%, and
   `kamu-snap-response` 85%. The four thin framework adapters are
   behavior/compile-tested but have no percentage floor.
 - A floor is set only after measurement. New behavior lands with tests.
