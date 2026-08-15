@@ -241,15 +241,18 @@ their commands.
 repository surface has no owner. `just test-repo-policy` proves every tracked
 path remains classified.
 
-Compiled package inputs under `crates/money-core` also select the dependent
-`moneypg` lane; crate documentation alone does not. A path-filtered job must not
-depend on a job with a narrower path condition unless it handles skipped
-dependencies explicitly. The workflow policy test simulates this skip cascade
-for every tracked path.
+Why working on one crate runs another's jobs is answered by `DERIVED_CLASSES` in
+`scripts/ci_paths.py`, which carries every fan-out edge with its reason. The
+reason is a required field and the map is checked against an independently
+written expectation, so an edge cannot be added, widened or narrowed silently.
+Change the map, not this paragraph.
+
+A path-filtered job must not depend on a job with a narrower path condition
+unless it handles skipped dependencies explicitly. The workflow policy test
+simulates this skip cascade for every tracked path.
 
 Heavy jobs use job-level conditions. Do not add workflow-level `paths:` filters:
-they can leave required checks pending. The six SNAP crates share one change
-class because their dependency graph requires coordinated testing.
+they can leave required checks pending.
 
 `ci-success` is the sole required branch check. It gathers every job through
 `re-actors/alls-green`; keep its `needs` and allowed-skip list complete whenever

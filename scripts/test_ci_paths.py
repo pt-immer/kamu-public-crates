@@ -5,7 +5,36 @@ from __future__ import annotations
 
 import unittest
 
-from ci_paths import classify_path, classify_paths
+from ci_paths import BASE_CLASSES, DERIVED_CLASSES, classify_path, classify_paths
+
+# One path selecting exactly one base class, for every base class. Purity is
+# asserted rather than assumed, because an impure entry would let a derived class
+# appear load-bearing on a source it does not actually read.
+REPRESENTATIVE_PATHS = {
+    "iso3166": "crates/iso3166/src/lib.rs",
+    "logging": "crates/logging/src/lib.rs",
+    "money": "crates/money-core/tests/facade.rs",
+    "moneypg": "extensions/money-pg/Cargo.toml",
+    "snap": "crates/snap-crypto/src/lib.rs",
+    "shared": "Cargo.lock",
+    "docs": "README.md",
+    "shell": "ops/new-check.sh",
+}
+
+# The fan-out this repository intends, written independently of the map that
+# implements it. Deriving the expectation from DERIVED_CLASSES would move both
+# sides of the assertion together and prove nothing.
+EXPECTED_FAN_OUT = {
+    "rust": {"iso3166", "logging", "money", "snap", "shared"},
+    "iso": {"iso3166", "shared"},
+    "log": {"logging", "shared"},
+    "money": {"money", "shared"},
+    "snap": {"snap", "shared"},
+    "moneypg": {"moneypg", "shared"},
+    "worker": {"logging", "shared"},
+    "lint": set(BASE_CLASSES),
+    "shell": {"shell"},
+}
 
 
 class PathClassifierTests(unittest.TestCase):
@@ -79,18 +108,9 @@ class PathClassifierTests(unittest.TestCase):
 
     def test_shared_change_fans_out(self) -> None:
         values = classify_paths(["Cargo.lock"])
-        for output in (
-            "rust",
-            "iso",
-            "log",
-            "money",
-            "snap",
-            "moneypg",
-            "lint",
-            "worker",
-        ):
-            with self.subTest(output=output):
-                self.assertTrue(values[output])
+        for name, (sources, _reason) in DERIVED_CLASSES.items():
+            with self.subTest(output=name):
+                self.assertEqual("shared" in sources, values[name])
 
     def test_root_docs_only_stay_docs_only(self) -> None:
         values = classify_paths(["README.md"])
@@ -98,6 +118,42 @@ class PathClassifierTests(unittest.TestCase):
         self.assertTrue(values["lint"])
         self.assertFalse(values["rust"])
         self.assertFalse(values["worker"])
+
+
+class DerivedClassTests(unittest.TestCase):
+    """The fan-out map is an executable specification, not a description."""
+
+    def test_every_edge_names_a_base_class_and_a_reason(self) -> None:
+        for name, (sources, reason) in DERIVED_CLASSES.items():
+            with self.subTest(derived=name):
+                self.assertTrue(sources, "a class with no source can never fire")
+                self.assertTrue(
+                    reason.strip(),
+                    "state why working on these runs this class's jobs",
+                )
+                for source in sources:
+                    self.assertIn(source, BASE_CLASSES)
+
+    def test_every_base_class_has_a_representative_path(self) -> None:
+        self.assertEqual(BASE_CLASSES, set(REPRESENTATIVE_PATHS))
+
+    def test_each_representative_selects_exactly_its_own_base_class(self) -> None:
+        for name, path in REPRESENTATIVE_PATHS.items():
+            with self.subTest(base=name):
+                self.assertEqual({name}, classify_path(path))
+
+    def test_the_map_declares_exactly_the_intended_classes(self) -> None:
+        self.assertEqual(set(EXPECTED_FAN_OUT), set(DERIVED_CLASSES))
+
+    def test_a_derived_class_fires_on_its_sources_and_on_nothing_else(self) -> None:
+        """Both directions: a missing source is a lie, and so is a spare one."""
+        for name, expected in EXPECTED_FAN_OUT.items():
+            for base, path in REPRESENTATIVE_PATHS.items():
+                with self.subTest(derived=name, base=base):
+                    self.assertEqual(
+                        base in expected,
+                        classify_paths([path])[name],
+                    )
 
 
 if __name__ == "__main__":

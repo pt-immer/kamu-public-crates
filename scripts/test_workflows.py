@@ -8,7 +8,7 @@ import pathlib
 import re
 import unittest
 
-from scripts.ci_paths import classify_paths, tracked_paths
+from scripts.ci_paths import DERIVED_CLASSES, classify_paths, tracked_paths
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -93,6 +93,15 @@ class WorkflowPolicyTests(unittest.TestCase):
             if item.strip()
         }
         self.assertEqual(needs - {"changes"}, allowed)
+
+    def test_classifier_outputs_and_derived_classes_are_the_same_set(self) -> None:
+        """A declared output nothing derives is dead; a derived class nothing
+        declares is unreachable. Neither shows up as a failing job."""
+        source = (WORKFLOWS / "on-pr-synced.yml").read_text(encoding="utf-8")
+        block = re.search(r"(?m)^    outputs:\n((?:      \S.*\n)+)", source)
+        self.assertIsNotNone(block, "the changes job declares no outputs")
+        declared = set(re.findall(r"(?m)^      ([a-z0-9_]+):", block.group(1)))
+        self.assertEqual(set(DERIVED_CLASSES), declared)
 
     def test_install_action_tools_are_exactly_pinned(self) -> None:
         versions = {
