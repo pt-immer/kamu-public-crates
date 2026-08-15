@@ -196,6 +196,29 @@ fn every_container_starts_from_the_pinned_rust_toolchain() {
 }
 
 #[test]
+fn clippy_lints_against_the_pinned_toolchain() {
+    // Clippy decides which lints apply from this, so a stale value lints the
+    // lane against a Rust it no longer builds with. It takes the series rather
+    // than the exact patch every other pin here wants.
+    let channel = pinned_toolchain();
+    let series = channel.split('.').take(2).collect::<Vec<_>>().join(".");
+
+    let path = support::lane_root().join("clippy.toml");
+    let declared = support::manifest(&path)
+        .get("msrv")
+        .and_then(toml::Value::as_str)
+        .unwrap_or_else(|| panic!("{} must pin an msrv", path.display()))
+        .to_owned();
+
+    assert_eq!(
+        series,
+        declared,
+        "{} lints against {declared} while rustup builds with {channel}",
+        path.display()
+    );
+}
+
+#[test]
 fn the_tool_manifest_installs_the_pinned_cargo_pgrx() {
     let version = pinned_version();
     let path = support::repository_root().join(".config/dev-tools.json");

@@ -281,12 +281,16 @@ test-hygiene:
 miri-payload:
     cargo +nightly miri test {{ CORE_PATCH }} -p kamu-money-pg-hygiene --test payload_miri
 
+# `--document-private-items` is what makes these recipes check anything. Every
+# `#[pg_extern]` here is a private `fn`, because the published surface is SQL
+# rather than Rust, so without it rustdoc documents almost nothing and therefore
+# validates almost nothing: the recipe passes over a nearly empty input set.
 [doc("Build the extension's API docs under one major, failing on a broken intra-doc link.")]
 doc-pg:
     #!/usr/bin/env bash
     set -euo pipefail
     export RUSTDOCFLAGS="-D warnings"
-    cargo doc {{ CORE_PATCH }} -p kamu-money-pg --no-default-features --features pg18 --no-deps
+    cargo doc {{ CORE_PATCH }} -p kamu-money-pg --no-default-features --features pg18 --no-deps --document-private-items
 
 [doc("Build the extension's docs on every supported PostgreSQL major, failing on warnings.")]
 doc-pg-all:
@@ -295,7 +299,7 @@ doc-pg-all:
     export RUSTDOCFLAGS="-D warnings"
     for pg in 15 16 17 18; do
         echo "=== rustdoc kamu-money-pg pg${pg} ==="
-        cargo doc {{ CORE_PATCH }} -p kamu-money-pg --no-default-features --features "pg${pg}" --no-deps
+        cargo doc {{ CORE_PATCH }} -p kamu-money-pg --no-default-features --features "pg${pg}" --no-deps --document-private-items
     done
 
 # Database and artifact tests
