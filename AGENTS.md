@@ -34,8 +34,13 @@ Repository-wide policy remains at the root. In particular, `lint-shell` and
 - The public workspace uses Edition 2024. `.config/dev-tools.json` owns both
   Rust versions: `rust.msrv` is the floor the root manifest declares and CI
   tests exactly, and `rust.primary` is the toolchain that pins compile-fail
-  goldens. Every other copy is bound to it by `test_dev_environment.py`. The
-  extension lane pins its own toolchain because pgrx 0.19.2 requires it.
+  goldens. `test_dev_environment.py` binds every literal that names a Rust
+  version in the two manifests, the CI toolchain matrix, `clippy.toml`, the
+  `Justfile` and `README.md` — a literal that is neither version fails. Toolchain
+  literals matter more than the floor they restate: `rustup run <version>`
+  addresses a toolchain by name, so one that outlives a bump either resolves to
+  a stale install or does not resolve at all. The extension lane pins its own
+  toolchain because pgrx 0.19.2 requires it, and binds it in its hygiene crate.
 - Never run workspace-wide `--all-features`. `kamu-logging` has mutually
   exclusive native and wasm feature sets; pgrx features select one PostgreSQL
   major. Use the feature matrices in the Justfiles.

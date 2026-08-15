@@ -112,6 +112,41 @@ class DevelopmentEnvironmentPolicyTests(unittest.TestCase):
                 pinned = re.findall(r'"([0-9][0-9.]*)"', matrix)
                 self.assertEqual([msrv], pinned)
 
+    def test_every_pinned_toolchain_literal_names_a_manifest_version(self) -> None:
+        """`rustup run <version>` addresses a toolchain by name, so a literal
+        that outlives a bump either resolves to a stale install or fails to
+        resolve at all. Both read as the gate proving something CI does not.
+        """
+        rust = self.manifest["rust"]
+        allowed = set()
+        for version in (rust["msrv"], rust["primary"]):
+            allowed.add(version)
+            allowed.add(".".join(version.split(".")[:2]))
+
+        sites = {
+            "Justfile": r"(?:cargo \+|rustup run |msrv\()([0-9]+\.[0-9]+(?:\.[0-9]+)?)",
+            "README.md": r"Rust[- ]([0-9]+\.[0-9]+(?:\.[0-9]+)?)",
+            # Clippy gates which lints apply on this, so a stale value lints the
+            # workspace against a Rust it no longer supports.
+            "clippy.toml": r'(?m)^msrv = "([0-9]+\.[0-9]+(?:\.[0-9]+)?)"',
+        }
+        for name, pattern in sites.items():
+            found = set(
+                re.findall(pattern, (ROOT / name).read_text(encoding="utf-8"))
+            )
+            with self.subTest(file=name):
+                self.assertTrue(found, "no pinned toolchain literal to bind")
+                self.assertEqual(set(), found - allowed)
+
+        labels = re.findall(
+            r"msrv\(([0-9]+\.[0-9]+(?:\.[0-9]+)?)\)",
+            (ROOT / "Justfile").read_text(encoding="utf-8"),
+        )
+        self.assertTrue(labels, "no msrv stage label to bind")
+        for label in labels:
+            with self.subTest(label=label):
+                self.assertEqual(rust["msrv"], label)
+
     def test_setup_commands_install_every_required_rust_item(self) -> None:
         commands = setup_commands(self.manifest)
         rust = self.manifest["rust"]

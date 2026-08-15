@@ -180,7 +180,7 @@ def classify_paths(paths: Iterable[str]) -> dict[str, bool]:
             f"{rendered}"
         )
 
-    # Derived values read the base snapshot, because three of them reuse a base
+    # Derived values read the base snapshot, because some of them reuse a base
     # class name and would otherwise consume a value they had just replaced.
     base = dict(classes)
     classes.update(
