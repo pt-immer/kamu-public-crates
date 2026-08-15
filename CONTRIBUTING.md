@@ -74,7 +74,7 @@ Current line-coverage floors are:
 | --- | ---: |
 | `kamu-iso3166` | 98% |
 | `kamu-logging` | 88% |
-| `kamu-money-core` | 80% |
+| `kamu-money-core` | 86% |
 | `kamu-snap-crypto` | 70% |
 | `kamu-snap-response` | 85% |
 

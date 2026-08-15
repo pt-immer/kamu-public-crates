@@ -70,3 +70,45 @@ macro_rules! money {
         AMOUNT
     }};
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::Money;
+    use crate::domain::DOMAIN_MAX;
+    use crate::iso::USD;
+
+    const RENT: Money<USD> = money!(USD, "1500.00");
+    const REFUND: Money<USD> = money!(USD, "-1500.00");
+    const SMALLEST: Money<USD> = money!(USD, "0.000000000000000001");
+    const EDGE: Money<USD> = money!(USD, "999999999999999999.999999999999999999");
+
+    #[test]
+    fn the_macro_reads_a_literal_as_the_amount_a_reviewer_reads() {
+        assert_eq!(RENT.units(), 1_500_000_000_000_000_000_000);
+        assert_eq!(REFUND.units(), -1_500_000_000_000_000_000_000);
+        assert_eq!(SMALLEST.units(), 1);
+        assert_eq!(EDGE.units(), DOMAIN_MAX);
+    }
+
+    #[test]
+    fn the_macro_and_the_runtime_parser_cannot_disagree() {
+        // The whole reason `parse_fixed_point` gained `const` instead of gaining a const twin.
+        // `FromStr` reads the *tagged* form, because it checks the currency code against `C` before
+        // it reads any digits; `money!` takes the currency as a type, so its literal is bare. Both
+        // reach the same parser underneath, which is what this compares.
+        for (tagged, expected) in [
+            ("USD 1500.00", RENT),
+            ("USD -1500.00", REFUND),
+            ("USD 0.000000000000000001", SMALLEST),
+            ("USD 999999999999999999.999999999999999999", EDGE),
+        ] {
+            let parsed: Money<USD> = tagged.parse().expect("the macro accepted this amount");
+            assert_eq!(parsed, expected, "FromStr and money! disagreed on {tagged:?}");
+        }
+    }
+
+    #[test]
+    fn the_macro_is_usable_as_an_ordinary_expression() {
+        assert_eq!((money!(USD, "10.50") + money!(USD, "0.50")).units(), 11_000_000_000_000_000_000);
+    }
+}

@@ -1,47 +1,79 @@
-error[E0432]: unresolved import `kamu_money_core::currency`
-  --> tests/ui/removed_compat_paths.rs:11:22
-   |
-11 | use kamu_money_core::currency::StaticCurrency;
-   |                      ^^^^^^^^ could not find `currency` in `kamu_money_core`
-
-error[E0432]: unresolved import `kamu_money_core::domain`
-  --> tests/ui/removed_compat_paths.rs:12:22
-   |
-12 | use kamu_money_core::domain::SCALE;
-   |                      ^^^^^^ could not find `domain` in `kamu_money_core`
-
 error[E0432]: unresolved import `kamu_money_core::error`
-  --> tests/ui/removed_compat_paths.rs:13:22
+  --> tests/ui/removed_compat_paths.rs:18:22
    |
-13 | use kamu_money_core::error::AmountError;
+18 | use kamu_money_core::error::AmountError;
    |                      ^^^^^ could not find `error` in `kamu_money_core`
 
-error[E0432]: unresolved import `kamu_money_core::money`
-  --> tests/ui/removed_compat_paths.rs:14:22
-   |
-14 | use kamu_money_core::money::Money;
-   |                      ^^^^^ could not find `money` in `kamu_money_core`
-
 error[E0433]: cannot find `ParseMoneyError` in `kamu_money_core`
-  --> tests/ui/removed_compat_paths.rs:20:30
+  --> tests/ui/removed_compat_paths.rs:25:30
    |
-20 |     let _ = kamu_money_core::ParseMoneyError::InvalidSyntax;
+25 |     let _ = kamu_money_core::ParseMoneyError::InvalidSyntax;
    |                              ^^^^^^^^^^^^^^^ could not find `ParseMoneyError` in `kamu_money_core`
    |
 help: an enum with a similar name exists
    |
-20 -     let _ = kamu_money_core::ParseMoneyError::InvalidSyntax;
-20 +     let _ = kamu_money_core::MoneyError::InvalidSyntax;
+25 -     let _ = kamu_money_core::ParseMoneyError::InvalidSyntax;
+25 +     let _ = kamu_money_core::MoneyError::InvalidSyntax;
    |
 
 error[E0425]: cannot find type `UntaggedDivision` in crate `kamu_money_core`
-  --> tests/ui/removed_compat_paths.rs:18:36
+  --> tests/ui/removed_compat_paths.rs:23:36
    |
-18 |     let _: Option<kamu_money_core::UntaggedDivision> = None;
+23 |     let _: Option<kamu_money_core::UntaggedDivision> = None;
    |                                    ^^^^^^^^^^^^^^^^ not found in `kamu_money_core`
 
 error[E0425]: cannot find value `DOMAIN_MAX` in crate `kamu_money_core`
-  --> tests/ui/removed_compat_paths.rs:19:30
+  --> tests/ui/removed_compat_paths.rs:24:30
    |
-19 |     let _ = kamu_money_core::DOMAIN_MAX;
+24 |     let _ = kamu_money_core::DOMAIN_MAX;
    |                              ^^^^^^^^^^ not found in `kamu_money_core`
+
+error[E0603]: module `allocation` is private
+  --> tests/ui/removed_compat_paths.rs:15:22
+   |
+15 | use kamu_money_core::allocation::SplitParts;
+   |                      ^^^^^^^^^^ private module
+   |
+note: the module `allocation` is defined here
+  --> src/lib.rs
+   |
+   | mod allocation;
+   | ^^^^^^^^^^^^^^
+
+error[E0603]: module `currency` is private
+  --> tests/ui/removed_compat_paths.rs:16:22
+   |
+16 | use kamu_money_core::currency::StaticCurrency;
+   |                      ^^^^^^^^  -------------- trait `StaticCurrency` is not publicly re-exported
+   |                      |
+   |                      private module
+   |
+note: the module `currency` is defined here
+  --> src/lib.rs
+   |
+   | mod currency;
+   | ^^^^^^^^^^^^
+
+error[E0603]: module `domain` is private
+  --> tests/ui/removed_compat_paths.rs:17:22
+   |
+17 | use kamu_money_core::domain::SCALE;
+   |                      ^^^^^^ private module
+   |
+note: the module `domain` is defined here
+  --> src/lib.rs
+   |
+   | mod domain;
+   | ^^^^^^^^^^
+
+error[E0603]: module `money` is private
+  --> tests/ui/removed_compat_paths.rs:19:22
+   |
+19 | use kamu_money_core::money::Money;
+   |                      ^^^^^ private module
+   |
+note: the module `money` is defined here
+  --> src/lib.rs
+   |
+   | mod money;
+   | ^^^^^^^^^

@@ -10,17 +10,17 @@ help: the trait `transparent::sealed::Sealed` is not implemented for `Counterfei
 11 | struct Counterfeit;
    | ^^^^^^^^^^^^^^^^^^
 help: the following other types implement trait `transparent::sealed::Sealed`
-  --> src/wire.rs
+  --> src/wire/transparent.rs
    |
-   |         impl<C: crate::StaticCurrency> Sealed for crate::Money<C> {}
-   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Money<C>`
-   |         impl<Base: crate::StaticCurrency, Quote: crate::StaticCurrency> Sealed for crate::Rate<Base, Quote> {}
-   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `kamu_money_core::Rate<Base, Quote>`
+   |     impl<C: crate::StaticCurrency> Sealed for crate::Money<C> {}
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Money<C>`
+   |     impl<Base: crate::StaticCurrency, Quote: crate::StaticCurrency> Sealed for crate::Rate<Base, Quote> {}
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `kamu_money_core::Rate<Base, Quote>`
 note: required by a bound in `Scalar`
-  --> src/wire.rs
+  --> src/wire/transparent.rs
    |
-   |     pub trait Scalar: sealed::Sealed + Sized {
-   |                       ^^^^^^^^^^^^^^ required by this bound in `Scalar`
+   | pub trait Scalar: sealed::Sealed + Sized {
+   |                   ^^^^^^^^^^^^^^ required by this bound in `Scalar`
    = note: `Scalar` is a "sealed trait", because to implement it you also need to implement `kamu_money_core::wire::transparent::sealed::Sealed`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
    = help: the following types implement the trait:
              kamu_money_core::Money<C>

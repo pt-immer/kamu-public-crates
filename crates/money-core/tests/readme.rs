@@ -5,7 +5,7 @@
 //! mirror the examples in `README.md`; if you change one, change the other.
 //!
 //! (The serde example there is not here: it needs the `serde` feature and derive macros, and
-//! `tests/wire.rs` already covers the same shapes.)
+//! `src/wire/`'s own tests already cover the same shapes.)
 
 use core::num::NonZeroU32;
 use kamu_money_core::{Money, Rounding, iso::USD};

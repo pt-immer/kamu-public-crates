@@ -78,7 +78,7 @@ async fn a_row_cannot_be_read_as_the_wrong_currency() {
 /// The sqlx ingress for `Rate`'s positivity rule.
 ///
 /// The other four — raw constructor, text parser, and serde's two forms — are proven offline in
-/// `rate_ingress.rs`, along with `postgres-types`, whose `FromSql` is a pure function of bytes
+/// `src/rate/price.rs`, along with `postgres-types`, whose `FromSql` is a pure function of bytes
 /// and an OID. sqlx's `Decode` is not: it wants a `PgValueRef`, and hand-building one would
 /// prove a decoder works on a value the server never produces. So this half is proven against a
 /// real column on a real server, which is the thing the claim is actually about.

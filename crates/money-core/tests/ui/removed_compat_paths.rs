@@ -7,7 +7,12 @@
 //! One case rather than several, because the committed `.stderr` then also pins that each name
 //! fails for its own reason — a module that no longer exists resolves differently from a root
 //! re-export that no longer exists.
+//!
+//! `allocation`, `currency`, `domain` and `money` fail as `E0603` private rather than `E0432`
+//! absent: the crate's own modules carry those names. The refusal is the same, and making one of
+//! them `pub` would compile this file and fail the suite.
 
+use kamu_money_core::allocation::SplitParts;
 use kamu_money_core::currency::StaticCurrency;
 use kamu_money_core::domain::SCALE;
 use kamu_money_core::error::AmountError;
@@ -18,5 +23,5 @@ fn main() {
     let _: Option<kamu_money_core::UntaggedDivision> = None;
     let _ = kamu_money_core::DOMAIN_MAX;
     let _ = kamu_money_core::ParseMoneyError::InvalidSyntax;
-    let _: Option<(StaticCurrency, SCALE, AmountError, Money)> = None;
+    let _: Option<(SplitParts, StaticCurrency, SCALE, AmountError, Money)> = None;
 }

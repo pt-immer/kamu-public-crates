@@ -137,4 +137,59 @@ mod tests {
         assert_eq!(Iso4217::ALL.numeric(), 8);
         assert_eq!(Iso4217::ALL.name(), "Lek");
     }
+
+    // The register's identity facts are frozen: persisted data depends on them.
+    //
+    // `kamu-money-pg` derives one SQL type per code, `kmoney_mixed` resolves its
+    // stored 2-byte numeric against this register at every read, and
+    // `stable_hash(code.numeric(), units)` is persisted by downstream systems. A
+    // register refresh that removes a code orphans production columns; one that
+    // changes a numeric silently reinterprets stored money and moves every
+    // persisted hash without a `STABLE_HASH_VERSION` bump. The file-level SHA-256
+    // gate makes any edition swap loud, but it cannot say *which* facts moved —
+    // this digest pins exactly the facts persistence depends on.
+
+    use core::fmt::Write as _;
+
+    /// FNV-1a 64, over the crate's own FNV constants so the pin cannot be measuring a
+    /// different algorithm from the one `stable_hash` persists with. No finaliser: this
+    /// digest is a change detector, not a stored key.
+    fn fnv1a64(bytes: &[u8]) -> u64 {
+        let mut hash = crate::stable_hash::FNV_OFFSET_BASIS;
+        for &b in bytes {
+            hash ^= u64::from(b);
+            hash = hash.wrapping_mul(crate::stable_hash::FNV_PRIME);
+        }
+        hash
+    }
+
+    /// Every `(alpha3, numeric)` pair, digested in `EVERY` order.
+    ///
+    /// This failing means a register update touched currency IDENTITY, not just
+    /// names or exponents. Before re-blessing the constant, apply the lifecycle
+    /// policy (`VENDORED.md`, "Identity facts are append-only"):
+    ///
+    /// - an ADDED code is fine — re-bless, and note the new type in the extension's
+    ///   release;
+    /// - a REMOVED code is a breaking release: existing `kmoney_<code>` columns and
+    ///   stored `kmoney_mixed` rows of that currency become unreadable on upgrade.
+    ///   The register keeps withdrawn codes instead;
+    /// - a CHANGED numeric is a data-corruption event: stored `kmoney_mixed`
+    ///   payloads re-resolve to the wrong currency and every persisted
+    ///   `stable_hash` moves. It requires a `STABLE_HASH_VERSION` decision, never a
+    ///   silent re-bless.
+    #[test]
+    fn the_alpha3_to_numeric_mapping_is_frozen() {
+        let mut canonical = String::new();
+        for code in Iso4217::EVERY {
+            writeln!(canonical, "{}:{}", code.alpha3(), code.numeric())
+                .expect("writing to a String cannot fail");
+        }
+        assert_eq!(
+            fnv1a64(canonical.as_bytes()),
+            0x8AE9_E93E_B03A_E006,
+            "the alpha3->numeric mapping changed; this is persisted-data identity, not a data \
+             refresh -- read this test's doc comment before re-blessing"
+        );
+    }
 }

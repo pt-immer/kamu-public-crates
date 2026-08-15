@@ -527,7 +527,7 @@ jobs:
       - run: just doc-money
 
   coverage-money:
-    name: coverage (kamu-money-core >= 80% lines)
+    name: coverage (kamu-money-core >= 86% lines)
     needs: changes
     if: ${{ needs.changes.outputs.money == 'true' }}
     runs-on: ubuntu-latest

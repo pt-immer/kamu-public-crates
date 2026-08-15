@@ -3,7 +3,7 @@
 `extensions/money-pg` is an excluded Cargo workspace containing the `kmoney`
 pgrx extension and its database validation harness. It implements the
 PostgreSQL side of
-[`kamu-money-core` C8](../../crates/money-core/DESIGN.md#c8--postgresql-boundary).
+[`kamu-money-core`'s PostgreSQL boundary](../../crates/money-core/DESIGN.md#the-postgresql-boundary).
 
 Current support:
 

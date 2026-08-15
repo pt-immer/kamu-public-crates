@@ -26,7 +26,7 @@ class PathClassifierTests(unittest.TestCase):
             "crates/money-core/Cargo.toml",
             "crates/money-core/build.rs",
             "crates/money-core/build/iso4217.rs",
-            "crates/money-core/src/arith.rs",
+            "crates/money-core/src/arithmetic/kernel/add_sub.rs",
             "crates/money-core/vendor/list-one.xml",
         ):
             with self.subTest(path=path):

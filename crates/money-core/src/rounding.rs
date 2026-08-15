@@ -2,63 +2,65 @@
 
 use ethnum::I256;
 
-/// How to resolve a division that does not divide evenly.
+/// Declare the modes once.
 ///
-/// There is no default. Every lossy operation takes one of these explicitly, because
-/// a default rounding mode is a decision made by whoever wrote the library rather than
-/// whoever owns the money.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-// A new rounding mode must not break a downstream `match` at compile time -- this is a published
-// money crate, and adding a mode is additive. Downstream must carry a `_` arm; in-crate matches
-// stay exhaustive.
-#[non_exhaustive]
-pub enum Rounding {
+/// The variant, its place in [`Rounding::ALL`] and its canonical name are one line here, so a
+/// mode cannot exist while `ALL`, `from_name`, `names` and every test that iterates `ALL`
+/// quietly omit it. A second list — of any kind, checked by any assertion — is a list that can
+/// be edited alone.
+macro_rules! rounding_modes {
+    ($($(#[$doc:meta])* $variant:ident => $name:literal,)+) => {
+        /// How to resolve a division that does not divide evenly.
+        ///
+        /// There is no default. Every lossy operation takes one of these explicitly, because
+        /// a default rounding mode is a decision made by whoever wrote the library rather than
+        /// whoever owns the money.
+        #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+        // A new rounding mode must not break a downstream `match` at compile time -- this is a
+        // published money crate, and adding a mode is additive. Downstream must carry a `_` arm;
+        // in-crate matches stay exhaustive.
+        #[non_exhaustive]
+        pub enum Rounding {
+            $($(#[$doc])* $variant,)+
+        }
+
+        impl Rounding {
+            /// Every mode, for exhaustive testing.
+            pub const ALL: &'static [Self] = &[$(Self::$variant,)+];
+
+            /// The canonical `snake_case` name, for a config file, a wire, or a SQL argument.
+            ///
+            /// Deliberately not `Display`: these are identifiers to be matched, not prose to be
+            /// shown to anyone, and a `Display` impl invites them into user-facing text where
+            /// they would need translating.
+            #[must_use]
+            pub const fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name,)+
+                }
+            }
+        }
+    };
+}
+
+rounding_modes! {
     /// Ties to even. Unbiased across many roundings; the IEEE-754 default.
-    HalfEven,
+    HalfEven => "half_even",
     /// Ties away from zero, matching PostgreSQL's `round()`.
-    HalfAwayFromZero,
+    HalfAwayFromZero => "half_away_from_zero",
     /// Ties toward zero.
-    HalfTowardZero,
+    HalfTowardZero => "half_toward_zero",
     /// Truncate.
-    TowardZero,
+    TowardZero => "toward_zero",
     /// Always magnify.
-    AwayFromZero,
+    AwayFromZero => "away_from_zero",
     /// Toward negative infinity.
-    Floor,
+    Floor => "floor",
     /// Toward positive infinity.
-    Ceil,
+    Ceil => "ceil",
 }
 
 impl Rounding {
-    /// Every mode, for exhaustive testing.
-    pub const ALL: &'static [Self] = &[
-        Self::HalfEven,
-        Self::HalfAwayFromZero,
-        Self::HalfTowardZero,
-        Self::TowardZero,
-        Self::AwayFromZero,
-        Self::Floor,
-        Self::Ceil,
-    ];
-
-    /// The canonical `snake_case` name, for a config file, a wire, or a SQL argument.
-    ///
-    /// Deliberately not `Display`: these are identifiers to be matched, not prose to be shown
-    /// to anyone, and a `Display` impl invites them into user-facing text where they would
-    /// need translating.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::HalfEven => "half_even",
-            Self::HalfAwayFromZero => "half_away_from_zero",
-            Self::HalfTowardZero => "half_toward_zero",
-            Self::TowardZero => "toward_zero",
-            Self::AwayFromZero => "away_from_zero",
-            Self::Floor => "floor",
-            Self::Ceil => "ceil",
-        }
-    }
-
     /// Parse a mode from its canonical name.
     ///
     /// `None` rather than a default, for the reason in this type's own documentation: a

@@ -81,8 +81,9 @@ To move to a newer edition:
    digest against the file, so a half-done step 2 cannot pass as complete.
 4. Update the pinned count in `src/iso.rs`'s
    `the_register_matches_the_edition_it_was_generated_from`.
-5. If `tests/register_lifecycle.rs` fails, a currency's IDENTITY moved — apply
-   the append-only policy below before re-blessing its digest.
+5. If `src/iso.rs`'s `the_alpha3_to_numeric_mapping_is_frozen` fails, a
+   currency's IDENTITY moved — apply the append-only policy below before
+   re-blessing its digest.
 
 Each failure is the intended prompt for the next step, not an obstacle to route
 around. The ordering matters: step 1 breaks the build rather than the tests, so
@@ -112,8 +113,8 @@ reference data:
   rendered text (trailing zeros), which moves goldens and any `::text`
   expression index, and deserves its own release note.
 
-`tests/register_lifecycle.rs` pins the digest of the full mapping so none of
-this can happen as a side effect of step 1.
+`src/iso.rs`'s `the_alpha3_to_numeric_mapping_is_frozen` pins the digest of the
+full mapping so none of this can happen as a side effect of step 1.
 
 ## What the build script checks, as it reads
 

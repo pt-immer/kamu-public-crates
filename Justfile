@@ -336,12 +336,17 @@ cov-snap-crypto:
 cov-snap-response:
     cargo llvm-cov nextest -p kamu-snap-response --all-features --fail-under-lines 85
 
-# The 80% floor is below the measured 84.89% because Docker-backed driver paths
+# The 86% floor sits below the measured 88.00% because Docker-backed driver paths
 # are excluded. `build/` is covered by register tests; trybuild runs no library
 # code.
+#
+# Raised from 80% once the unit tests moved into `src/**`. Inline `#[cfg(test)]`
+# modules are instrumented and counted while `tests/**` binaries never were, so
+# the old floor left roughly eleven points of slack that no production test had
+# earned.
 [doc("Enforce kamu-money-core's Docker-free line-coverage floor.")]
 cov-money:
-    cargo llvm-cov nextest -p kamu-money-core --all-features -E 'not (binary(compile_fail) or binary(pg_roundtrip) or binary(sqlx_roundtrip) or binary(pg_native_column) or binary(yugabyte_roundtrip))' --ignore-filename-regex 'build/' --fail-under-lines 80
+    cargo llvm-cov nextest -p kamu-money-core --all-features -E 'not (binary(compile_fail) or binary(pg_roundtrip) or binary(sqlx_roundtrip) or binary(pg_native_column) or binary(yugabyte_roundtrip))' --ignore-filename-regex 'build/' --fail-under-lines 86
 
 # Coverage gates for every gated crate
 [doc("Enforce every configured line-coverage floor.")]

@@ -74,6 +74,14 @@ def classify_path(raw_path: str) -> set[str]:
     elif path.startswith("crates/money-core/"):
         classes.add("money")
         relative = path.removeprefix("crates/money-core/")
+        # The extension lane patches kamu-money-core to this path and compiles it,
+        # so its compiled package inputs select that lane as well.
+        #
+        # Unit tests live inline under `src/`, and a dependency's `#[cfg(test)]`
+        # code is never compiled, so a test-only edit selects a lane it cannot
+        # affect. That over-selection is deliberate. This function receives paths,
+        # not diffs; deciding from hunk ranges would make a missed lane run the
+        # quiet failure, and a missed lane run is how a release gate goes unproven.
         if (
             relative in {"Cargo.toml", "build.rs"}
             or relative.startswith(("build/", "src/", "vendor/"))

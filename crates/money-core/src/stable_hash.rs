@@ -13,9 +13,9 @@
 pub const STABLE_HASH_VERSION: u32 = 1;
 
 /// FNV-1a 64-bit offset basis, per the FNV specification.
-const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+pub(crate) const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 /// FNV-1a 64-bit prime, per the FNV specification.
-const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+pub(crate) const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
 /// Hash the canonical payload of a money value: ISO numeric code, then canonical units.
 ///
@@ -64,7 +64,7 @@ pub const fn fold_to_i32(hash: u64) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{fold_to_i32, stable_hash};
-    use crate::domain_impl::DOMAIN_MAX;
+    use crate::domain::DOMAIN_MAX;
     use std::collections::BTreeSet;
 
     /// Golden vectors computed independently from the documented algorithm.

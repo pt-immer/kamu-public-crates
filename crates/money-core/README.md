@@ -58,20 +58,19 @@ the same choice `chrono` and `uuid` make.
 ## API map
 
 Start at the crate root: `Money`, `Rate`, `Iso4217`, `Rounding`, `Division`,
-`Residue`, and `MoneyError`.
+`Residue`, `SplitParts`, and `MoneyError`.
 
 | Need | Path |
 | ---- | ---- |
 | ISO currency markers | `iso` |
 | Locale display and canonical text | `locale`, `text` |
-| Split iterator and narrow errors | `allocation`, `errors` |
+| Narrow per-operation errors | `errors` |
 | Raw units, bounds, residue internals, stable hashing | `advanced` |
 | Serde formats | `wire` |
 | PostgreSQL driver traits | `adapters::postgres`, `adapters::sqlx` |
 
-The earlier flat module paths remain as deprecated, documentation-hidden
-migration shims through `0.1.x`. They are scheduled for removal in `0.2.0`;
-compiler notes name each replacement.
+The earlier flat module paths were removed in `0.2.0`; `CHANGELOG.md` names
+each replacement.
 
 ## Allocation conserves the total
 
@@ -127,9 +126,9 @@ Credit, provenance and the redistribution position are in
 
 ## Design
 
-[`DESIGN.md`](DESIGN.md) carries the current C1–C10 contract and points each
-invariant to executable evidence. It also records the alternatives deliberately
-excluded from the API.
+[`DESIGN.md`](DESIGN.md) carries the shape, the constraints other systems
+impose, and the alternatives deliberately excluded from the API. What the crate
+promises is stated on the types and proved by their tests.
 
 ## Examples
 
