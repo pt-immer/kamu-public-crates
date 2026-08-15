@@ -31,10 +31,16 @@ Repository-wide policy remains at the root. In particular, `lint-shell` and
 
 ## Hard invariants
 
-- The public workspace uses Edition 2024 and MSRV 1.94.0. Its primary and
-  compile-fail toolchain is pinned to Rust 1.96.0; CI also tests current stable
-  and exact MSRV. The extension lane uses Rust 1.96.0 because pgrx 0.19.2
-  requires it.
+- The public workspace uses Edition 2024. `.config/dev-tools.json` owns both
+  Rust versions: `rust.msrv` is the floor the root manifest declares and CI
+  tests exactly, and `rust.primary` is the toolchain that pins compile-fail
+  goldens. `test_dev_environment.py` binds every literal that names a Rust
+  version in the two manifests, the CI toolchain matrix, `clippy.toml`, the
+  `Justfile` and `README.md` — a literal that is neither version fails. Toolchain
+  literals matter more than the floor they restate: `rustup run <version>`
+  addresses a toolchain by name, so one that outlives a bump either resolves to
+  a stale install or does not resolve at all. The extension lane pins its own
+  toolchain because pgrx 0.19.2 requires it, and binds it in its hygiene crate.
 - Never run workspace-wide `--all-features`. `kamu-logging` has mutually
   exclusive native and wasm feature sets; pgrx features select one PostgreSQL
   major. Use the feature matrices in the Justfiles.
@@ -226,10 +232,9 @@ their commands.
   flags.
 - The root gate stays Docker-free. Docker-dependent coverage belongs to CI or
   the extension gate and must be named as non-coverage when omitted.
-- Coverage floors are `kamu-iso3166` 98%, `kamu-logging` 88%,
-  `kamu-money-core` 86%, `kamu-snap-crypto` 70%, and
-  `kamu-snap-response` 85%. The four thin framework adapters are
-  behavior/compile-tested but have no percentage floor.
+- Each line-coverage floor lives in its `cov-*` recipe and nowhere else, beside
+  the reason it sits where it does. Five crates have one; the four thin
+  framework adapters are behavior/compile-tested without a percentage floor.
 - A floor is set only after measurement. New behavior lands with tests.
 - Markdown fences need languages, tables must lint, and Taplo owns TOML
   formatting.
@@ -241,15 +246,18 @@ their commands.
 repository surface has no owner. `just test-repo-policy` proves every tracked
 path remains classified.
 
-Compiled package inputs under `crates/money-core` also select the dependent
-`moneypg` lane; crate documentation alone does not. A path-filtered job must not
-depend on a job with a narrower path condition unless it handles skipped
-dependencies explicitly. The workflow policy test simulates this skip cascade
-for every tracked path.
+Why working on one crate runs another's jobs is answered by `DERIVED_CLASSES` in
+`scripts/ci_paths.py`, which carries every fan-out edge with its reason. The
+reason is a required field and the map is checked against an independently
+written expectation, so an edge cannot be added, widened or narrowed silently.
+Change the map, not this paragraph.
+
+A path-filtered job must not depend on a job with a narrower path condition
+unless it handles skipped dependencies explicitly. The workflow policy test
+simulates this skip cascade for every tracked path.
 
 Heavy jobs use job-level conditions. Do not add workflow-level `paths:` filters:
-they can leave required checks pending. The six SNAP crates share one change
-class because their dependency graph requires coordinated testing.
+they can leave required checks pending.
 
 `ci-success` is the sole required branch check. It gathers every job through
 `re-actors/alls-green`; keep its `needs` and allowed-skip list complete whenever

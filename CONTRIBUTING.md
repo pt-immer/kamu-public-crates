@@ -29,7 +29,7 @@ just ci         # gate plus publish dry-runs
 ```
 
 Run `just gate` before pushing a public-workspace change. It covers formatting,
-Clippy, tests and feature permutations, exact MSRV 1.94.0, documentation,
+Clippy, tests and feature permutations, the exact MSRV, documentation,
 cross-target builds, dependency policy, spelling, repository hygiene, and
 enforced coverage.
 
@@ -68,18 +68,11 @@ Do not use workspace-wide `--all-features`. `kamu-logging` has mutually
 exclusive native and wasm features, and pgrx features select one PostgreSQL
 major. The Justfiles hold the supported matrices.
 
-Current line-coverage floors are:
-
-| Crate | Floor |
-| --- | ---: |
-| `kamu-iso3166` | 98% |
-| `kamu-logging` | 88% |
-| `kamu-money-core` | 86% |
-| `kamu-snap-crypto` | 70% |
-| `kamu-snap-response` | 85% |
-
-The four thin Actix/axum adapters are behavior- and compile-tested without a
-percentage floor.
+Five crates carry a line-coverage floor, one `cov-*` recipe each, gathered by
+`just cov-all`. Each floor lives in its recipe and nowhere else, beside the
+reason it sits where it does; `just cov-all` prints the measurement against it.
+A floor is set from a measurement, never from a target. The four thin
+Actix/axum adapters are behavior- and compile-tested without one.
 
 ## Commits
 

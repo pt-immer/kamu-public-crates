@@ -318,32 +318,32 @@ cov:
 # Coverage gate for kamu-logging (no --all-features: systemd XOR wasm32)
 [doc("Enforce kamu-logging's line-coverage floor.")]
 cov-logging:
-    # Measured 92.67% after the 2.0 ownership/Actix tests. Keep 4.67 points for
-    # target-only terminal, environment, and wasm branches the host run cannot hit.
+    # The floor sits below the measurement to leave the target-only terminal,
+    # environment and wasm branches a host run cannot reach.
     cargo llvm-cov nextest -p kamu-logging --fail-under-lines 88
 
-# Coverage gate for kamu-snap-crypto. Floor 70 (measured ~74%): the default-on
-# `webhook` providers ship without tests upstream; raising this is future work.
+# Coverage gate for kamu-snap-crypto. The floor is the lowest here because the
+# default-on `webhook` providers ship without tests upstream; raising it is
+# future work.
 [doc("Enforce kamu-snap-crypto's line-coverage floor.")]
 cov-snap-crypto:
     cargo llvm-cov nextest -p kamu-snap-crypto --all-features --fail-under-lines 70
 
-# Coverage gate for kamu-snap-response. Floor 85, measured 90.11% lines
-# (687 regions, 465 lines). The five-point margin absorbs LLVM
-# instrumentation drift. Framework adapters are behavior-tested by the workspace
-# suite but intentionally not percentage-gated.
+# Coverage gate for kamu-snap-response. The floor sits below the measurement so
+# LLVM instrumentation drift cannot fail the gate on its own. The four framework
+# adapters are behavior-tested by the workspace suite and deliberately carry no
+# percentage floor.
 [doc("Enforce kamu-snap-response's line-coverage floor.")]
 cov-snap-response:
     cargo llvm-cov nextest -p kamu-snap-response --all-features --fail-under-lines 85
 
-# The 86% floor sits below the measured 88.00% because Docker-backed driver paths
-# are excluded. `build/` is covered by register tests; trybuild runs no library
+# The floor sits below the measurement because the Docker-backed driver paths are
+# excluded here. `build/` is covered by register tests; trybuild runs no library
 # code.
 #
-# Raised from 80% once the unit tests moved into `src/**`. Inline `#[cfg(test)]`
-# modules are instrumented and counted while `tests/**` binaries never were, so
-# the old floor left roughly eleven points of slack that no production test had
-# earned.
+# It counts the unit tests, which live in `src/**`: cargo-llvm-cov instruments
+# inline `#[cfg(test)]` modules and never instrumented the `tests/**` binaries
+# they replaced, so a floor set against the old layout measures something else.
 [doc("Enforce kamu-money-core's Docker-free line-coverage floor.")]
 cov-money:
     cargo llvm-cov nextest -p kamu-money-core --all-features -E 'not (binary(compile_fail) or binary(pg_roundtrip) or binary(sqlx_roundtrip) or binary(pg_native_column) or binary(yugabyte_roundtrip))' --ignore-filename-regex 'build/' --fail-under-lines 86

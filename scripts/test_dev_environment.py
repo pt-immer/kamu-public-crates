@@ -8,6 +8,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import tempfile
 import unittest
 from collections.abc import Callable
@@ -73,6 +74,78 @@ class DevelopmentEnvironmentPolicyTests(unittest.TestCase):
             self.assertIn(f'"{component}"', toolchain)
         for target in rust["primary_targets"]:
             self.assertIn(f'"{target}"', toolchain)
+
+    def test_every_msrv_copy_is_bound_to_the_tool_manifest(self) -> None:
+        """`rust.msrv` is the floor; nothing else may state a different one.
+
+        Each site below enforces the MSRV somewhere the others cannot reach —
+        Cargo refuses an older toolchain, the CI matrix is what actually
+        compiles against it, and the Worker example is a separate workspace
+        that cannot inherit the root manifest.
+        """
+        msrv = self.manifest["rust"]["msrv"]
+        major_minor = ".".join(msrv.split(".")[:2])
+
+        manifests = (
+            ROOT / "Cargo.toml",
+            ROOT / "crates" / "logging" / "examples" / "cloudflare-worker" / "Cargo.toml",
+        )
+        for manifest in manifests:
+            with self.subTest(manifest=str(manifest.relative_to(ROOT))):
+                declared = re.search(
+                    r'(?m)^rust-version = "([0-9.]+)"$',
+                    manifest.read_text(encoding="utf-8"),
+                )
+                self.assertIsNotNone(declared, "no rust-version to bind")
+                self.assertEqual(
+                    major_minor,
+                    ".".join(declared.group(1).split(".")[:2]),
+                )
+
+        workflow = (
+            ROOT / ".github" / "workflows" / "on-pr-synced.yml"
+        ).read_text(encoding="utf-8")
+        matrices = re.findall(r"(?m)^        toolchain: \[(.+)\]$", workflow)
+        self.assertTrue(matrices, "no toolchain matrix to bind")
+        for matrix in matrices:
+            with self.subTest(matrix=matrix):
+                pinned = re.findall(r'"([0-9][0-9.]*)"', matrix)
+                self.assertEqual([msrv], pinned)
+
+    def test_every_pinned_toolchain_literal_names_a_manifest_version(self) -> None:
+        """`rustup run <version>` addresses a toolchain by name, so a literal
+        that outlives a bump either resolves to a stale install or fails to
+        resolve at all. Both read as the gate proving something CI does not.
+        """
+        rust = self.manifest["rust"]
+        allowed = set()
+        for version in (rust["msrv"], rust["primary"]):
+            allowed.add(version)
+            allowed.add(".".join(version.split(".")[:2]))
+
+        sites = {
+            "Justfile": r"(?:cargo \+|rustup run |msrv\()([0-9]+\.[0-9]+(?:\.[0-9]+)?)",
+            "README.md": r"Rust[- ]([0-9]+\.[0-9]+(?:\.[0-9]+)?)",
+            # Clippy gates which lints apply on this, so a stale value lints the
+            # workspace against a Rust it no longer supports.
+            "clippy.toml": r'(?m)^msrv = "([0-9]+\.[0-9]+(?:\.[0-9]+)?)"',
+        }
+        for name, pattern in sites.items():
+            found = set(
+                re.findall(pattern, (ROOT / name).read_text(encoding="utf-8"))
+            )
+            with self.subTest(file=name):
+                self.assertTrue(found, "no pinned toolchain literal to bind")
+                self.assertEqual(set(), found - allowed)
+
+        labels = re.findall(
+            r"msrv\(([0-9]+\.[0-9]+(?:\.[0-9]+)?)\)",
+            (ROOT / "Justfile").read_text(encoding="utf-8"),
+        )
+        self.assertTrue(labels, "no msrv stage label to bind")
+        for label in labels:
+            with self.subTest(label=label):
+                self.assertEqual(rust["msrv"], label)
 
     def test_setup_commands_install_every_required_rust_item(self) -> None:
         commands = setup_commands(self.manifest)

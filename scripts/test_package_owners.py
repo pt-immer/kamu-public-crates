@@ -47,6 +47,33 @@ class PackageOwnershipTests(unittest.TestCase):
             ROOT / ".github/dependabot.yml"
         ).read_text(encoding="utf-8")
 
+    def test_each_changelog_opens_on_the_version_its_manifest_carries(
+        self,
+    ) -> None:
+        """The release workflow binds the tag to the manifest; this binds the
+        other end, so a bump cannot land with the changelog describing the
+        version before it.
+
+        Both heading styles in the tree are accepted — bracketed Keep a
+        Changelog and bare — because the claim is the version, not the format.
+        """
+        for crate in sorted((ROOT / "crates").iterdir()):
+            manifest = crate / "Cargo.toml"
+            if not manifest.is_file():
+                continue
+            with manifest.open("rb") as source:
+                version = tomllib.load(source)["package"]["version"]
+
+            changelog = crate / "CHANGELOG.md"
+            with self.subTest(crate=crate.name):
+                self.assertTrue(changelog.is_file(), "no changelog to bind")
+                heading = re.search(
+                    r"(?m)^## \[?(\d+\.\d+\.\d+[^\]\s]*)\]?",
+                    changelog.read_text(encoding="utf-8"),
+                )
+                self.assertIsNotNone(heading, "no released version heading")
+                self.assertEqual(version, heading.group(1))
+
     def test_every_standalone_package_has_an_owner_record(self) -> None:
         self.assertEqual(set(self.owners), standalone_manifests())
 
