@@ -208,14 +208,15 @@ fn every_selected_toolchain_is_a_reference_or_a_named_channel() {
     let mut referenced = 0_usize;
     for (source, value) in selected_toolchains() {
         let value = unquoted(&value);
-        if value.contains("outputs.rust_") {
+        let reads_pin = value.contains("outputs.rust_");
+        if reads_pin {
             referenced += 1;
         }
-        let accepted = value.contains("${{") || matches!(value, "stable" | "nightly");
-        assert!(
-            accepted,
-            "{source} selects {value}, which is neither a manifest reference nor a named channel"
-        );
+        // Any `${{ }}` would let `${{ env.ANYTHING }}` read as a manifest reference. The
+        // matrix is accepted because the matrix itself is checked to read a pin.
+        let accepted =
+            reads_pin || value.contains("matrix.toolchain") || matches!(value, "stable" | "nightly");
+        assert!(accepted, "{source} selects {value}, which reads no pin this repository states");
     }
     assert!(referenced > 0, "nothing reads a pin; this would pass vacuously");
 }
