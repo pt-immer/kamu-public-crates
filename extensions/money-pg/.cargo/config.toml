@@ -24,3 +24,12 @@
 # PostgreSQL data directories that pgrx creates for test instances.
 [env]
 PGRX_HOME = { value = ".pgrx", relative = true, force = true }
+
+# The deny lives here rather than on a recipe because `set shell := ["bash", "-uc"]` gives every
+# non-shebang recipe line its own shell, so an `export RUSTDOCFLAGS=` written above an invocation
+# is inert -- a spelling that reads correct and denies nothing. Here no recipe can omit it, and a
+# plain `cargo doc` gets it too. A later `--allow` wins over this deny, so `gates.rs` refuses one.
+# `--document-private-items` is deliberately NOT here: it is a `cargo doc` flag, and these reach
+# the doctest runs of `cargo test --doc` as well.
+[build]
+rustdocflags = ["-Dwarnings"]

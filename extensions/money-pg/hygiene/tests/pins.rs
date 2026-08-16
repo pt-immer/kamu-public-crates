@@ -1,6 +1,12 @@
 //! The lane pins two toolchains, and each is ONE fact spelled in many places: pgrx across
-//! manifests, Dockerfiles, the tool manifest and CI, and Rust across `rust-toolchain.toml`,
-//! three container images, `clippy.toml` and the lane manifest.
+//! manifests, Dockerfiles, the tool manifest and CI, and Rust across `rust-toolchain.toml` and
+//! three container images.
+//!
+//! The lane's MSRV is a THIRD fact, spelled in `clippy.toml` and the lane manifest, and it is
+//! not the pinned toolchain. An MSRV is the oldest compiler the lane supports; the channel is
+//! the one it is built with. Deriving either from the other would re-declare a floor nobody
+//! verified, and would leave `clippy::incompatible_msrv` comparing the compiler against itself,
+//! unable to report anything. What ties them is an inequality, checked below.
 //!
 //! The two disagree differently, which is why both are here.
 //!
@@ -195,61 +201,69 @@ fn every_container_starts_from_the_pinned_rust_toolchain() {
     }
 }
 
-/// The series of the pinned toolchain, which is what a floor is spelled in.
-///
-/// It carries its own shape control rather than borrowing the container guard's:
-/// taking two components of `stable` yields `stable`, which would then be
-/// compared against a version and reported as drift.
-fn pinned_toolchain_series() -> String {
-    let channel = pinned_toolchain();
-    let parts: Vec<&str> = channel.split('.').collect();
-    assert_eq!(parts.len(), 3, "a series can only be taken from an exact patch version, not `{channel}`");
-    parts[..2].join(".")
+/// `major.minor` as numbers, so `1.100` orders above `1.96` and the legal
+/// `rust-version = "1.96.0"` compares equal to `clippy.toml`'s `"1.96"`.
+fn series(version: &str, source: &str) -> (u32, u32) {
+    let mut parts = version.split('.');
+    let mut component = || {
+        parts
+            .next()
+            .and_then(|part| part.parse::<u32>().ok())
+            .unwrap_or_else(|| panic!("{source} must name a numeric Rust version, not `{version}`"))
+    };
+    (component(), component())
 }
 
-#[test]
-fn clippy_lints_against_the_pinned_toolchain() {
-    // Clippy decides which lints apply from this, so a stale value lints the
-    // lane against a Rust it no longer builds with.
-    let series = pinned_toolchain_series();
-
-    let path = support::lane_root().join("clippy.toml");
-    let declared = support::manifest(&path)
+/// The lane's MSRV, from the file Clippy prefers, and the file Cargo enforces.
+fn declared_msrv() -> ((u32, u32), String) {
+    let clippy_path = support::lane_root().join("clippy.toml");
+    let clippy = support::manifest(&clippy_path)
         .get("msrv")
         .and_then(toml::Value::as_str)
-        .unwrap_or_else(|| panic!("{} must pin an msrv", path.display()))
+        .unwrap_or_else(|| panic!("{} must pin an msrv", clippy_path.display()))
         .to_owned();
 
-    assert_eq!(
-        series,
-        declared,
-        "{} lints against `{declared}` while the lane builds with `{series}`",
-        path.display()
-    );
-}
-
-#[test]
-fn the_lane_manifest_declares_the_pinned_toolchain_series() {
-    // The third spelling, and the one Cargo itself enforces. Clippy compares it
-    // against `clippy.toml` too, and reports a disagreement as a session
-    // warning rather than a lint -- so `-D warnings` does not promote it and no
-    // other gate here would fail on the drift.
-    let series = pinned_toolchain_series();
-
-    let path = support::lane_root().join("Cargo.toml");
-    let declared = support::manifest(&path)
+    let manifest_path = support::lane_root().join("Cargo.toml");
+    let manifest = support::manifest(&manifest_path)
         .get("workspace")
         .and_then(|workspace| workspace.get("package"))
         .and_then(|package| package.get("rust-version"))
         .and_then(toml::Value::as_str)
-        .unwrap_or_else(|| panic!("{} must declare workspace.package.rust-version", path.display()))
+        .unwrap_or_else(|| panic!("{} must declare workspace.package.rust-version", manifest_path.display()))
         .to_owned();
 
+    // Clippy prefers `clippy.toml` over `rust-version` and reports the disagreement as a session
+    // warning rather than a lint, so `-D warnings` does not promote it and nothing else here
+    // would fail on the drift.
     assert_eq!(
-        series,
-        declared,
-        "{} promises Rust `{declared}` while the lane builds with `{series}`",
-        path.display()
+        series(&clippy, "clippy.toml"),
+        series(&manifest, "Cargo.toml"),
+        "the lane states one MSRV twice: clippy.toml says `{clippy}` and Cargo.toml says \
+         `{manifest}`"
+    );
+    (series(&clippy, "clippy.toml"), clippy)
+}
+
+#[test]
+fn the_lane_states_one_msrv_in_both_places() {
+    declared_msrv();
+}
+
+#[test]
+fn the_lane_msrv_is_not_above_the_toolchain_that_builds_it() {
+    // An INEQUALITY, because the two are different facts. Equality would mechanically raise the
+    // declared floor on every toolchain bump -- re-stating a requirement nobody verified, and
+    // leaving `clippy::incompatible_msrv` comparing the compiler against itself. What is a
+    // defect is a floor ABOVE the compiler: Clippy would then apply lints for a Rust the lane
+    // cannot build with, and Cargo would refuse the toolchain rustup selects.
+    let (msrv, declared) = declared_msrv();
+    let channel = pinned_toolchain();
+    let built_with = series(&channel, "rust-toolchain.toml");
+
+    assert!(
+        msrv <= built_with,
+        "the lane claims to support Rust `{declared}` while rust-toolchain.toml pins `{channel}`, \
+         which cannot build it"
     );
 }
 

@@ -281,20 +281,35 @@ test-hygiene:
 miri-payload:
     cargo +nightly miri test {{ CORE_PATCH }} -p kamu-money-pg-hygiene --test payload_miri
 
-# `--document-private-items` is what gives this recipe an input set. Every
-# `#[pg_extern]` and `#[pg_operator]` here is a private `fn` and both `ffi` and
-# `safe` are private modules, because the published surface is SQL rather than
-# Rust. Without the flag rustdoc keeps only the generated `pub struct` per
-# currency, so the deny reads the generated template and none of the
-# hand-written prose. `#[doc(hidden)]` items stay out of the set even with it.
-# `hygiene/tests/gates.rs` requires both of every `cargo doc` here.
+# rustdoc reads only what it is told to compile and told to keep, and this crate
+# defaults both to almost nothing. Every `#[pg_extern]` and `#[pg_operator]` is a
+# private `fn` and `ffi` and `safe` are private modules, because the published
+# surface is SQL rather than Rust, so without `--document-private-items` the input
+# set is the generated `pub struct` per currency. `pg_test` and `boundary-probe`
+# gate a third of the crate's prose, and `pg18` implies neither. The deny is in
+# `.cargo/config.toml`, where no recipe can leave it out.
+#
+# The rendered tree is then the proof: these four directories exist only when the
+# private surface and both feature-gated blocks were all in the input set, so a
+# dropped flag fails the recipe on its own output rather than on a reading of its
+# text. `#[doc(hidden)]` items stay out either way.
 #
 # One major, like every other native recipe. `pgrx-init` registers the single
 # major its `pg_config` names, so an every-major variant resolves nowhere, and
 # rustdoc reads the same prose under each of them.
-[doc("Build the extension's API docs against one major, failing on a broken intra-doc link.")]
+[doc("Build the extension's API docs against one major, failing on any rustdoc warning.")]
 doc-pg pg="18":
-    RUSTDOCFLAGS=-Dwarnings cargo doc {{ CORE_PATCH }} -p kamu-money-pg --no-default-features --features pg{{ pg }} --no-deps --document-private-items
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo doc {{ CORE_PATCH }} -p kamu-money-pg --no-default-features \
+        --features pg{{ pg }},pg_test,boundary-probe --no-deps --document-private-items
+    for rendered in safe tests safe/mixed/tests ffi/wire/tests; do
+        [ -d "target/doc/kmoney/${rendered}" ] || {
+            echo "doc-pg: rustdoc rendered no kmoney/${rendered}, so it read far less than this" >&2
+            echo "doc-pg: recipe claims -- check --document-private-items and the feature list" >&2
+            exit 1
+        }
+    done
 
 # Database and artifact tests
 [doc("The text adapter against a live YugabyteDB. The suite is in the main workspace; the image identity is resolved here.")]

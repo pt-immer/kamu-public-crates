@@ -6,10 +6,16 @@ use serde_json::json;
 fn gates_compose_every_required_check() {
     let lane = support::lane_root();
     let lane_dump = support::just_dump(&lane);
+    // EQUALITY, not containment. A subset leaves the unlisted dependencies free to be dropped
+    // while this test goes on passing, which is how a developer gate becomes quietly weaker than
+    // the required check it stands in for. Adding a check here is meant to fail until it is
+    // named.
     let offline = support::recipe_dependencies(&lane_dump, "gate-offline");
-    for required in ["doc-pg", "deny", "test-hygiene", "miri-payload", "selftest-all"] {
-        assert!(offline.contains(&required), "gate-offline must depend on {required}");
-    }
+    assert_eq!(
+        offline,
+        ["fmt-check", "lint", "deny", "doc-pg", "test-hygiene", "miri-payload", "selftest-all"],
+        "gate-offline no longer composes exactly the checks the lane gate promises"
+    );
 
     // Every negative control the lane owns, gathered in one recipe, and that recipe reached by a
     // required check. A control behind a local aggregate only is not CI coverage: it can stop
@@ -25,17 +31,19 @@ fn gates_compose_every_required_check() {
     ] {
         assert!(selftests.contains(&required), "selftest-all must depend on {required}");
     }
+    // A whole RUN STEP, not a substring anywhere in the file: `just pg doc-pg` is a prefix of
+    // every recipe name that extends it, and it matches a commented-out step exactly as well as
+    // a live one.
     let workflow = support::read(support::repository_root().join(".github/workflows/on-pr-synced.yml"));
-    assert!(
-        workflow.contains("just pg selftest-all"),
-        "a CI job must run `just pg selftest-all`; controls only `gate-offline` reaches are not \
-         covered by any required check"
-    );
-    assert!(
-        workflow.contains("just pg doc-pg"),
-        "a CI job must run `just pg doc-pg`; no CI job runs `gate-offline`, so composing it there \
-         is not what reaches a required check"
-    );
+    let steps: Vec<&str> =
+        workflow.lines().filter_map(|line| line.trim().strip_prefix("- run: ")).map(str::trim_end).collect();
+    for required in ["just pg selftest-all", "just pg doc-pg"] {
+        assert!(
+            steps.contains(&required),
+            "a CI job must run `{required}` as its own step; no CI job runs `gate-offline`, so \
+             composing it there is not what reaches a required check"
+        );
+    }
     assert!(
         support::recipe_dependencies(&lane_dump, "gate-pg").contains(&"gate-offline"),
         "gate-pg must compose gate-offline"
@@ -94,74 +102,79 @@ fn release_gate_covers_one_immutable_deployable_artifact() {
     );
 }
 
-/// Anchored on the SUBCOMMAND rather than on `cargo doc`, because a toolchain selector sits
-/// between the two: `cargo +nightly doc` is the same invocation and would evade a substring.
-fn runs_rustdoc(line: &str) -> bool {
-    let tokens: Vec<&str> = line.split_whitespace().collect();
-    tokens.contains(&"cargo") && (tokens.contains(&"doc") || tokens.contains(&"rustdoc"))
-}
-
-/// The variable and the deny must meet on ONE line. A body-wide search accepts
-/// `RUSTFLAGS=-Dwarnings` beside an empty `RUSTDOCFLAGS`, which denies rustdoc nothing.
-/// Spacing is normalized so the check does not turn on how the flag is written.
-fn denies_rustdoc_warnings(body: &str) -> bool {
-    body.replace("-D warnings", "-Dwarnings")
-        .lines()
-        .any(|line| line.contains("RUSTDOCFLAGS") && line.contains("-Dwarnings"))
-}
-
-/// rustdoc over this crate documents nothing it is not told to, and warns about nothing it is not
-/// told to deny.
+/// Nothing a recipe can leave out may decide whether rustdoc warnings fail.
 ///
-/// Every `#[pg_extern]` and `#[pg_operator]` is a private `fn` and `ffi` and `safe` are private
-/// modules, so without `--document-private-items` the input set is the generated `pub struct` per
-/// currency and nothing else. Without `-D warnings` a resolved input set produces warnings nothing
-/// fails on. Either lever alone leaves a gate that cannot fail, so both are required of every
-/// recipe that runs rustdoc rather than of the recipes that happen to run one today.
+/// Cargo configuration rather than a recipe, because a guard over recipe TEXT is a second copy
+/// of the recipe: `cargo +nightly doc`, `@cargo doc`, a backslash-wrapped invocation and a
+/// `{{ VARIABLE }}` fragment are one command spelled four ways, and each spelling costs such a
+/// guard another clause it can be wrong about. Here the deny is a parsed array with one owner.
 #[test]
-fn every_lane_rustdoc_reads_the_private_surface_and_denies_warnings() {
-    for bad in ["cargo test --doc", "cargo +nightly miri test", "echo cargo doctor"] {
-        assert!(!runs_rustdoc(bad), "positive control must not match `{bad}`");
-    }
-    for good in ["cargo doc -p kamu-money-pg", "cargo +nightly doc", "cargo rustdoc -- -D warnings"] {
-        assert!(runs_rustdoc(good), "positive control must match `{good}`");
-    }
-    for bad in ["RUSTFLAGS=-Dwarnings\nexport RUSTDOCFLAGS=\"\"", "cargo doc --document-private-items"] {
-        assert!(!denies_rustdoc_warnings(bad), "positive control must not accept `{bad}`");
-    }
-    for good in ["RUSTDOCFLAGS=-Dwarnings cargo doc", "export RUSTDOCFLAGS=\"-D warnings\""] {
-        assert!(denies_rustdoc_warnings(good), "positive control must accept `{good}`");
-    }
+fn the_lane_denies_every_rustdoc_warning_from_cargo_configuration() {
+    let path = support::lane_root().join(".cargo/config.toml");
+    let config = support::manifest(&path);
+    let flags: Vec<&str> = config
+        .get("build")
+        .and_then(|build| build.get("rustdocflags"))
+        .and_then(toml::Value::as_array)
+        .unwrap_or_else(|| panic!("{} must set build.rustdocflags", path.display()))
+        .iter()
+        .map(|flag| flag.as_str().expect("every rustdocflags entry must be a string"))
+        .collect();
 
-    let dump = support::just_dump(&support::lane_root());
-    let names: Vec<String> =
-        dump["recipes"].as_object().expect("just dump must contain recipes").keys().cloned().collect();
-    let mut checked = 0;
-    let mut offenders = Vec::new();
-    for name in names {
-        let body = support::recipe_body(&dump, &name);
-        let invocations: Vec<&str> = body.lines().filter(|line| runs_rustdoc(line)).collect();
-        if invocations.is_empty() {
-            continue;
-        }
-        checked += 1;
-        // The deny may be written on the invocation or exported above it, so it is the BODY
-        // that must carry it rather than the invocation line.
-        if !denies_rustdoc_warnings(&body) {
-            offenders.push(format!("{name}: runs rustdoc without RUSTDOCFLAGS denying warnings"));
-        }
-        for line in invocations {
-            if !line.contains("--document-private-items") {
-                offenders.push(format!("{name}: {}", line.trim()));
+    assert!(
+        flags.iter().any(|flag| flag.replace("-D warnings", "-Dwarnings") == "-Dwarnings"),
+        "{}: build.rustdocflags is {flags:?}, which denies no rustdoc warning -- rustdoc then \
+         reports a broken intra-doc link and exits 0",
+        path.display()
+    );
+    // rustdoc takes the LAST verdict on a lint, so an allow appended after the deny is the same
+    // vacuity as never denying, reached by adding rather than by removing.
+    let allows: Vec<&&str> =
+        flags.iter().filter(|flag| flag.starts_with("-A") || flag.starts_with("--allow")).collect();
+    assert!(allows.is_empty(), "{}: {allows:?} re-allows what the deny refused", path.display());
+}
+
+/// Every feature that gates prose must be one the doc gate turns on.
+///
+/// `--document-private-items` decides what rustdoc KEEPS; the feature list decides what the
+/// compiler hands it at all. A `#[cfg(feature = "x")]` block the recipe does not enable is not
+/// documented, not link-checked, and not visibly absent. The features are read out of the source
+/// rather than listed here, so a new one fails this test instead of falling silently outside the
+/// gate.
+#[test]
+fn the_doc_gate_compiles_every_feature_gated_block() {
+    let mut gated: Vec<String> = Vec::new();
+    let mut walk = vec![support::lane_root().join("kamu-money-pg/src")];
+    while let Some(directory) = walk.pop() {
+        for entry in std::fs::read_dir(&directory).expect("the crate source must be readable") {
+            let path = entry.expect("a readable directory entry").path();
+            if path.is_dir() {
+                walk.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|extension| extension != "rs") {
+                continue;
+            }
+            for line in support::read(&path).lines().filter(|line| line.contains("#[cfg(")) {
+                let mut rest = line;
+                while let Some(at) = rest.find("feature = \"") {
+                    rest = &rest[at + "feature = \"".len()..];
+                    let (name, tail) = rest.split_once('"').expect("a closed feature literal");
+                    gated.push(name.to_owned());
+                    rest = tail;
+                }
             }
         }
     }
-    assert!(checked > 0, "no lane recipe runs rustdoc -- this guard would pass vacuously; re-point it");
+    gated.sort_unstable();
+    gated.dedup();
+    assert!(!gated.is_empty(), "no `#[cfg(feature = ...)]` found -- this guard would pass vacuously");
+
+    let body = support::recipe_body(&support::just_dump(&support::lane_root()), "doc-pg");
+    let missing: Vec<&String> = gated.iter().filter(|feature| !body.contains(*feature)).collect();
     assert!(
-        offenders.is_empty(),
-        "rustdoc keeps only the generated public types without `--document-private-items`, and \
-         warns without failing without `-D warnings`:\n{}",
-        offenders.join("\n")
+        missing.is_empty(),
+        "doc-pg does not enable {missing:?}, so rustdoc never compiles the prose behind them"
     );
 }
 
