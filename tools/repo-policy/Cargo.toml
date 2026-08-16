@@ -10,8 +10,10 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+github-actions-models = "1.29.0"
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true }
+yaml_serde = "0.10.6"
 
 [dev-dependencies]
 toml = { workspace = true }

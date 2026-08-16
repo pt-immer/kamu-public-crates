@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use repo_policy::actions::{remote_uses, sources, step_ids, step_output_references, step_scopes};
+use repo_policy::actions::{needs_output_references, remote_uses, step_output_references, step_scopes};
 
 fn is_commit(pinned_to: &str) -> bool {
     pinned_to.len() == 40 && pinned_to.chars().all(|c| c.is_ascii_hexdigit())
@@ -61,20 +61,46 @@ fn every_reference_to_an_action_carries_the_same_label() {
 /// so a renamed step id hands its consumer an empty value and the run continues.
 #[test]
 fn every_step_output_read_names_a_step_that_exists() {
-    // Per job, not per file: `steps` is job-scoped, so an id declared in a sibling job does
-    // not resolve here, and collecting ids file-wide would accept exactly that.
     let mut checked = 0_usize;
-    for (source, text) in sources() {
-        for scope in step_scopes(text) {
-            let declared: BTreeSet<String> = step_ids(scope).into_iter().collect();
-            for (id, name) in step_output_references(scope) {
+    for scope in step_scopes() {
+        for expression in &scope.expressions {
+            for (id, name) in step_output_references(expression) {
                 assert!(
-                    declared.contains(&id),
-                    "{source} reads steps.{id}.outputs.{name} in a job that declares no step {id}",
+                    scope.declared.contains(&id),
+                    "{} reads steps.{id}.outputs.{name} in {}, which declares no step {id}",
+                    scope.source,
+                    scope.name,
                 );
                 checked += 1;
             }
         }
     }
     assert!(checked > 0, "no step output was read; this would pass vacuously");
+}
+
+/// `needs.<job>` resolves for a job this one depends on, and to the empty string for any other
+/// -- Actions does not refuse it. A job reading a pin it did not wait for installs nothing and
+/// compiles against whatever the runner already had, which is the failure a version literal
+/// could not have. Reaching the pins through `needs` is what made this possible.
+#[test]
+fn every_needs_output_read_names_a_job_the_reader_depends_on() {
+    let mut checked = 0_usize;
+    for scope in step_scopes() {
+        let Some(needs) = &scope.needs else {
+            continue;
+        };
+        for expression in &scope.expressions {
+            for (job, name) in needs_output_references(expression) {
+                assert!(
+                    needs.contains(&job),
+                    "{} reads needs.{job}.outputs.{name} in {}, which does not declare {job} \
+                     in needs; the expression resolves to the empty string",
+                    scope.source,
+                    scope.name,
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 0, "no needs output was read; this would pass vacuously");
 }

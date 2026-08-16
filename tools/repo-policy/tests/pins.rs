@@ -1,6 +1,8 @@
 //! Every pinned version has one home, and the copies a tool insists on are held equal to it.
 
-use repo_policy::actions::{composite_actions, entries_at, sources as actions_sources};
+use std::collections::BTreeSet;
+
+use repo_policy::actions::{actions, job_outputs, sources as actions_sources};
 use repo_policy::dev_tools::DevTools;
 use repo_policy::{read, repo_root, tracked};
 
@@ -160,7 +162,8 @@ fn the_root_toolchain_file_carries_what_the_manifest_says_setup_installs() {
 /// line, and `RUSTUP_TOOLCHAIN` selects one without naming `toolchain:` at all.
 fn selected_toolchains() -> Vec<(String, String)> {
     let mut selections = Vec::new();
-    for (name, text) in actions_sources() {
+    for source in actions_sources() {
+        let (name, text) = (&source.path, &source.text);
         for line in text.lines() {
             let trimmed = line.trim_start();
             let value = trimmed
@@ -230,7 +233,8 @@ fn every_selected_toolchain_is_a_reference_or_a_named_channel() {
 #[test]
 fn the_toolchain_matrix_compiles_at_the_declared_floor() {
     let mut matrices = 0_usize;
-    for (source, text) in actions_sources() {
+    for entry in actions_sources() {
+        let (source, text) = (&entry.path, &entry.text);
         for line in text.lines() {
             let trimmed = line.trim_start();
             let Some(value) = trimmed.strip_prefix("toolchain:").map(str::trim) else {
@@ -251,34 +255,32 @@ fn the_toolchain_matrix_compiles_at_the_declared_floor() {
     assert!(matrices > 0, "no toolchain matrix found; this would pass vacuously");
 }
 
-/// An output's name promises which pin it carries, and nothing else checks the expression
-/// under it. Every composite action is read, not the one this branch happens to have added.
+/// An output's name states which manifest key it carries: the last underscore separates the
+/// section from the key within it, so `rust_primary` promises `rust.primary`. Nothing else
+/// checks the expression under it. Every action is read, not the one this branch added, and
+/// which step publishes the manifest is not asked here -- an id that resolves to nothing is
+/// what `every_step_output_read_names_a_step_that_exists` refuses.
 #[test]
 fn each_action_output_reads_the_manifest_key_its_name_states() {
     let mut bound = 0_usize;
-    for (source, text) in composite_actions() {
-        let Some((_, rest)) = text.split_once("\noutputs:\n") else {
-            continue;
-        };
-        let block = rest.split("\nruns:").next().expect("split yields a first part");
-        // An output name sits at exactly two spaces; `value:` under it sits deeper. Tracking
-        // "the last line ending in a colon" would let a block-form `description:` rebind it.
-        let names: Vec<String> = entries_at(block, 2).into_iter().map(|(name, _)| name).collect();
-        let values: Vec<String> =
-            entries_at(block, 4).into_iter().filter(|(key, _)| key == "value").map(|(_, v)| v).collect();
-        assert_eq!(
-            names.len(),
-            values.len(),
-            "{source} declares {} outputs and {} values",
-            names.len(),
-            values.len(),
-        );
-        for (name, value) in names.iter().zip(values) {
-            let key = name
-                .strip_prefix("rust_")
-                .unwrap_or_else(|| panic!("{source} declares the output {name}, which names no pin"));
-            let expected = format!("${{{{ fromJSON(steps.read.outputs.manifest).rust.{key} }}}}");
-            assert_eq!(value, expected, "{source} output {name} reads {value}");
+    for (source, action) in actions() {
+        for (name, output) in &action.outputs {
+            // A composite action's output carries a value; the other kinds do not.
+            let Some(value) = &output.value else {
+                continue;
+            };
+            let Some((section, key)) = name.rsplit_once('_') else {
+                panic!("{source} declares the output {name}, which states no manifest section")
+            };
+            assert!(
+                value.contains("fromJSON(steps."),
+                "{source} publishes {name} from {value}, which reads no published manifest",
+            );
+            let reads = value.trim_end().trim_end_matches('}').trim_end();
+            assert!(
+                reads.ends_with(&format!(".{section}.{key}")),
+                "{source} publishes {name}, which states {section}.{key}, from {value}",
+            );
             bound += 1;
         }
     }
@@ -286,24 +288,25 @@ fn each_action_output_reads_the_manifest_key_its_name_states() {
 }
 
 /// A job republishes the action's outputs so other jobs can reach them. A pin renamed on the
-/// way through would be read under a name that no longer describes it. Every workflow is
-/// scanned, not the one that republishes them today.
+/// way through would be read under a name that no longer describes it. The names to watch are
+/// taken from what the actions publish, so a pin added there is covered without being listed
+/// here; every workflow is scanned, not the one that republishes them today.
 #[test]
 fn every_republished_pin_keeps_its_own_name() {
+    let pins: BTreeSet<&String> = actions().iter().flat_map(|(_, action)| action.outputs.keys()).collect();
+    assert!(!pins.is_empty(), "no action publishes a pin; this would pass vacuously");
+
     let mut republished = 0_usize;
-    for (source, text) in actions_sources() {
-        for (name, value) in entries_at(text, 6) {
-            if !name.starts_with("rust_") {
-                continue;
-            }
-            let Some(read_name) =
-                value.rsplit_once(".outputs.").map(|(_, tail)| tail.trim_end_matches([' ', '}']).to_owned())
-            else {
-                panic!("{source} publishes {name} as {value}, which reads no output");
-            };
-            assert_eq!(name, read_name, "{source} publishes {name} from {value}");
-            republished += 1;
+    for (source, job, name, value) in job_outputs() {
+        if !pins.contains(&name) {
+            continue;
         }
+        let Some((_, read_name)) = value.rsplit_once(".outputs.") else {
+            panic!("{source} job {job} publishes {name} as {value}, which reads no output");
+        };
+        let read_name = read_name.trim_end_matches([' ', '}']);
+        assert_eq!(name, read_name, "{source} job {job} publishes {name} from {value}");
+        republished += 1;
     }
     assert!(republished > 0, "no pin was republished; this would pass vacuously");
 }

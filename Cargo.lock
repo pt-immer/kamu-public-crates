@@ -1276,6 +1276,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "github-actions-models"
+version = "1.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08e715b12c9b6cdcfc1c6e07867b22d211544665bca9f95afcddae92db0e46fb"
+dependencies = [
+ "indexmap 2.14.0",
+ "self_cell",
+ "serde",
+ "tracing",
+ "yaml_serde",
+]
+
+[[package]]
 name = "glob"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1941,6 +1954,12 @@ checksum = "c943259e342f1e06ff2da7a83eabdfe7f92ce10262688dbf1895ff0b3e6e4652"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "libyaml-rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e126dda6f34391ab7b444f9922055facc83c07a910da3eb16f1e4d9c45dc777"
 
 [[package]]
 name = "linux-raw-sys"
@@ -2813,9 +2832,11 @@ dependencies = [
 name = "repo-policy"
 version = "0.0.0"
 dependencies = [
+ "github-actions-models",
  "serde",
  "serde_json",
  "toml",
+ "yaml_serde",
 ]
 
 [[package]]
@@ -3105,6 +3126,12 @@ dependencies = [
  "core-foundation-sys",
  "libc",
 ]
+
+[[package]]
+name = "self_cell"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ab42ca02749e120097e328d91d415325bdf43b1c72c4c8badf37375fe40a813"
 
 [[package]]
 name = "semver"
@@ -4625,6 +4652,19 @@ checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
 dependencies = [
  "libc",
  "rustix",
+]
+
+[[package]]
+name = "yaml_serde"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad7a8266fc7ce9d77db272ca5b40b704a1753e2a2e2ab7b1f2da22672941bf93"
+dependencies = [
+ "indexmap 2.14.0",
+ "itoa",
+ "libyaml-rs",
+ "ryu",
+ "serde",
 ]
 
 [[package]]
