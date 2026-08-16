@@ -166,6 +166,17 @@ def node_package_version(
 DEFAULT_VERSION_ARGS = ("--version",)
 
 
+TOOL_SECTION_SUFFIX = "_tools"
+
+# Sections CI installs from and setup does not; doctor reports on what a developer runs.
+INSTALLED_BY_CI = {"ci_only_tools"}
+
+
+def tool_sections(manifest: dict[str, Any]) -> set[str]:
+    """Every tool section the manifest states, found by shape rather than listed."""
+    return {key for key in manifest if key.endswith(TOOL_SECTION_SUFFIX)}
+
+
 def tools(manifest: dict[str, Any], section: str) -> list[dict[str, Any]]:
     """Every tool in a section, with the defaults an entry may omit.
 
@@ -176,19 +187,12 @@ def tools(manifest: dict[str, Any], section: str) -> list[dict[str, Any]]:
     """
     resolved = []
     for name, entry in manifest[section].items():
-        version = entry["version"]
         merged: dict[str, Any] = {
             "name": name,
             "crate": name,
             "package": name,
             "binary": name,
             "version_args": DEFAULT_VERSION_ARGS,
-            # A tool setup cannot install has to say which version to install, and saying
-            # it here is what keeps that version out of the entry beside the pin.
-            "install_hint": (
-                f"install {name} {version} with the operating system package manager, "
-                "then rerun setup"
-            ),
         }
         merged.update(entry)
         # The entry's own list belongs to the loaded manifest; handing it out would let one
@@ -583,11 +587,24 @@ def check_targets(
         )
 
 
+def system_install_hint(tool: dict[str, Any]) -> str:
+    """What to do about a tool `just setup` cannot install.
+
+    It names the version because setup will not supply one, and it is built from the entry
+    so that version is not also written beside the pin.
+    """
+    return (
+        f"install {tool['name']} {tool['version']} with the operating system "
+        "package manager, then rerun setup"
+    )
+
+
 def check_system_tool(checks: Doctor, tool: dict[str, Any]) -> None:
     """Check one tool the operating system package manager owns."""
+    hint = tool.get("install_hint") or system_install_hint(tool)
     path = shutil.which(tool["binary"])
     if path is None:
-        checks.fail(tool["binary"], "not found", tool["install_hint"])
+        checks.fail(tool["binary"], "not found", hint)
         return
     status, output = capture([path, *tool["version_args"]])
     check_floor(
@@ -596,8 +613,17 @@ def check_system_tool(checks: Doctor, tool: dict[str, Any]) -> None:
         first_line(output),
         parse_version(output) if status == 0 else None,
         tool["version"],
-        tool["install_hint"],
+        hint,
     )
+
+
+# Which checker owns each tool section, and the banner it reports under. A section absent
+# here stops doctor; see the dispatch in `doctor`.
+SECTION_CHECKS = {
+    "cargo_tools": ("Repository tools", check_cargo_tool),
+    "node_tools": ("Repository tools", check_node_tool),
+    "system_tools": ("System tools", check_system_tool),
+}
 
 
 def doctor(manifest: dict[str, Any]) -> int:
@@ -638,15 +664,22 @@ def doctor(manifest: dict[str, Any]) -> int:
     )
     check_targets(checks, rust["primary"], rust["primary_targets"])
 
-    checks.section("Repository tools")
-    for tool in tools(manifest, "cargo_tools"):
-        check_cargo_tool(checks, tool)
-    for tool in tools(manifest, "node_tools"):
-        check_node_tool(checks, tool)
+    # Every tool section the manifest states is found by shape and dispatched here. One this
+    # does not account for stops doctor rather than being skipped: a pinned tool nothing
+    # checks reads exactly like a pinned tool that passed.
+    unknown = tool_sections(manifest) - set(SECTION_CHECKS) - INSTALLED_BY_CI
+    if unknown:
+        raise SystemExit(
+            f"{MANIFEST_PATH} states tool sections nothing checks: {sorted(unknown)}"
+        )
 
-    checks.section("System tools")
-    for tool in tools(manifest, "system_tools"):
-        check_system_tool(checks, tool)
+    for banner in dict.fromkeys(banner for banner, _ in SECTION_CHECKS.values()):
+        checks.section(banner)
+        for section, (section_banner, check) in SECTION_CHECKS.items():
+            if section_banner != banner:
+                continue
+            for tool in tools(manifest, section):
+                check(checks, tool)
 
     checks.section("Vendored data")
     submodule_file = (

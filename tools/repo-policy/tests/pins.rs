@@ -508,15 +508,15 @@ fn every_tool_a_job_installs_reads_its_own_pin() {
         let (name, version) = specification
             .split_once('@')
             .unwrap_or_else(|| panic!("{source} job {scope} requests {specification}, which pins nothing"));
-        let defined = manifest.tool(name);
-        assert_eq!(
-            1,
-            defined.len(),
-            "{source} job {scope} installs {name}, which {} section(s) of {} define",
-            defined.len(),
-            DevTools::PATH,
-        );
-        let expected = vec![defined[0].0.to_owned(), name.to_owned(), "version".to_owned()];
+        // Two sections defining one tool is refused by `no_tool_is_pinned_twice`, so the
+        // reachable failure here is that the manifest pins the tool nowhere.
+        let Some((section, _)) = manifest.tool(name).into_iter().next() else {
+            panic!(
+                "{source} job {scope} installs {name}, which {} pins nowhere; add an entry for it",
+                DevTools::PATH,
+            )
+        };
+        let expected = vec![section.to_owned(), name.to_owned(), "version".to_owned()];
         assert_eq!(
             manifest_paths(version),
             vec![expected],

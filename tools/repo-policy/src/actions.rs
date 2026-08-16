@@ -99,17 +99,6 @@ pub fn sources() -> &'static [Source] {
     })
 }
 
-/// Every action this repository defines, as `(path, model)`.
-pub fn actions() -> Vec<(&'static str, &'static Action)> {
-    sources()
-        .iter()
-        .filter_map(|source| match &source.parsed {
-            Executable::Action(action) => Some((source.path.as_str(), &**action)),
-            Executable::Workflow(_) => None,
-        })
-        .collect()
-}
-
 /// What each job republishes under `outputs:`, as `(source, job, name, value)`. Other jobs
 /// reach a pin through these, so one renamed on the way through is read under a name that no
 /// longer describes it.

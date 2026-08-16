@@ -5,14 +5,53 @@ use std::path::Path;
 
 use serde::Deserialize;
 
+/// The suffix every tool section's key carries.
+///
+/// Sections are found by this shape rather than listed, so a section added to the manifest is
+/// one a reader has to account for rather than one three separate lists silently omit.
+pub const TOOL_SECTION_SUFFIX: &str = "_tools";
+
 /// The versions this repository pins. A field gains a type here when a check reads it.
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 pub struct DevTools {
     pub rust: Rust,
-    pub cargo_tools: BTreeMap<String, Tool>,
-    pub node_tools: BTreeMap<String, Tool>,
-    pub system_tools: BTreeMap<String, Tool>,
-    pub ci_only_tools: BTreeMap<String, Tool>,
+    /// Each tool section, under its own name, in manifest order.
+    pub tools: BTreeMap<String, BTreeMap<String, Tool>>,
+}
+
+impl<'de> Deserialize<'de> for DevTools {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Manifest;
+
+        impl<'de> serde::de::Visitor<'de> for Manifest {
+            type Value = DevTools;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("the pinned-version manifest")
+            }
+
+            fn visit_map<M: serde::de::MapAccess<'de>>(self, mut map: M) -> Result<DevTools, M::Error> {
+                let mut rust = None;
+                let mut tools = BTreeMap::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    if key == "rust" {
+                        rust = Some(map.next_value()?);
+                    } else if key.ends_with(TOOL_SECTION_SUFFIX) {
+                        tools.insert(key, map.next_value()?);
+                    } else {
+                        map.next_value::<serde::de::IgnoredAny>()?;
+                    }
+                }
+                let rust = rust.ok_or_else(|| serde::de::Error::missing_field("rust"))?;
+                if tools.is_empty() {
+                    return Err(serde::de::Error::custom("the manifest names no tool section"));
+                }
+                Ok(DevTools { rust, tools })
+            }
+        }
+
+        deserializer.deserialize_map(Manifest)
+    }
 }
 
 /// One pinned tool, keyed by the name it is requested and installed by. An entry names a crate,
@@ -71,22 +110,12 @@ impl DevTools {
     /// The manifest's path, relative to the repository root.
     pub const PATH: &'static str = ".config/dev-tools.json";
 
-    /// Every tool section, under the name the manifest gives it.
-    pub fn tool_sections(&self) -> [(&'static str, &BTreeMap<String, Tool>); 4] {
-        [
-            ("cargo_tools", &self.cargo_tools),
-            ("node_tools", &self.node_tools),
-            ("system_tools", &self.system_tools),
-            ("ci_only_tools", &self.ci_only_tools),
-        ]
-    }
-
     /// The sections that define a tool. Two of them would be two pins for one name, and the
     /// one a reader checked would be whichever they looked at first.
-    pub fn tool(&self, name: &str) -> Vec<(&'static str, &Tool)> {
-        self.tool_sections()
-            .into_iter()
-            .filter_map(|(section, tools)| tools.get(name).map(|tool| (section, tool)))
+    pub fn tool(&self, name: &str) -> Vec<(&str, &Tool)> {
+        self.tools
+            .iter()
+            .filter_map(|(section, tools)| tools.get(name).map(|tool| (section.as_str(), tool)))
             .collect()
     }
 
