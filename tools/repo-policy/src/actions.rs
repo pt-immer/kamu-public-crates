@@ -24,6 +24,9 @@ use yaml_serde::Value;
 
 use crate::{read, tracked};
 
+/// The action every pinned tool is installed through.
+pub const INSTALL_ACTION: &str = "taiki-e/install-action@";
+
 /// A file GitHub Actions executes, parsed as what it is.
 #[derive(Debug)]
 pub enum Executable {
@@ -295,6 +298,41 @@ pub fn remote_uses() -> Vec<Use> {
     uses
 }
 
+/// Every scope whose steps run together: each job of a workflow, or an action's `runs`.
+fn scopes_of(source: &Source) -> Vec<(String, &Value)> {
+    let mut scopes = Vec::new();
+    if let Some(jobs) = child(&source.tree, "jobs").and_then(Value::as_mapping) {
+        for (name, job) in jobs {
+            if let Some(name) = name.as_str() {
+                scopes.push((name.to_owned(), job));
+            }
+        }
+    }
+    if let Some(runs) = child(&source.tree, "runs") {
+        scopes.push((source.path.clone(), runs));
+    }
+    scopes
+}
+
+/// What each step uses, as `(source, scope, step id, uses clause)`. A step with no id cannot
+/// be referenced by one, and is not listed.
+pub fn step_uses() -> Vec<(&'static str, String, String, String)> {
+    let mut used = Vec::new();
+    for source in sources() {
+        for (scope, body) in scopes_of(source) {
+            for step in steps_of(body) {
+                let (Some(id), Some(clause)) =
+                    (child(step, "id").and_then(Value::as_str), child(step, "uses").and_then(Value::as_str))
+                else {
+                    continue;
+                };
+                used.push((source.path.as_str(), scope.clone(), id.to_owned(), clause.to_owned()));
+            }
+        }
+    }
+    used
+}
+
 /// Every tool an install-action step requests, as `(source, scope, specification)`.
 ///
 /// Read from the parsed step rather than from the line: the tool list is accepted as a plain
@@ -317,10 +355,20 @@ pub fn tool_requests() -> Vec<(&'static str, String, String)> {
         }
         for (scope, body) in scopes {
             for step in steps_of(body) {
-                let requested = child(step, "with").and_then(|with| child(with, "tool"));
-                let Some(requested) = requested.and_then(Value::as_str) else {
+                // The input is only a tool list on the action that installs tools; another
+                // action taking an input of the same name owes this nothing.
+                let installs = child(step, "uses")
+                    .and_then(Value::as_str)
+                    .is_some_and(|clause| clause.starts_with(INSTALL_ACTION));
+                let Some(requested) = child(step, "with").and_then(|with| child(with, "tool")) else {
                     continue;
                 };
+                if !installs {
+                    continue;
+                }
+                let requested = requested.as_str().unwrap_or_else(|| {
+                    panic!("{} job {scope} writes a tool list that is not text", source.path)
+                });
                 // Both separators, because the block form writes one tool per line.
                 for specification in requested.split([',', '\n']) {
                     let specification = specification.trim();

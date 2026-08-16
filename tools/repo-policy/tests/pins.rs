@@ -2,7 +2,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use repo_policy::actions::{manifest_paths, sources as actions_sources, tool_requests};
+use repo_policy::actions::{
+    job_outputs, manifest_paths, needs_output_references, sources as actions_sources, step_uses,
+    tool_requests,
+};
 use repo_policy::dev_tools::DevTools;
 use repo_policy::{read, repo_root, tracked};
 
@@ -357,6 +360,104 @@ impl<'de> serde::Deserialize<'de> for DistinctPins {
 fn no_tool_is_pinned_twice() {
     serde_json::from_str::<DistinctPins>(&read(DevTools::PATH))
         .unwrap_or_else(|error| panic!("{}: {error}", DevTools::PATH));
+}
+
+/// A job that republishes the manifest has to republish the one the read-dev-tools action
+/// produced. Nothing downstream can tell: every consumer indexes a path, and the paths are
+/// checked against the file rather than against what the job actually carried. Pointed at a
+/// step that publishes no such output, the expression yields the empty string, `fromJSON`
+/// receives it, and the pins every job reads are gone while the gate reports green.
+#[test]
+fn every_republished_manifest_comes_from_the_action_that_reads_it() {
+    let published: BTreeSet<(&str, String)> = job_outputs()
+        .into_iter()
+        .filter(|(_, _, name, _)| name == "manifest")
+        .map(|(source, job, _, value)| {
+            let read = needs_output_references(&value);
+            assert!(read.is_empty(), "{source} job {job} republishes the manifest from another job");
+            let step = value
+                .split_once("steps.")
+                .and_then(|(_, tail)| tail.split_once(".outputs."))
+                .map(|(id, _)| id.to_owned())
+                .unwrap_or_else(|| {
+                    panic!("{source} job {job} publishes the manifest as {value}, which reads no step")
+                });
+            (source, format!("{job}\u{1}{step}"))
+        })
+        .collect();
+    assert!(!published.is_empty(), "no job republishes the manifest; this would pass vacuously");
+
+    let reading: BTreeSet<(&str, String)> = step_uses()
+        .into_iter()
+        .filter(|(_, _, _, clause)| clause.contains("read-dev-tools"))
+        .map(|(source, scope, id, _)| (source, format!("{scope}\u{1}{id}")))
+        .collect();
+
+    for (source, key) in &published {
+        let (job, step) = key.split_once('\u{1}').expect("the key carries both parts");
+        assert!(
+            reading.contains(&(source, key.clone())),
+            "{source} job {job} republishes the manifest from step {step}, which does not run \
+             the read-dev-tools action",
+        );
+    }
+}
+
+/// No Actions source states a version literal outside a comment. Every version this repository
+/// pins is indexed out of the manifest, so a literal is a copy -- and a stale copy reads as
+/// correct. The comment beside an action's commit pin is the one place a version belongs,
+/// because it names what that commit is and no expression can.
+///
+/// This covers what the tool rule cannot see: a cache key carrying a version reaches no
+/// `tool:` request, so before this a stale one passed the whole public gate.
+#[test]
+fn no_actions_source_states_a_version_literal() {
+    let version = regex_lite_version;
+    let mut scanned = 0_usize;
+    for source in actions_sources() {
+        for (number, line) in source.text.lines().enumerate() {
+            let code = line.split_once(" #").map_or(line, |(code, _)| code);
+            if let Some(found) = version(code) {
+                panic!(
+                    "{}:{} states the version literal {found}; index it out of the manifest \
+                     the read-dev-tools action publishes",
+                    source.path,
+                    number + 1,
+                );
+            }
+            scanned += 1;
+        }
+    }
+    assert!(scanned > 0, "no line was scanned; this would pass vacuously");
+}
+
+/// The first `<digits>.<digits>.<digits>` in a line, if any.
+fn regex_lite_version(line: &str) -> Option<String> {
+    let bytes: Vec<char> = line.chars().collect();
+    let mut index = 0;
+    while index < bytes.len() {
+        if !bytes[index].is_ascii_digit() {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        let mut dots = 0;
+        while index < bytes.len() && (bytes[index].is_ascii_digit() || bytes[index] == '.') {
+            if bytes[index] == '.' {
+                dots += 1;
+            }
+            index += 1;
+        }
+        let token: String = bytes[start..index].iter().collect();
+        // A trailing dot ends a sentence rather than a version.
+        let token = token.trim_end_matches('.').to_owned();
+        if dots >= 2
+            && token.split('.').all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+        {
+            return Some(token);
+        }
+    }
+    None
 }
 
 /// Every manifest path a workflow indexes has to exist. A path Actions cannot resolve is not
