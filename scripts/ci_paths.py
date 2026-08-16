@@ -102,6 +102,7 @@ SHARED_PREFIXES = (
     ".github/actions/",
     ".github/workflows/",
     "scripts/",
+    "tools/",
 )
 
 SHARED_GITHUB_FILES = {

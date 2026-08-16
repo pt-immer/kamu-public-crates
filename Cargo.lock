@@ -2810,6 +2810,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "repo-policy"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "reqwest"
 version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

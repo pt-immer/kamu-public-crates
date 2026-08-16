@@ -1,0 +1,33 @@
+name: Read pinned versions
+description: >-
+  Publish .config/dev-tools.json to a job so it references the pinned versions instead of
+  restating them. Requires the repository to be checked out.
+
+outputs:
+  manifest:
+    description: The manifest verbatim, for pins that have no named output here yet.
+    value: ${{ steps.read.outputs.manifest }}
+  rust_primary:
+    description: The toolchain CI installs, which also pins the compile-fail goldens.
+    value: ${{ fromJSON(steps.read.outputs.manifest).rust.primary }}
+  rust_msrv:
+    description: The floor the published manifests declare and CI tests exactly.
+    value: ${{ fromJSON(steps.read.outputs.manifest).rust.msrv }}
+  rust_lane:
+    description: >-
+      The excluded extension lane's channel, which pgrx requires. A lane job that installs
+      rust_primary instead still compiles correctly, because the lane's rust-toolchain.toml wins
+      -- after rustup has downloaded the wrong toolchain, in every job, on every run.
+    value: ${{ fromJSON(steps.read.outputs.manifest).rust.lane }}
+
+runs:
+  using: composite
+  steps:
+    - id: read
+      shell: bash
+      run: |
+        {
+          echo 'manifest<<KAMU_DEV_TOOLS'
+          cat .config/dev-tools.json
+          echo 'KAMU_DEV_TOOLS'
+        } >>"$GITHUB_OUTPUT"

@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import pathlib
 import re
-import tomllib
 import unittest
 
 from scripts.ci_paths import DERIVED_CLASSES, classify_paths, tracked_paths
@@ -20,15 +19,20 @@ TOOL_MANIFEST = json.loads(
 )
 
 
-def lane_channel() -> str:
-    """The toolchain rustup selects inside the extension lane.
+def selected_pin(line: str) -> str:
+    """The pin a `toolchain:` line reads, as the output name it names.
 
-    A separate fact from `rust.primary`, and read from a separate file, because
-    assuming them equal is what the test below exists to refuse.
+    The channels themselves live in `.config/dev-tools.json` and are held equal to the
+    `rust-toolchain.toml` each one governs by `tools/repo-policy/tests/pins.rs`. What a job
+    chooses is which of them to read, which is what this file checks.
     """
-    path = ROOT / "extensions" / "money-pg" / "rust-toolchain.toml"
-    pinned = tomllib.loads(path.read_text(encoding="utf-8"))
-    return pinned["toolchain"]["channel"]
+    value = line.split(":", 1)[1].strip()
+    reference = re.search(r"outputs\.([a-z0-9_]+)\s*}}", value)
+    if reference:
+        return reference.group(1)
+    if "matrix.toolchain" in value:
+        return "matrix"
+    return value
 
 
 def lane_entry_recipes() -> set[str]:
@@ -180,7 +184,17 @@ class WorkflowPolicyTests(unittest.TestCase):
         block = re.search(r"(?m)^    outputs:\n((?:      \S.*\n)+)", source)
         self.assertIsNotNone(block, "the changes job declares no outputs")
         declared = set(re.findall(r"(?m)^      ([a-z0-9_]+):", block.group(1)))
-        self.assertEqual(set(DERIVED_CLASSES), declared)
+
+        # The job also republishes the pinned versions, so every job reads them from one place
+        # instead of restating them. Those come from the action, not from this list.
+        action = (
+            ROOT / ".github" / "actions" / "read-dev-tools" / "action.yml"
+        ).read_text(encoding="utf-8")
+        outputs = action.split("\noutputs:\n", 1)[1].split("\nruns:", 1)[0]
+        pins = set(re.findall(r"(?m)^  ([a-z0-9_]+):$", outputs)) - {"manifest"}
+        self.assertTrue(pins, "the pins action declares no named output")
+
+        self.assertEqual(set(DERIVED_CLASSES) | pins, declared)
 
     def test_install_action_tools_are_exactly_pinned(self) -> None:
         versions = {
@@ -216,8 +230,6 @@ class WorkflowPolicyTests(unittest.TestCase):
         A job is a lane job when it invokes a root recipe that cds into the lane,
         and that set is read out of the Justfile rather than written here.
         """
-        primary = TOOL_MANIFEST["rust"]["primary"]
-        lane = lane_channel()
         entries = lane_entry_recipes()
         enters_lane = re.compile(
             r"just (?:{})(?:\s|$)".format("|".join(re.escape(name) for name in sorted(entries)))
@@ -228,18 +240,14 @@ class WorkflowPolicyTests(unittest.TestCase):
             text = workflow.read_text(encoding="utf-8")
             for job, body in workflow_job_bodies(text).items():
                 if enters_lane.search(body):
-                    expected, where = lane, "extension lane"
+                    expected, where = "rust_lane", "extension lane"
                     # The lane builds with one toolchain. Miri is the exception it
                     # actually has; a matrix is not, and would install the public
                     # workspace's MSRV into a lane job.
-                    allowed = {f"toolchain: {expected}", "toolchain: nightly"}
+                    allowed = {expected, "nightly"}
                 else:
-                    expected, where = primary, "public workspace"
-                    allowed = {
-                        f"toolchain: {expected}",
-                        "toolchain: nightly",
-                        "toolchain: ${{ matrix.toolchain }}",
-                    }
+                    expected, where = "rust_primary", "public workspace"
+                    allowed = {expected, "nightly", "matrix"}
                 steps = re.findall(
                     r"(?ms)^      - uses: dtolnay/rust-toolchain@[0-9a-f]{40}"
                     r".*?(?=^      - |\Z)",
@@ -247,21 +255,21 @@ class WorkflowPolicyTests(unittest.TestCase):
                 )
                 for step in steps:
                     selected = {
-                        line.strip()
+                        selected_pin(line)
                         for line in step.splitlines()
                         if line.strip().startswith("toolchain:")
                     }
-                    # Only a step that names the PINNED value counts. `nightly` is allowed on
-                    # both sides, so counting it lets the lane tally be non-zero while
-                    # `lane_channel()` was never compared to anything.
-                    if selected == {f"toolchain: {expected}"}:
+                    # Only a step that reads the PINNED output counts. `nightly` is allowed on
+                    # both sides, so counting it would leave the lane tally non-zero while no
+                    # lane job had been compared to the lane's own pin.
+                    if selected == {expected}:
                         checked[where] += 1
                     with self.subTest(workflow=workflow.name, job=job):
                         self.assertEqual(1, len(selected))
                         self.assertTrue(
                             selected <= allowed,
-                            f"{job} installs {selected} but works in the {where}, "
-                            f"which pins {expected}",
+                            f"{job} selects {selected} but works in the {where}, "
+                            f"which reads {expected}",
                         )
 
         # Per side, because the two values agree today: a single counter is kept

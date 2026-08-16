@@ -2,6 +2,7 @@
   "rust": {
     "primary": "1.96.0",
     "msrv": "1.94.0",
+    "lane": "1.96.0",
     "primary_components": [
       "clippy",
       "rustfmt",

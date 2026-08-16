@@ -32,10 +32,15 @@ jobs:
       lint: ${{ steps.classify.outputs.lint }}
       shell: ${{ steps.classify.outputs.shell }}
       worker: ${{ steps.classify.outputs.worker }}
+      rust_primary: ${{ steps.pins.outputs.rust_primary }}
+      rust_msrv: ${{ steps.pins.outputs.rust_msrv }}
+      rust_lane: ${{ steps.pins.outputs.rust_lane }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+      - id: pins
+        uses: ./.github/actions/read-dev-tools
       - name: Classify every changed path
         id: classify
         env:
@@ -65,7 +70,7 @@ jobs:
           submodules: true
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
           components: rustfmt
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
@@ -83,7 +88,7 @@ jobs:
           submodules: true
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
           components: clippy
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
@@ -102,7 +107,7 @@ jobs:
           submodules: true
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
           components: clippy
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
@@ -121,7 +126,7 @@ jobs:
           submodules: true
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
           components: clippy
           targets: wasm32-unknown-unknown
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
@@ -141,7 +146,7 @@ jobs:
           submodules: true
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
           components: clippy
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
@@ -159,7 +164,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        toolchain: [stable, "1.94.0"]
+        toolchain: [stable, "${{ needs.changes.outputs.rust_msrv }}"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -184,7 +189,7 @@ jobs:
           submodules: true
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,cargo-nextest@0.9.140
@@ -202,7 +207,7 @@ jobs:
           submodules: true
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
           targets: thumbv7em-none-eabi
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
@@ -219,7 +224,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
           targets: wasm32-unknown-unknown
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
@@ -238,7 +243,7 @@ jobs:
           submodules: true
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
@@ -256,7 +261,7 @@ jobs:
           submodules: true
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
@@ -274,7 +279,7 @@ jobs:
           submodules: true
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,cargo-deny@0.20.2
@@ -320,7 +325,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
           targets: wasm32-unknown-unknown
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
@@ -344,7 +349,7 @@ jobs:
           submodules: true
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
@@ -362,7 +367,7 @@ jobs:
           submodules: true
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
@@ -380,7 +385,7 @@ jobs:
           submodules: true
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
           components: llvm-tools-preview
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
@@ -401,7 +406,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
           components: llvm-tools-preview
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
@@ -418,7 +423,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
           targets: wasm32-unknown-unknown
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
@@ -435,7 +440,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
           components: llvm-tools-preview
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
@@ -452,7 +457,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
           components: llvm-tools-preview
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
@@ -469,7 +474,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
           components: clippy
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
@@ -486,7 +491,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
           components: rust-src
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
@@ -503,7 +508,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,cargo-nextest@0.9.140
@@ -519,7 +524,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0
@@ -535,7 +540,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_primary }}
           components: llvm-tools-preview
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
@@ -577,7 +582,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_lane }}
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,cargo-nextest@0.9.140
@@ -619,7 +624,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_lane }}
           components: clippy
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
@@ -653,7 +658,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.96.0
         with:
-          toolchain: 1.96.0
+          toolchain: ${{ needs.changes.outputs.rust_lane }}
       - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
         with:
           tool: just@1.57.0,cargo-pgrx@0.19.2
