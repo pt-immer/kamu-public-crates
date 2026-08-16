@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use repo_policy::actions::{remote_uses, sources, step_ids, step_output_references};
+use repo_policy::actions::{remote_uses, sources, step_ids, step_output_references, step_scopes};
 
 fn is_commit(pinned_to: &str) -> bool {
     pinned_to.len() == 40 && pinned_to.chars().all(|c| c.is_ascii_hexdigit())
@@ -61,15 +61,19 @@ fn every_reference_to_an_action_carries_the_same_label() {
 /// so a renamed step id hands its consumer an empty value and the run continues.
 #[test]
 fn every_step_output_read_names_a_step_that_exists() {
+    // Per job, not per file: `steps` is job-scoped, so an id declared in a sibling job does
+    // not resolve here, and collecting ids file-wide would accept exactly that.
     let mut checked = 0_usize;
     for (source, text) in sources() {
-        let declared: BTreeSet<String> = step_ids(&text).into_iter().collect();
-        for (id, name) in step_output_references(&text) {
-            assert!(
-                declared.contains(&id),
-                "{source} reads steps.{id}.outputs.{name}, and no step declares id {id}",
-            );
-            checked += 1;
+        for scope in step_scopes(text) {
+            let declared: BTreeSet<String> = step_ids(scope).into_iter().collect();
+            for (id, name) in step_output_references(scope) {
+                assert!(
+                    declared.contains(&id),
+                    "{source} reads steps.{id}.outputs.{name} in a job that declares no step {id}",
+                );
+                checked += 1;
+            }
         }
     }
     assert!(checked > 0, "no step output was read; this would pass vacuously");

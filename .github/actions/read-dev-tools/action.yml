@@ -28,12 +28,20 @@ runs:
         # that is not there and fail as an opaque non-zero step.
         MANIFEST: ${{ github.workspace }}/.config/dev-tools.json
       run: |
+        set -euo pipefail
         if [ ! -r "$MANIFEST" ]; then
           echo "::error::read-dev-tools: $MANIFEST is not readable; check the repository out first"
           exit 1
         fi
+        # The manifest is pull-request-controlled content. A fixed delimiter lets a line equal to
+        # it close the heredoc early and write arbitrary further outputs, which every job reads.
+        delimiter="KAMU_DEV_TOOLS_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+        if grep -qxF -- "$delimiter" "$MANIFEST"; then
+          echo "::error::read-dev-tools: $MANIFEST contains the generated delimiter"
+          exit 1
+        fi
         {
-          echo 'manifest<<KAMU_DEV_TOOLS'
+          echo "manifest<<$delimiter"
           cat "$MANIFEST"
-          echo 'KAMU_DEV_TOOLS'
+          echo "$delimiter"
         } >>"$GITHUB_OUTPUT"

@@ -19,13 +19,14 @@ REPRESENTATIVE_PATHS = {
     "shared": "Cargo.lock",
     "docs": "README.md",
     "shell": "ops/new-check.sh",
+    "tools": "tools/repo-policy/src/lib.rs",
 }
 
 # The fan-out this repository intends, written independently of the map that
 # implements it. Deriving the expectation from DERIVED_CLASSES would move both
 # sides of the assertion together and prove nothing.
 EXPECTED_FAN_OUT = {
-    "rust": {"iso3166", "logging", "money", "snap", "shared"},
+    "rust": {"iso3166", "logging", "money", "snap", "shared", "tools"},
     "iso": {"iso3166", "shared"},
     "log": {"logging", "shared"},
     "money": {"money", "shared"},

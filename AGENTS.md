@@ -1,7 +1,7 @@
 # Agent guide — kamu-public-crates
 
-This repository contains nine independently versioned public Rust libraries and
-one excluded PostgreSQL extension lane. `CLAUDE.md` and
+This repository contains nine independently versioned public Rust libraries, an
+unpublished repository-policy crate, and one excluded PostgreSQL extension lane. `CLAUDE.md` and
 `.github/copilot-instructions.md` are symlinks to this file; keep this as the
 single automation guide. Human-facing orientation belongs in
 [`README.md`](README.md) and [`CONTRIBUTING.md`](CONTRIBUTING.md).
@@ -39,9 +39,10 @@ Repository-wide policy remains at the root. In particular, `lint-shell` and
   extension lane's channel. Each is a view of a file some tool honours and the
   manifest cannot — `rust-toolchain.toml` for the two channels, `Cargo.toml` for
   the floor — and `tools/repo-policy` holds them equal. Workflows reference the
-  manifest through `.github/actions/read-dev-tools`; a version literal anywhere
-  Actions executes fails, whichever spelling of the file extension it is written
-  in. `test_dev_environment.py` still binds the literals in `clippy.toml`, the
+  manifest through `.github/actions/read-dev-tools`. A toolchain SELECTED by a
+  version literal fails, in any file Actions executes and in either YAML spelling;
+  a version named some other way, in a `run:` line or a container image, is not
+  something that scan looks at. `test_dev_environment.py` still binds the literals in `clippy.toml`, the
   `Justfile` and `README.md`. Toolchain
   literals matter more than the floor they restate: `rustup run <version>`
   addresses a toolchain by name, so one that outlives a bump either resolves to

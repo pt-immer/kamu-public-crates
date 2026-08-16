@@ -134,26 +134,25 @@ fn listed(relative: &str, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The root toolchain file carries what the root `setup` installs. The lane's carries its own,
+/// and the lane installs it from there, so the manifest states the lane's channel and nothing
+/// else about it.
 #[test]
-fn each_toolchain_file_carries_what_the_manifest_says_its_side_installs() {
+fn the_root_toolchain_file_carries_what_the_manifest_says_setup_installs() {
     let manifest = tools();
-    for (relative, components, targets) in [
-        ("rust-toolchain.toml", &manifest.rust.primary_components, Some(&manifest.rust.primary_targets)),
-        ("extensions/money-pg/rust-toolchain.toml", &manifest.rust.lane_components, None),
-    ] {
-        let present = listed(relative, "components");
-        assert!(!present.is_empty(), "{relative} lists no component to bind");
-        assert!(!components.is_empty(), "{} names no component for {relative}", DevTools::PATH);
-        for component in components {
-            assert!(present.contains(component), "{relative} omits the component {component}");
-        }
-        if let Some(targets) = targets {
-            let present = listed(relative, "targets");
-            assert!(!present.is_empty(), "{relative} lists no target to bind");
-            for target in targets {
-                assert!(present.contains(target), "{relative} omits the target {target}");
-            }
-        }
+    let relative = "rust-toolchain.toml";
+
+    let components = listed(relative, "components");
+    assert!(!components.is_empty(), "{relative} lists no component to bind");
+    assert!(!manifest.rust.primary_components.is_empty(), "{} names no component", DevTools::PATH);
+    for component in &manifest.rust.primary_components {
+        assert!(components.contains(component), "{relative} omits the component {component}");
+    }
+
+    let targets = listed(relative, "targets");
+    assert!(!targets.is_empty(), "{relative} lists no target to bind");
+    for target in &manifest.rust.primary_targets {
+        assert!(targets.contains(target), "{relative} omits the target {target}");
     }
 }
 
@@ -224,6 +223,10 @@ fn every_selected_toolchain_is_a_reference_or_a_named_channel() {
 /// The matrix leg that exists to compile at the floor has to read the floor. Pointed at any
 /// other pin it still runs, still passes, and stops testing the version every published crate
 /// promises.
+///
+/// This governs public-workspace matrices. A lane job may not carry one at all, which
+/// `scripts/test_workflows.py` refuses separately, because a matrix there would install the
+/// public workspace's floor into the lane.
 #[test]
 fn the_toolchain_matrix_compiles_at_the_declared_floor() {
     let mut matrices = 0_usize;
@@ -289,7 +292,7 @@ fn each_action_output_reads_the_manifest_key_its_name_states() {
 fn every_republished_pin_keeps_its_own_name() {
     let mut republished = 0_usize;
     for (source, text) in actions_sources() {
-        for (name, value) in entries_at(&text, 6) {
+        for (name, value) in entries_at(text, 6) {
             if !name.starts_with("rust_") {
                 continue;
             }

@@ -272,9 +272,10 @@ class WorkflowPolicyTests(unittest.TestCase):
                             f"which reads {expected}",
                         )
 
-        # Per side, because the two values agree today: a single counter is kept
-        # non-zero by the ~30 public-workspace jobs while every lane job goes
-        # unchecked, which is the half this test was added for.
+        # Per side, because one counter is kept non-zero by the roughly thirty
+        # public-workspace jobs while every lane job goes unchecked, which is the
+        # half this test was added for. The two sides read different pins, and
+        # `tools/repo-policy` holds each pin equal to the file that governs it.
         for where, count in checked.items():
             with self.subTest(side=where):
                 self.assertTrue(count, f"no {where} toolchain step checked; this would pass vacuously")

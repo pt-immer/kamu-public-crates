@@ -48,6 +48,7 @@ flowchart LR
     RESPONSE -. "crypto feature" .-> CRYPTO
 
     PG["extensions/money-pg<br/>excluded, publish = false"] -.-> MONEY
+    POLICY["tools/repo-policy<br/>workspace member, publish = false"]
 
     classDef leaf fill:#172554,color:#fff,stroke:#60a5fa
     classDef adapter fill:#f8fafc,color:#0f172a,stroke:#94a3b8

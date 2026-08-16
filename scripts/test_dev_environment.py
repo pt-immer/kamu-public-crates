@@ -124,10 +124,17 @@ class DevelopmentEnvironmentPolicyTests(unittest.TestCase):
                     for command in rendered
                     if f"toolchain install {rust[channel]}" in command
                 ]
-                self.assertTrue(installs, f"setup installs no {channel} toolchain")
+                # Exactly one, so two channels sharing a version cannot satisfy each other's
+                # components through a command built for the other.
+                self.assertEqual(
+                    1,
+                    len(installs),
+                    f"setup builds {len(installs)} install commands for {channel}",
+                )
                 for component in rust[f"{channel}_components"]:
-                    self.assertTrue(
-                        any(f"--component {component}" in command for command in installs),
+                    self.assertIn(
+                        f"--component {component}",
+                        installs[0],
                         f"setup installs {channel} without {component}",
                     )
         self.assertTrue(

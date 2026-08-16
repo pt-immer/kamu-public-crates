@@ -1,5 +1,7 @@
 //! What GitHub Actions executes: the workflows, and the composite actions they call.
 
+use std::sync::OnceLock;
+
 use crate::{read, tracked};
 
 /// Both extensions are accepted everywhere Actions reads YAML. The patterns are built rather
@@ -15,23 +17,58 @@ fn patterns() -> Vec<String> {
 }
 
 /// Every file Actions executes, as `(repository-relative path, contents)`, in stable order.
-pub fn sources() -> Vec<(String, String)> {
-    let owned = patterns();
-    let borrowed: Vec<&str> = owned.iter().map(String::as_str).collect();
-    let mut sources: Vec<(String, String)> = tracked(&borrowed)
-        .into_iter()
-        .map(|relative| {
-            let text = read(&relative);
-            (relative, text)
+///
+/// Read once: every check below walks the same set, and the listing costs a subprocess.
+pub fn sources() -> &'static [(String, String)] {
+    static SOURCES: OnceLock<Vec<(String, String)>> = OnceLock::new();
+    SOURCES.get_or_init(|| {
+        let owned = patterns();
+        let borrowed: Vec<&str> = owned.iter().map(String::as_str).collect();
+        let mut sources: Vec<(String, String)> = tracked(&borrowed)
+            .into_iter()
+            .map(|relative| {
+                let text = read(&relative);
+                (relative, text)
+            })
+            .collect();
+        sources.sort();
+        sources
+    })
+}
+
+/// The scopes a `steps.<id>` reference can resolve in: one per job in a workflow, and the whole
+/// file for a composite action, whose steps share a single scope.
+pub fn step_scopes(text: &str) -> Vec<&str> {
+    let Some((_, jobs)) = text.split_once("\njobs:\n") else {
+        return vec![text];
+    };
+    let mut starts: Vec<usize> = jobs
+        .match_indices('\n')
+        .map(|(index, _)| index + 1)
+        .filter(|start| {
+            let line = &jobs[*start..];
+            line.starts_with("  ")
+                && !line[2..].starts_with(' ')
+                && !line[2..].starts_with('#')
+                && line.lines().next().is_some_and(|first| first.trim_end().ends_with(':'))
         })
         .collect();
-    sources.sort();
-    sources
+    if jobs.starts_with("  ") {
+        starts.insert(0, 0);
+    }
+    starts
+        .iter()
+        .enumerate()
+        .map(|(index, start)| {
+            let end = starts.get(index + 1).copied().unwrap_or(jobs.len());
+            &jobs[*start..end]
+        })
+        .collect()
 }
 
 /// The composite actions this repository defines.
-pub fn composite_actions() -> Vec<(String, String)> {
-    sources().into_iter().filter(|(path, _)| path.starts_with(".github/actions/")).collect()
+pub fn composite_actions() -> Vec<&'static (String, String)> {
+    sources().iter().filter(|(path, _)| path.starts_with(".github/actions/")).collect()
 }
 
 /// One `uses:` reference: the action, what it is pinned to, and the label beside it.

@@ -402,6 +402,14 @@ test-scripts:
     python3 -m unittest discover -s scripts -p 'test_*.py'
     python3 scripts/ci_paths.py check-tracked
 
+# The pin and Actions checks. Reachable on its own because the files it reads --
+# the workflows, the composite actions, every manifest and both toolchain files --
+# are edited by changes that select no crate, and the workspace test sweep that
+# also runs it is gated on `rust`.
+[doc("Test the pinned versions and what Actions is allowed to run.")]
+test-policy:
+    cargo test -p repo-policy
+
 # ---------------------------------------------------------------------------
 # Publish / vendored data / housekeeping
 # ---------------------------------------------------------------------------
