@@ -1,14 +1,25 @@
 //! The pinned-version manifest, `.config/dev-tools.json`.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::Deserialize;
 
-/// The versions this repository pins. Only the Rust block is modelled; a field gains a type
-/// here when a check reads it.
+/// The versions this repository pins. A field gains a type here when a check reads it.
 #[derive(Debug, Deserialize)]
 pub struct DevTools {
     pub rust: Rust,
+    pub cargo_tools: BTreeMap<String, Tool>,
+    pub node_tools: BTreeMap<String, Tool>,
+    pub system_tools: BTreeMap<String, Tool>,
+    pub ci_only_tools: BTreeMap<String, Tool>,
+}
+
+/// One pinned tool, keyed by the name it is requested and installed by. An entry names a crate,
+/// package, binary or version query only where one differs from that name or the default.
+#[derive(Debug, Deserialize)]
+pub struct Tool {
+    pub version: String,
 }
 
 /// Three Rust versions, each a different fact. `primary` is the toolchain CI installs for the
@@ -59,6 +70,25 @@ impl std::error::Error for Error {
 impl DevTools {
     /// The manifest's path, relative to the repository root.
     pub const PATH: &'static str = ".config/dev-tools.json";
+
+    /// Every tool section, under the name the manifest gives it.
+    pub fn tool_sections(&self) -> [(&'static str, &BTreeMap<String, Tool>); 4] {
+        [
+            ("cargo_tools", &self.cargo_tools),
+            ("node_tools", &self.node_tools),
+            ("system_tools", &self.system_tools),
+            ("ci_only_tools", &self.ci_only_tools),
+        ]
+    }
+
+    /// The sections that define a tool. Two of them would be two pins for one name, and the
+    /// one a reader checked would be whichever they looked at first.
+    pub fn tool(&self, name: &str) -> Vec<(&'static str, &Tool)> {
+        self.tool_sections()
+            .into_iter()
+            .filter_map(|(section, tools)| tools.get(name).map(|tool| (section, tool)))
+            .collect()
+    }
 
     /// Read the manifest from a repository root.
     pub fn load(repo_root: &Path) -> Result<Self, Error> {

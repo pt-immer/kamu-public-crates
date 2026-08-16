@@ -319,6 +319,7 @@ fn the_tool_manifest_installs_the_pinned_cargo_pgrx() {
     let declared = manifest
         .get("ci_only_tools")
         .and_then(|tools| tools.get("cargo-pgrx"))
+        .and_then(|tool| tool.get("version"))
         .and_then(serde_json::Value::as_str)
         .unwrap_or_else(|| panic!("{} must declare cargo-pgrx", path.display()));
     assert_eq!(

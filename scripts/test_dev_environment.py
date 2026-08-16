@@ -44,6 +44,7 @@ from scripts.dev_environment import (
     resolve,
     satisfies_floor,
     setup_commands,
+    tools,
 )
 
 
@@ -174,7 +175,7 @@ class DevelopmentEnvironmentPolicyTests(unittest.TestCase):
 
     def test_every_cargo_tool_install_is_locked_and_exact(self) -> None:
         primary = self.manifest["rust"]["primary"]
-        for tool in self.manifest["cargo_tools"]:
+        for tool in tools(self.manifest, "cargo_tools"):
             with self.subTest(tool=tool["crate"]):
                 command = cargo_install_command(primary, tool)
                 self.assertIn("--locked", command)
@@ -189,7 +190,7 @@ class DevelopmentEnvironmentPolicyTests(unittest.TestCase):
         lock = json.loads(
             (ROOT / "package-lock.json").read_text(encoding="utf-8")
         )
-        for tool in self.manifest["node_tools"]:
+        for tool in tools(self.manifest, "node_tools"):
             with self.subTest(package=tool["package"]):
                 self.assertEqual(
                     tool["version"],
@@ -429,7 +430,7 @@ class DoctorReportingTests(unittest.TestCase):
         ]
         labels += [f"{rust['msrv']} {item}" for item in rust["msrv_components"]]
         for group in ("cargo_tools", "node_tools", "system_tools"):
-            labels += [tool["binary"] for tool in manifest[group]]
+            labels += [tool["binary"] for tool in tools(manifest, group)]
         for label in labels:
             with self.subTest(label=label):
                 self.assertLessEqual(len(label), Doctor.LABEL_WIDTH)

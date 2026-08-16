@@ -17,6 +17,31 @@ outputs:
       -- after rustup has downloaded the wrong toolchain, in every job, on every run.
     value: ${{ fromJSON(steps.read.outputs.manifest).rust.lane }}
 
+  tool_just:
+    description: The pinned just every job installs.
+    value: ${{ fromJSON(steps.read.outputs.manifest).cargo_tools['just'].version }}
+  tool_taplo_cli:
+    description: The pinned taplo-cli every job installs.
+    value: ${{ fromJSON(steps.read.outputs.manifest).cargo_tools['taplo-cli'].version }}
+  tool_typos_cli:
+    description: The pinned typos-cli every job installs.
+    value: ${{ fromJSON(steps.read.outputs.manifest).cargo_tools['typos-cli'].version }}
+  tool_cargo_llvm_cov:
+    description: The pinned cargo-llvm-cov every job installs.
+    value: ${{ fromJSON(steps.read.outputs.manifest).cargo_tools['cargo-llvm-cov'].version }}
+  tool_cargo_deny:
+    description: The pinned cargo-deny every job installs.
+    value: ${{ fromJSON(steps.read.outputs.manifest).cargo_tools['cargo-deny'].version }}
+  tool_cargo_nextest:
+    description: The pinned cargo-nextest every job installs.
+    value: ${{ fromJSON(steps.read.outputs.manifest).cargo_tools['cargo-nextest'].version }}
+  tool_shellcheck:
+    description: The pinned shellcheck every job installs.
+    value: ${{ fromJSON(steps.read.outputs.manifest).system_tools['shellcheck'].version }}
+  tool_cargo_pgrx:
+    description: The pinned cargo-pgrx every job installs.
+    value: ${{ fromJSON(steps.read.outputs.manifest).ci_only_tools['cargo-pgrx'].version }}
+
 runs:
   using: composite
   steps:

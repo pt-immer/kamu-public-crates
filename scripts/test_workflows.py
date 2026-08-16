@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import pathlib
 import re
 import unittest
@@ -14,9 +13,6 @@ from scripts.ci_paths import DERIVED_CLASSES, classify_paths, tracked_paths
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
 JUSTFILE = ROOT / "Justfile"
-TOOL_MANIFEST = json.loads(
-    (ROOT / ".config" / "dev-tools.json").read_text(encoding="utf-8")
-)
 
 
 WORKFLOW_PREFIX = ".github/workflows/"
@@ -229,27 +225,6 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertTrue(pins, "the pins action declares no named output")
 
         self.assertEqual(set(DERIVED_CLASSES) | pins, declared)
-
-    def test_install_action_tools_are_exactly_pinned(self) -> None:
-        versions = {
-            tool["workflow_name"]: tool["version"]
-            for group in ("cargo_tools", "system_tools")
-            for tool in TOOL_MANIFEST[group]
-        }
-        versions.update(TOOL_MANIFEST["ci_only_tools"])
-
-        for workflow in workflow_files():
-            text = workflow.read_text(encoding="utf-8")
-            for value in re.findall(r"(?m)^\s+tool:\s+(.+)$", text):
-                for specification in value.split(","):
-                    with self.subTest(
-                        workflow=workflow.name,
-                        specification=specification,
-                    ):
-                        name, separator, version = specification.partition("@")
-                        self.assertEqual("@", separator)
-                        self.assertIn(name, versions)
-                        self.assertEqual(versions[name], version)
 
     def test_no_action_installs_a_rust_toolchain(self) -> None:
         """The lane/public split is a property of the JOB, not of the step.

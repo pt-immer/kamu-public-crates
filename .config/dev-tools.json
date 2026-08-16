@@ -16,82 +16,46 @@
       "wasm32-unknown-unknown"
     ]
   },
-  "cargo_tools": [
-    {
-      "workflow_name": "just",
-      "crate": "just",
-      "binary": "just",
-      "version": "1.57.0",
-      "version_args": [
-        "--version"
-      ]
+  "cargo_tools": {
+    "just": {
+      "version": "1.57.0"
     },
-    {
-      "workflow_name": "taplo-cli",
-      "crate": "taplo-cli",
+    "taplo-cli": {
       "binary": "taplo",
-      "version": "0.10.0",
-      "version_args": [
-        "--version"
-      ]
+      "version": "0.10.0"
     },
-    {
-      "workflow_name": "typos-cli",
-      "crate": "typos-cli",
+    "typos-cli": {
       "binary": "typos",
-      "version": "1.48.0",
-      "version_args": [
-        "--version"
-      ]
+      "version": "1.48.0"
     },
-    {
-      "workflow_name": "cargo-llvm-cov",
-      "crate": "cargo-llvm-cov",
-      "binary": "cargo-llvm-cov",
+    "cargo-llvm-cov": {
       "version": "0.8.7",
       "version_args": [
         "llvm-cov",
         "--version"
       ]
     },
-    {
-      "workflow_name": "cargo-deny",
-      "crate": "cargo-deny",
-      "binary": "cargo-deny",
-      "version": "0.20.2",
-      "version_args": [
-        "--version"
-      ]
+    "cargo-deny": {
+      "version": "0.20.2"
     },
-    {
-      "workflow_name": "cargo-nextest",
-      "crate": "cargo-nextest",
-      "binary": "cargo-nextest",
-      "version": "0.9.140",
-      "version_args": [
-        "--version"
-      ]
+    "cargo-nextest": {
+      "version": "0.9.140"
     }
-  ],
-  "node_tools": [
-    {
-      "package": "markdownlint-cli2",
-      "binary": "markdownlint-cli2",
+  },
+  "node_tools": {
+    "markdownlint-cli2": {
       "version": "0.23.2"
     }
-  ],
-  "system_tools": [
-    {
-      "workflow_name": "shellcheck",
-      "binary": "shellcheck",
+  },
+  "system_tools": {
+    "shellcheck": {
       "version": "0.11.0",
-      "version_args": [
-        "--version"
-      ],
-      "install_hint": "Install ShellCheck 0.11.0 with the operating system package manager, then rerun setup."
+      "install_hint": "Install ShellCheck with the operating system package manager, then rerun setup."
     }
-  ],
+  },
   "ci_only_tools": {
-    "cargo-pgrx": "0.19.2"
+    "cargo-pgrx": {
+      "version": "0.19.2"
+    }
   }
 }

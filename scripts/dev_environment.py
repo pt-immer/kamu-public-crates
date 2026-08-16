@@ -161,6 +161,31 @@ def node_package_version(
     return None
 
 
+DEFAULT_VERSION_ARGS = ["--version"]
+
+
+def tools(manifest: dict[str, Any], section: str) -> list[dict[str, Any]]:
+    """Every tool in a section, with the defaults an entry may omit.
+
+    The key is the name the tool is requested and installed by, so an entry states
+    `crate`, `package` or `binary` only where one differs from it, and
+    `version_args` only where asking for a version is not `--version`. Restating a
+    default is how the same string comes to be maintained in two places.
+    """
+    resolved = []
+    for name, entry in manifest[section].items():
+        merged: dict[str, Any] = {
+            "name": name,
+            "crate": name,
+            "package": name,
+            "binary": name,
+            "version_args": DEFAULT_VERSION_ARGS,
+        }
+        merged.update(entry)
+        resolved.append(merged)
+    return resolved
+
+
 def local_tool_is_exact(tool: dict[str, Any]) -> bool:
     """Check one repository-local Cargo binary against its manifest version."""
     binary = TOOLS_BIN / tool["binary"]
@@ -247,7 +272,7 @@ def setup(manifest: dict[str, Any]) -> int:
 
     TOOLS_BIN.parent.mkdir(parents=True, exist_ok=True)
     primary = manifest["rust"]["primary"]
-    for tool in manifest["cargo_tools"]:
+    for tool in tools(manifest, "cargo_tools"):
         if local_tool_is_exact(tool):
             print(
                 f"= {tool['binary']} {tool['version']} already installed",
@@ -602,13 +627,13 @@ def doctor(manifest: dict[str, Any]) -> int:
     check_targets(checks, rust["primary"], rust["primary_targets"])
 
     checks.section("Repository tools")
-    for tool in manifest["cargo_tools"]:
+    for tool in tools(manifest, "cargo_tools"):
         check_cargo_tool(checks, tool)
-    for tool in manifest["node_tools"]:
+    for tool in tools(manifest, "node_tools"):
         check_node_tool(checks, tool)
 
     checks.section("System tools")
-    for tool in manifest["system_tools"]:
+    for tool in tools(manifest, "system_tools"):
         check_system_tool(checks, tool)
 
     checks.section("Vendored data")

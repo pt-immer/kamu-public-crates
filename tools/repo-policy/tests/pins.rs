@@ -255,36 +255,112 @@ fn the_toolchain_matrix_compiles_at_the_declared_floor() {
     assert!(matrices > 0, "no toolchain matrix found; this would pass vacuously");
 }
 
-/// An output's name states which manifest key it carries: the last underscore separates the
-/// section from the key within it, so `rust_primary` promises `rust.primary`. Nothing else
-/// checks the expression under it. Every action is read, not the one this branch added, and
-/// which step publishes the manifest is not asked here -- an id that resolves to nothing is
-/// what `every_step_output_read_names_a_step_that_exists` refuses.
+/// A tool is keyed in the manifest by the name Actions installs it under, and an output names
+/// it with underscores because Actions parses a hyphen as subtraction. That translation is only
+/// reversible while no tool name contains an underscore.
+#[test]
+fn no_tool_name_collides_with_the_output_spelling_of_another() {
+    let manifest = tools();
+    let mut seen = 0_usize;
+    for (section, entries) in manifest.tool_sections() {
+        for name in entries.keys() {
+            assert!(
+                !name.contains('_'),
+                "{section} names the tool {name}, whose underscore is indistinguishable from \
+                 the hyphen an output name would carry",
+            );
+            seen += 1;
+        }
+    }
+    assert!(seen > 0, "the manifest pins no tool; this would pass vacuously");
+}
+
+/// An output's name states which pin it carries, and nothing else checks the expression under
+/// it. A channel names its key directly; a tool names itself, and the section that defines it
+/// is looked up rather than restated. An output that is neither is refused, so a third kind of
+/// pin cannot arrive unbound.
+///
+/// Which step publishes the manifest is not asked here: an id that resolves to nothing is what
+/// `every_step_output_read_names_a_step_that_exists` refuses.
 #[test]
 fn each_action_output_reads_the_manifest_key_its_name_states() {
-    let mut bound = 0_usize;
+    let manifest = tools();
+    let (mut channels, mut pinned) = (0_usize, 0_usize);
     for (source, action) in actions() {
         for (name, output) in &action.outputs {
             // A composite action's output carries a value; the other kinds do not.
             let Some(value) = &output.value else {
                 continue;
             };
-            let Some((section, key)) = name.rsplit_once('_') else {
-                panic!("{source} declares the output {name}, which states no manifest section")
-            };
             assert!(
                 value.contains("fromJSON(steps."),
                 "{source} publishes {name} from {value}, which reads no published manifest",
             );
             let reads = value.trim_end().trim_end_matches('}').trim_end();
+
+            let expected = if let Some(key) = name.strip_prefix("rust_") {
+                channels += 1;
+                format!(".rust.{key}")
+            } else if let Some(slug) = name.strip_prefix("tool_") {
+                let tool = slug.replace('_', "-");
+                let defined = manifest.tool(&tool);
+                assert_eq!(
+                    1,
+                    defined.len(),
+                    "{source} publishes {name}, and {} section(s) define the tool {tool}",
+                    defined.len(),
+                );
+                pinned += 1;
+                format!(".{}['{tool}'].version", defined[0].0)
+            } else {
+                panic!("{source} declares the output {name}, which names neither a channel nor a tool")
+            };
+
             assert!(
-                reads.ends_with(&format!(".{section}.{key}")),
-                "{source} publishes {name}, which states {section}.{key}, from {value}",
+                reads.ends_with(&expected),
+                "{source} publishes {name}, which states {expected}, from {value}",
             );
-            bound += 1;
         }
     }
-    assert!(bound > 0, "no action output was bound; this would pass vacuously");
+    assert!(channels > 0, "no channel was bound; this would pass vacuously");
+    assert!(pinned > 0, "no tool pin was bound; this would pass vacuously");
+}
+
+/// The analogue of the toolchain rule, for the tools a job installs, and one turn stronger.
+/// A version literal is a copy of a pin, and the copies are what a bump has to reach. Reading
+/// SOME pin is not enough either: an expression naming another tool's output installs the wrong
+/// version under the right name, and the run succeeds.
+#[test]
+fn every_tool_a_job_installs_reads_its_own_pin() {
+    let published: BTreeSet<&String> =
+        actions().iter().flat_map(|(_, action)| action.outputs.keys()).collect();
+    let mut requested = 0_usize;
+    for source in actions_sources() {
+        for line in source.text.lines() {
+            let Some(value) = line.trim_start().strip_prefix("tool:").map(str::trim) else {
+                continue;
+            };
+            for specification in value.split(',') {
+                let (name, version) = specification.trim().split_once('@').unwrap_or_else(|| {
+                    panic!("{} requests {specification}, which pins nothing", source.path)
+                });
+                let slug = format!("tool_{}", name.replace('-', "_"));
+                assert!(
+                    published.contains(&slug),
+                    "{} installs {name}, and no action publishes the pin {slug}",
+                    source.path,
+                );
+                assert!(
+                    version.contains(&format!("outputs.{slug}")),
+                    "{} installs {name} from {version} rather than from its own pin {slug}; \
+                     read the manifest through the read-dev-tools action instead",
+                    source.path,
+                );
+                requested += 1;
+            }
+        }
+    }
+    assert!(requested > 0, "no tool was requested; this would pass vacuously");
 }
 
 /// A job republishes the action's outputs so other jobs can reach them. A pin renamed on the
