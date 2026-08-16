@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import pathlib
 import re
-import tomllib
 import unittest
 
 from scripts.ci_paths import DERIVED_CLASSES, classify_paths, tracked_paths
@@ -20,15 +19,54 @@ TOOL_MANIFEST = json.loads(
 )
 
 
-def lane_channel() -> str:
-    """The toolchain rustup selects inside the extension lane.
+WORKFLOW_PREFIX = ".github/workflows/"
+ACTIONS_SPELLINGS = (".yml", ".yaml")
 
-    A separate fact from `rust.primary`, and read from a separate file, because
-    assuming them equal is what the test below exists to refuse.
+
+def workflow_files() -> list[pathlib.Path]:
+    """Every workflow Actions runs.
+
+    Both spellings are accepted wherever Actions reads YAML, and GitHub reads
+    `.github/workflows` itself without recursing into it.
     """
-    path = ROOT / "extensions" / "money-pg" / "rust-toolchain.toml"
-    pinned = tomllib.loads(path.read_text(encoding="utf-8"))
-    return pinned["toolchain"]["channel"]
+    files = sorted(
+        ROOT / path
+        for path in tracked_paths()
+        if path.startswith(WORKFLOW_PREFIX)
+        and "/" not in path[len(WORKFLOW_PREFIX) :]
+        and path.endswith(ACTIONS_SPELLINGS)
+    )
+    assert files, "no workflow to check; this would pass vacuously"
+    return files
+
+
+def action_files() -> list[pathlib.Path]:
+    """Every action this repository defines.
+
+    An action is named by its own file, so one grouped into a subdirectory, or kept
+    outside `.github`, is still an action a `uses: ./path` step can reach.
+    """
+    return sorted(
+        ROOT / path
+        for path in tracked_paths()
+        if path.rsplit("/", 1)[-1] in {"action.yml", "action.yaml"}
+    )
+
+
+def selected_pin(line: str) -> str:
+    """The pin a `toolchain:` line reads, as the output name it names.
+
+    The channels themselves live in `.config/dev-tools.json` and are held equal to the
+    `rust-toolchain.toml` each one governs by `tools/repo-policy/tests/pins.rs`. What a job
+    chooses is which of them to read, which is what this file checks.
+    """
+    value = line.split(":", 1)[1].strip()
+    reference = re.search(r"outputs\.([a-z0-9_]+)\s*}}", value)
+    if reference:
+        return reference.group(1)
+    if "matrix.toolchain" in value:
+        return "matrix"
+    return value
 
 
 def lane_entry_recipes() -> set[str]:
@@ -146,7 +184,7 @@ def workflow_jobs(source: str) -> dict[str, dict[str, object]]:
 
 class WorkflowPolicyTests(unittest.TestCase):
     def test_remote_actions_are_pinned_to_full_commit_ids(self) -> None:
-        for workflow in sorted(WORKFLOWS.glob("*.yml")):
+        for workflow in workflow_files():
             text = workflow.read_text(encoding="utf-8")
             for reference in re.findall(r"\buses:\s+([^#\s]+)", text):
                 with self.subTest(workflow=workflow.name, reference=reference):
@@ -180,7 +218,17 @@ class WorkflowPolicyTests(unittest.TestCase):
         block = re.search(r"(?m)^    outputs:\n((?:      \S.*\n)+)", source)
         self.assertIsNotNone(block, "the changes job declares no outputs")
         declared = set(re.findall(r"(?m)^      ([a-z0-9_]+):", block.group(1)))
-        self.assertEqual(set(DERIVED_CLASSES), declared)
+
+        # The job also republishes the pinned versions, so every job reads them from one place
+        # instead of restating them. Those come from the action, not from this list.
+        action = (
+            ROOT / ".github" / "actions" / "read-dev-tools" / "action.yml"
+        ).read_text(encoding="utf-8")
+        outputs = action.split("\noutputs:\n", 1)[1].split("\nruns:", 1)[0]
+        pins = set(re.findall(r"(?m)^  ([a-z0-9_]+):$", outputs))
+        self.assertTrue(pins, "the pins action declares no named output")
+
+        self.assertEqual(set(DERIVED_CLASSES) | pins, declared)
 
     def test_install_action_tools_are_exactly_pinned(self) -> None:
         versions = {
@@ -190,7 +238,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         }
         versions.update(TOOL_MANIFEST["ci_only_tools"])
 
-        for workflow in sorted(WORKFLOWS.glob("*.yml")):
+        for workflow in workflow_files():
             text = workflow.read_text(encoding="utf-8")
             for value in re.findall(r"(?m)^\s+tool:\s+(.+)$", text):
                 for specification in value.split(","):
@@ -202,6 +250,26 @@ class WorkflowPolicyTests(unittest.TestCase):
                         self.assertEqual("@", separator)
                         self.assertIn(name, versions)
                         self.assertEqual(versions[name], version)
+
+    def test_no_action_installs_a_rust_toolchain(self) -> None:
+        """The lane/public split is a property of the JOB, not of the step.
+
+        `test_rust_toolchain_steps_select_an_explicit_toolchain` classifies a step by
+        the recipes the job around it invokes. An action has no job, so a toolchain
+        installed from inside one is reached by whichever job calls it and belongs to
+        no side that could be checked -- it would pass that test by being invisible
+        to it rather than by agreeing with it.
+        """
+        actions = action_files()
+        self.assertTrue(actions, "no action to check; this would pass vacuously")
+        for action in actions:
+            with self.subTest(action=action.name):
+                self.assertNotIn(
+                    "dtolnay/rust-toolchain",
+                    action.read_text(encoding="utf-8"),
+                    f"{action.relative_to(ROOT)} installs a toolchain, which no job "
+                    "owns and nothing can classify",
+                )
 
     def test_rust_toolchain_steps_select_an_explicit_toolchain(self) -> None:
         """Each job installs the toolchain its own work will use.
@@ -216,30 +284,24 @@ class WorkflowPolicyTests(unittest.TestCase):
         A job is a lane job when it invokes a root recipe that cds into the lane,
         and that set is read out of the Justfile rather than written here.
         """
-        primary = TOOL_MANIFEST["rust"]["primary"]
-        lane = lane_channel()
         entries = lane_entry_recipes()
         enters_lane = re.compile(
             r"just (?:{})(?:\s|$)".format("|".join(re.escape(name) for name in sorted(entries)))
         )
 
         checked = {"extension lane": 0, "public workspace": 0}
-        for workflow in sorted(WORKFLOWS.glob("*.yml")):
+        for workflow in workflow_files():
             text = workflow.read_text(encoding="utf-8")
             for job, body in workflow_job_bodies(text).items():
                 if enters_lane.search(body):
-                    expected, where = lane, "extension lane"
+                    expected, where = "rust_lane", "extension lane"
                     # The lane builds with one toolchain. Miri is the exception it
                     # actually has; a matrix is not, and would install the public
                     # workspace's MSRV into a lane job.
-                    allowed = {f"toolchain: {expected}", "toolchain: nightly"}
+                    allowed = {expected, "nightly"}
                 else:
-                    expected, where = primary, "public workspace"
-                    allowed = {
-                        f"toolchain: {expected}",
-                        "toolchain: nightly",
-                        "toolchain: ${{ matrix.toolchain }}",
-                    }
+                    expected, where = "rust_primary", "public workspace"
+                    allowed = {expected, "nightly", "matrix"}
                 steps = re.findall(
                     r"(?ms)^      - uses: dtolnay/rust-toolchain@[0-9a-f]{40}"
                     r".*?(?=^      - |\Z)",
@@ -247,32 +309,33 @@ class WorkflowPolicyTests(unittest.TestCase):
                 )
                 for step in steps:
                     selected = {
-                        line.strip()
+                        selected_pin(line)
                         for line in step.splitlines()
                         if line.strip().startswith("toolchain:")
                     }
-                    # Only a step that names the PINNED value counts. `nightly` is allowed on
-                    # both sides, so counting it lets the lane tally be non-zero while
-                    # `lane_channel()` was never compared to anything.
-                    if selected == {f"toolchain: {expected}"}:
+                    # Only a step that reads the PINNED output counts. `nightly` is allowed on
+                    # both sides, so counting it would leave the lane tally non-zero while no
+                    # lane job had been compared to the lane's own pin.
+                    if selected == {expected}:
                         checked[where] += 1
                     with self.subTest(workflow=workflow.name, job=job):
                         self.assertEqual(1, len(selected))
                         self.assertTrue(
                             selected <= allowed,
-                            f"{job} installs {selected} but works in the {where}, "
-                            f"which pins {expected}",
+                            f"{job} selects {selected} but works in the {where}, "
+                            f"which reads {expected}",
                         )
 
-        # Per side, because the two values agree today: a single counter is kept
-        # non-zero by the ~30 public-workspace jobs while every lane job goes
-        # unchecked, which is the half this test was added for.
+        # Per side, because one counter is kept non-zero by the roughly thirty
+        # public-workspace jobs while every lane job goes unchecked, which is the
+        # half this test was added for. The two sides read different pins, and
+        # `tools/repo-policy` holds each pin equal to the file that governs it.
         for where, count in checked.items():
             with self.subTest(side=where):
                 self.assertTrue(count, f"no {where} toolchain step checked; this would pass vacuously")
 
     def test_workflow_steps_do_not_repeat_mapping_keys(self) -> None:
-        for workflow in sorted(WORKFLOWS.glob("*.yml")):
+        for workflow in workflow_files():
             lines = workflow.read_text(encoding="utf-8").splitlines()
             starts = [
                 index
@@ -301,7 +364,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertNotIn("npm install ", workflow)
 
     def test_registry_token_jobs_use_the_protected_environment(self) -> None:
-        for workflow in sorted(WORKFLOWS.glob("*.yml")):
+        for workflow in workflow_files():
             text = workflow.read_text(encoding="utf-8")
             if "SECRET_DEPLOY_CRATEIO" in text:
                 with self.subTest(workflow=workflow.name):

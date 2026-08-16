@@ -16,6 +16,14 @@ from typing import Any, TypeVar
 from unittest import mock
 
 from scripts import dev_environment
+
+# Channels the root `setup` deliberately does not install. The extension lane installs its
+# own from its own `rust-toolchain.toml` through `just pg setup`, and root setup doing it
+# too would download a second toolchain for every contributor who never enters the lane.
+# The manifest still names it because CI must select it without entering the lane. Stated
+# here rather than derived away, so a channel added without a setup command still fails.
+INSTALLED_BY_THE_LANE = {"lane"}
+
 from scripts.dev_environment import (
     Doctor,
     Palette,
@@ -64,53 +72,9 @@ class DevelopmentEnvironmentPolicyTests(unittest.TestCase):
     def setUp(self) -> None:
         self.manifest = load_manifest()
 
-    def test_rust_toolchain_matches_the_tool_manifest(self) -> None:
-        toolchain = (ROOT / "rust-toolchain.toml").read_text(
-            encoding="utf-8"
-        )
-        rust = self.manifest["rust"]
-        self.assertIn(f'channel = "{rust["primary"]}"', toolchain)
-        for component in rust["primary_components"]:
-            self.assertIn(f'"{component}"', toolchain)
-        for target in rust["primary_targets"]:
-            self.assertIn(f'"{target}"', toolchain)
-
-    def test_every_msrv_copy_is_bound_to_the_tool_manifest(self) -> None:
-        """`rust.msrv` is the floor; nothing else may state a different one.
-
-        Each site below enforces the MSRV somewhere the others cannot reach —
-        Cargo refuses an older toolchain, the CI matrix is what actually
-        compiles against it, and the Worker example is a separate workspace
-        that cannot inherit the root manifest.
-        """
-        msrv = self.manifest["rust"]["msrv"]
-        major_minor = ".".join(msrv.split(".")[:2])
-
-        manifests = (
-            ROOT / "Cargo.toml",
-            ROOT / "crates" / "logging" / "examples" / "cloudflare-worker" / "Cargo.toml",
-        )
-        for manifest in manifests:
-            with self.subTest(manifest=str(manifest.relative_to(ROOT))):
-                declared = re.search(
-                    r'(?m)^rust-version = "([0-9.]+)"$',
-                    manifest.read_text(encoding="utf-8"),
-                )
-                self.assertIsNotNone(declared, "no rust-version to bind")
-                self.assertEqual(
-                    major_minor,
-                    ".".join(declared.group(1).split(".")[:2]),
-                )
-
-        workflow = (
-            ROOT / ".github" / "workflows" / "on-pr-synced.yml"
-        ).read_text(encoding="utf-8")
-        matrices = re.findall(r"(?m)^        toolchain: \[(.+)\]$", workflow)
-        self.assertTrue(matrices, "no toolchain matrix to bind")
-        for matrix in matrices:
-            with self.subTest(matrix=matrix):
-                pinned = re.findall(r'"([0-9][0-9.]*)"', matrix)
-                self.assertEqual([msrv], pinned)
+    # The toolchain channels, the components and targets, and the MSRV each manifest declares
+    # are held equal to `.config/dev-tools.json` by `tools/repo-policy/tests/pins.rs`, which
+    # reads TOML with a TOML parser rather than matching its text.
 
     def test_every_pinned_toolchain_literal_names_a_manifest_version(self) -> None:
         """`rustup run <version>` addresses a toolchain by name, so a literal
@@ -152,18 +116,37 @@ class DevelopmentEnvironmentPolicyTests(unittest.TestCase):
         rust = self.manifest["rust"]
         rendered = [" ".join(command) for command in commands]
 
-        self.assertTrue(
-            any(
-                f"toolchain install {rust['primary']}" in command
-                for command in rendered
-            )
+        # A channel is a key naming a version; the component and target lists are keyed off
+        # one. Deriving the set from `_components` instead exempts any channel that declares
+        # none, which is the same silence this test exists to break.
+        channels = {name for name, value in rust.items() if isinstance(value, str)}
+        self.assertTrue(channels, "the manifest names no channel to install")
+        self.assertLessEqual(
+            INSTALLED_BY_THE_LANE,
+            channels,
+            f"{sorted(INSTALLED_BY_THE_LANE - channels)} is exempted but names no channel",
         )
-        self.assertTrue(
-            any(
-                f"toolchain install {rust['msrv']}" in command
-                for command in rendered
-            )
-        )
+        for channel in sorted(channels - INSTALLED_BY_THE_LANE):
+            with self.subTest(channel=channel):
+                self.assertIn(f"{channel}_components", rust, f"{channel} lists no component")
+                installs = [
+                    command
+                    for command in rendered
+                    if f"toolchain install {rust[channel]}" in command
+                ]
+                # Exactly one, so two channels sharing a version cannot satisfy each other's
+                # components through a command built for the other.
+                self.assertEqual(
+                    1,
+                    len(installs),
+                    f"setup builds {len(installs)} install commands for {channel}",
+                )
+                for component in rust[f"{channel}_components"]:
+                    self.assertIn(
+                        f"--component {component}",
+                        installs[0],
+                        f"setup installs {channel} without {component}",
+                    )
         self.assertTrue(
             any(
                 command[:5]

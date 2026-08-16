@@ -19,6 +19,7 @@ BASE_CLASSES = {
     "shared",
     "docs",
     "shell",
+    "tools",
 }
 
 # A change to any of these bears on every crate: the lockfile and root manifest
@@ -60,9 +61,11 @@ SHARED_FILES = {
 # fail-closed direction is the one that cannot certify an unproven change.
 DERIVED_CLASSES: dict[str, tuple[tuple[str, ...], str]] = {
     "rust": (
-        ("iso3166", "logging", "money", "snap", "shared"),
+        ("iso3166", "logging", "money", "snap", "shared", "tools"),
         "fmt, workspace Clippy and the workspace test job resolve every member "
-        "in one graph, so any member's source is an input to all of them",
+        "in one graph, so any member's source is an input to all of them; "
+        "`tools/` is a member like any other, and its tests read files rather "
+        "than running any lane container",
     ),
     "iso": (("iso3166", "shared"), "the kamu-iso3166 jobs"),
     "log": (("logging", "shared"), "the kamu-logging jobs"),
@@ -145,6 +148,8 @@ def classify_path(raw_path: str) -> set[str]:
         classes.add("snap")
     elif path.startswith("extensions/money-pg/"):
         classes.add("moneypg")
+    elif path.startswith("tools/"):
+        classes.add("tools")
 
     if path.endswith(".md") or path in DOC_CONFIG_FILES:
         classes.add("docs")

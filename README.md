@@ -48,13 +48,14 @@ flowchart LR
     RESPONSE -. "crypto feature" .-> CRYPTO
 
     PG["extensions/money-pg<br/>excluded, publish = false"] -.-> MONEY
+    POLICY["tools/repo-policy<br/>workspace member, publish = false"]
 
     classDef leaf fill:#172554,color:#fff,stroke:#60a5fa
     classDef adapter fill:#f8fafc,color:#0f172a,stroke:#94a3b8
-    classDef lane fill:#3f3f46,color:#fff,stroke:#f59e0b,stroke-dasharray: 5 5
+    classDef unpublished fill:#3f3f46,color:#fff,stroke:#f59e0b,stroke-dasharray: 5 5
     class ISO,LOG,MONEY,CRYPTO,RESPONSE leaf
     class CRYPTO_ACTIX,CRYPTO_AXUM,RESPONSE_ACTIX,RESPONSE_AXUM adapter
-    class PG lane
+    class PG,POLICY unpublished
 ```
 
 ## Public crate inventory
@@ -131,7 +132,7 @@ Automation details live in [`AGENTS.md`](AGENTS.md).
 
 ## Quality policy
 
-- Rust 1.94.0 is the public-workspace MSRV. Rust 1.96.0 owns primary and
+- Rust 1.94.0 is the public-workspace MSRV. Rust 1.97.1 owns primary and
   compile-fail checks; CI also tests current stable.
 - Warnings and Clippy findings are denied.
 - Unsafe Rust is forbidden in ISO and SNAP crates. The extension confines

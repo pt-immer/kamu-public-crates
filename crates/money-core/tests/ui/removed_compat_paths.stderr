@@ -32,7 +32,9 @@ error[E0603]: module `allocation` is private
   --> tests/ui/removed_compat_paths.rs:15:22
    |
 15 | use kamu_money_core::allocation::SplitParts;
-   |                      ^^^^^^^^^^ private module
+   |                      ^^^^^^^^^^  ---------- struct `SplitParts` is not publicly re-exported
+   |                      |
+   |                      private module
    |
 note: the module `allocation` is defined here
   --> src/lib.rs
@@ -58,7 +60,9 @@ error[E0603]: module `domain` is private
   --> tests/ui/removed_compat_paths.rs:17:22
    |
 17 | use kamu_money_core::domain::SCALE;
-   |                      ^^^^^^ private module
+   |                      ^^^^^^  ----- constant `SCALE` is not publicly re-exported
+   |                      |
+   |                      private module
    |
 note: the module `domain` is defined here
   --> src/lib.rs
@@ -70,7 +74,9 @@ error[E0603]: module `money` is private
   --> tests/ui/removed_compat_paths.rs:19:22
    |
 19 | use kamu_money_core::money::Money;
-   |                      ^^^^^ private module
+   |                      ^^^^^  ----- struct `Money` is not publicly re-exported
+   |                      |
+   |                      private module
    |
 note: the module `money` is defined here
   --> src/lib.rs

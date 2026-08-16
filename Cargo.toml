@@ -9,6 +9,7 @@ members = [
   "crates/snap-response",
   "crates/snap-response-actix",
   "crates/snap-response-axum",
+  "tools/repo-policy",
 ]
 exclude = [
   # The PostgreSQL extension lane is its OWN workspace: it patches pgrx to a git
@@ -48,6 +49,7 @@ serde = { version = "1.0.229", default-features = false }
 serde_json = "1"
 syn = { version = "3.0.3", features = ["full"] }
 thiserror = { version = "2", default-features = false }
+toml = "1"
 # --- kamu-logging ---
 actix-web = { version = "4", default-features = false }
 console = "0.16"

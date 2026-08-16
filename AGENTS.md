@@ -1,7 +1,7 @@
 # Agent guide — kamu-public-crates
 
-This repository contains nine independently versioned public Rust libraries and
-one excluded PostgreSQL extension lane. `CLAUDE.md` and
+This repository contains nine independently versioned public Rust libraries, an
+unpublished repository-policy crate, and one excluded PostgreSQL extension lane. `CLAUDE.md` and
 `.github/copilot-instructions.md` are symlinks to this file; keep this as the
 single automation guide. Human-facing orientation belongs in
 [`README.md`](README.md) and [`CONTRIBUTING.md`](CONTRIBUTING.md).
@@ -15,6 +15,7 @@ single automation guide. Human-facing orientation belongs in
 | `crates/money-core` | Exact ISO 4217 money, rates, allocation, wire, and driver adapters | Root workspace |
 | `crates/snap-*` | Two SNAP BI domain crates plus four Actix/axum adapters | Root workspace |
 | `extensions/money-pg` | `kmoney` pgrx extension and YugabyteDB harness | Excluded nested workspace |
+| `tools/repo-policy` | Decoders for the repository's own artifacts, and the checks that read them | Root workspace, `publish = false` |
 
 The root workspace contains exactly nine publishable crates. Versions and
 releases are per crate; each crate's `Cargo.toml` and `CHANGELOG.md` are
@@ -31,17 +32,23 @@ Repository-wide policy remains at the root. In particular, `lint-shell` and
 
 ## Hard invariants
 
-- The public workspace uses Edition 2024. `.config/dev-tools.json` owns both
-  Rust versions: `rust.msrv` is the floor the root manifest declares and CI
-  tests exactly, and `rust.primary` is the toolchain that pins compile-fail
-  goldens. `test_dev_environment.py` binds every literal that names a Rust
-  version in the two manifests, the CI toolchain matrix, `clippy.toml`, the
-  `Justfile` and `README.md` — a literal that is neither version fails. Toolchain
+- The public workspace uses Edition 2024. `.config/dev-tools.json` is the one file
+  CI reads its versions from, and states three: `rust.msrv` is the floor the
+  published manifests declare and CI tests exactly, `rust.primary` is the
+  toolchain that pins compile-fail goldens, and `rust.lane` is the excluded
+  extension lane's channel. Each is a view of a file some tool honours and the
+  manifest cannot — `rust-toolchain.toml` for the two channels, `Cargo.toml` for
+  the floor — and `tools/repo-policy` holds them equal. Workflows reference the
+  manifest through `.github/actions/read-dev-tools`. A toolchain SELECTED by a
+  version literal fails, in any file Actions executes and in either YAML spelling;
+  a version named some other way, in a `run:` line or a container image, is not
+  something that scan looks at. `test_dev_environment.py` still binds the literals in `clippy.toml`, the
+  `Justfile` and `README.md`. Toolchain
   literals matter more than the floor they restate: `rustup run <version>`
   addresses a toolchain by name, so one that outlives a bump either resolves to
   a stale install or does not resolve at all. The extension lane pins its own
   toolchain because pgrx 0.19.2 requires it, and binds it in its hygiene crate.
-  Its CI jobs install that toolchain rather than `rust.primary`, and
+  Its CI jobs install `rust.lane` rather than `rust.primary`, and
   `test_workflows.py` tells the two apart by whether a job invokes a root recipe
   that cds into the lane, a set it derives from the `Justfile` rather than lists
   — `just pg` is not the only way in, and `gate-all` composes `gate-pg`.
@@ -219,6 +226,8 @@ just test-all           # workspace and per-crate feature matrices
 just cov-all            # enforced coverage floors
 just check <crate>      # one crate, without the workspace sweep
 just test-fast          # workspace nextest plus doctests
+just test-scripts       # CI path ownership and workflow policy
+just test-policy        # the pinned versions and what Actions may run
 just pg selftest-all    # the compiler-free lane negative controls; CI runs this
 just pg doc-gate-selftest # the doc gate's controls; needs a populated PGRX_HOME
 just pg core-relock     # re-lock kamu-money-core with the lane patch active
@@ -260,7 +269,7 @@ their commands.
 
 `.github/workflows/on-pr-synced.yml` runs for pull requests and pushes to
 `main`. `scripts/ci_paths.py` classifies every changed path and fails when a
-repository surface has no owner. `just test-repo-policy` proves every tracked
+repository surface has no owner. `just test-scripts` proves every tracked
 path remains classified.
 
 Why working on one crate runs another's jobs is answered by `DERIVED_CLASSES` in

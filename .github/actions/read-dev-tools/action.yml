@@ -1,0 +1,47 @@
+name: Read pinned versions
+description: >-
+  Publish .config/dev-tools.json to a job so it references the pinned versions instead of
+  restating them. Requires the repository to be checked out.
+
+outputs:
+  rust_primary:
+    description: The toolchain CI installs, which also pins the compile-fail goldens.
+    value: ${{ fromJSON(steps.read.outputs.manifest).rust.primary }}
+  rust_msrv:
+    description: The floor the published manifests declare and CI tests exactly.
+    value: ${{ fromJSON(steps.read.outputs.manifest).rust.msrv }}
+  rust_lane:
+    description: >-
+      The excluded extension lane's channel, which pgrx requires. A lane job that installs
+      rust_primary instead still compiles correctly, because the lane's rust-toolchain.toml wins
+      -- after rustup has downloaded the wrong toolchain, in every job, on every run.
+    value: ${{ fromJSON(steps.read.outputs.manifest).rust.lane }}
+
+runs:
+  using: composite
+  steps:
+    - id: read
+      shell: bash
+      env:
+        # Anchored on the workspace rather than the working directory: a job that checks out
+        # under a path, or sets a working-directory default, would otherwise reach for a file
+        # that is not there and fail as an opaque non-zero step.
+        MANIFEST: ${{ github.workspace }}/.config/dev-tools.json
+      run: |
+        set -euo pipefail
+        if [ ! -r "$MANIFEST" ]; then
+          echo "::error::read-dev-tools: $MANIFEST is not readable; check the repository out first"
+          exit 1
+        fi
+        # The manifest is pull-request-controlled content. A fixed delimiter lets a line equal to
+        # it close the heredoc early and write arbitrary further outputs, which every job reads.
+        delimiter="KAMU_DEV_TOOLS_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+        if grep -qxF -- "$delimiter" "$MANIFEST"; then
+          echo "::error::read-dev-tools: $MANIFEST contains the generated delimiter"
+          exit 1
+        fi
+        {
+          echo "manifest<<$delimiter"
+          cat "$MANIFEST"
+          echo "$delimiter"
+        } >>"$GITHUB_OUTPUT"
