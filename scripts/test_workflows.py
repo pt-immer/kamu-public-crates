@@ -49,8 +49,8 @@ def action_files() -> list[pathlib.Path]:
     )
 
 
-def selected_pin(line: str) -> str:
-    """The pin a `toolchain:` line reads, as the output name it names.
+def selected_channel(line: str) -> str:
+    """The channel a `toolchain:` line reads, as the manifest path it indexes.
 
     The channels themselves live in `.config/dev-tools.json` and are held equal to the
     `rust-toolchain.toml` each one governs by `tools/repo-policy/tests/pins.rs`. What a job
@@ -61,7 +61,7 @@ def selected_pin(line: str) -> str:
     # named after each one, so what identifies the channel is the path, not an output name.
     indexed = re.search(r"outputs\.manifest\)\.rust\.([a-z0-9_]+)", value)
     if indexed:
-        return f"rust_{indexed.group(1)}"
+        return f"rust.{indexed.group(1)}"
     if "matrix.toolchain" in value:
         return "matrix"
     return value
@@ -271,13 +271,13 @@ class WorkflowPolicyTests(unittest.TestCase):
             text = workflow.read_text(encoding="utf-8")
             for job, body in workflow_job_bodies(text).items():
                 if enters_lane.search(body):
-                    expected, where = "rust_lane", "extension lane"
+                    expected, where = "rust.lane", "extension lane"
                     # The lane builds with one toolchain. Miri is the exception it
                     # actually has; a matrix is not, and would install the public
                     # workspace's MSRV into a lane job.
                     allowed = {expected, "nightly"}
                 else:
-                    expected, where = "rust_primary", "public workspace"
+                    expected, where = "rust.primary", "public workspace"
                     allowed = {expected, "nightly", "matrix"}
                 steps = re.findall(
                     r"(?ms)^      - uses: dtolnay/rust-toolchain@[0-9a-f]{40}"
@@ -286,7 +286,7 @@ class WorkflowPolicyTests(unittest.TestCase):
                 )
                 for step in steps:
                     selected = {
-                        selected_pin(line)
+                        selected_channel(line)
                         for line in step.splitlines()
                         if line.strip().startswith("toolchain:")
                     }

@@ -33,9 +33,9 @@ Repository-wide policy remains at the root. In particular, `lint-shell` and
 ## Hard invariants
 
 - The public workspace uses Edition 2024. `.config/dev-tools.json` is the one file
-  CI reads its versions from. Three of them are channels: `rust.msrv` is the floor
-  the published manifests declare and CI tests exactly, `rust.primary` is the
-  toolchain that pins compile-fail goldens, and `rust.lane` is the excluded
+  CI reads its versions from. It states three Rust versions: `rust.msrv` is the
+  floor the published manifests declare and CI tests exactly, `rust.primary` is
+  the toolchain that pins compile-fail goldens, and `rust.lane` is the excluded
   extension lane's channel. Each is a view of a file some tool honours and the
   manifest cannot — `rust-toolchain.toml` for the two channels, `Cargo.toml` for
   the floor — and `tools/repo-policy` holds them equal. The rest are tool pins,
