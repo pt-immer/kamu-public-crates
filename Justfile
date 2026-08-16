@@ -398,7 +398,7 @@ check-examples:
 # Test fail-closed CI classification, registry probing, and standalone-package
 # ownership; then prove every tracked path is classified.
 [doc("Test CI path ownership and workflow policy.")]
-test-repo-policy:
+test-scripts:
     python3 -m unittest discover -s scripts -p 'test_*.py'
     python3 scripts/ci_paths.py check-tracked
 
@@ -437,11 +437,11 @@ clean:
 gate:
     #!/usr/bin/env bash
     set -uo pipefail
-    names=("lint-all" "test-all" "test-money" "test-repo-policy" "msrv(1.94.0)" "cov-all" "doc" "build-nostd" "build-wasm" "build-wasm-snap" "check-worker-example" "check-examples" "deny")
+    names=("lint-all" "test-all" "test-money" "test-scripts" "msrv(1.94.0)" "cov-all" "doc" "build-nostd" "build-wasm" "build-wasm-snap" "check-worker-example" "check-examples" "deny")
     cmds=("just lint-all"
           "just test-all"
           "just test-money"
-          "just test-repo-policy"
+          "just test-scripts"
           "cargo +1.94.0 nextest run --workspace -E 'not binary(compile_fail)' && cargo +1.94.0 test --workspace --doc --quiet"
           "just cov-all"
           "just doc"

@@ -1,6 +1,6 @@
 //! Every pinned version has one home, and the copies a tool insists on are held equal to it.
 
-use repo_policy::actions::sources as actions_sources;
+use repo_policy::actions::{composite_actions, entries_at, sources as actions_sources};
 use repo_policy::dev_tools::DevTools;
 use repo_policy::{read, repo_root, tracked};
 
@@ -34,7 +34,8 @@ fn same_series(left: &str, left_source: &str, right: &str, right_source: &str) -
 }
 
 fn tools() -> DevTools {
-    DevTools::load(&repo_root()).expect("the pinned-version manifest decodes")
+    // The error names the path and the reason; `expect` would replace both with this string.
+    DevTools::load(&repo_root()).unwrap_or_else(|error| panic!("{error}"))
 }
 
 #[test]
@@ -47,40 +48,63 @@ fn the_lane_channel_is_the_one_rustup_selects_inside_the_lane() {
     assert_eq!(tools().rust.lane, channel("extensions/money-pg/rust-toolchain.toml"));
 }
 
-/// A manifest's own `rust-version`. Absent and unreadable are different answers: a floor
-/// written as a bare TOML number would decode to no string, and skipping it would leave it
-/// bound to nothing while the scan reported success.
-fn declared_floor(relative: &str) -> Option<String> {
+/// How a manifest answers the question "what is your floor".
+enum Floor {
+    /// Stated here, as a version.
+    Stated(String),
+    /// Taken from the workspace, via `rust-version.workspace = true`.
+    Inherited,
+    /// Not answered at all. A package with no floor compiles against whatever is installed.
+    Absent,
+}
+
+fn floor_of(relative: &str) -> Option<Floor> {
     let document = toml_value(relative);
+    // A workspace root answers for its members through `[workspace.package]`; a package
+    // answers for itself. A manifest that is neither answers nothing and is not asked.
+    if document.get("package").is_none() && document.get("workspace").is_none() {
+        return None;
+    }
     let stated = document
         .get("workspace")
         .and_then(|workspace| workspace.get("package"))
         .and_then(|package| package.get("rust-version"))
         .or_else(|| document.get("package").and_then(|package| package.get("rust-version")));
-    match stated {
-        None => None,
-        Some(toml::Value::String(version)) => Some(version.clone()),
-        // `rust-version.workspace = true` parses as a table and states no floor of its own.
+    Some(match stated {
+        None => Floor::Absent,
+        Some(toml::Value::String(version)) => Floor::Stated(version.clone()),
         Some(toml::Value::Table(table)) if table.get("workspace") == Some(&toml::Value::Boolean(true)) => {
-            None
+            Floor::Inherited
         }
         Some(other) => {
             panic!("{relative} states rust-version as {other}, which is neither a version nor an inheritance")
         }
-    }
+    })
 }
 
-/// The public workspace and the excluded lane declare different floors, each owned elsewhere.
-/// Listing the manifests that state one is what goes stale, so every tracked manifest is read
-/// and every literal has to be placed on one side or the other.
+/// Every package answers the floor question, and every literal answer belongs to a side that
+/// owns it. Listing the manifests that state one is what goes stale; a package that answers
+/// nothing compiles against whatever toolchain happens to be installed, which is the same
+/// silence in a different place.
 #[test]
-fn every_declared_floor_belongs_to_a_side_that_owns_it() {
+fn every_package_has_a_floor_and_every_literal_belongs_to_a_side() {
     let manifest = tools();
-    let (mut public, mut lane) = (0_usize, 0_usize);
+    let (mut public, mut lane, mut inherited) = (0_usize, 0_usize, 0_usize);
 
     for relative in tracked(&["*Cargo.toml"]) {
-        let Some(declared) = declared_floor(&relative) else {
+        let Some(floor) = floor_of(&relative) else {
             continue;
+        };
+        let declared = match floor {
+            Floor::Inherited => {
+                inherited += 1;
+                continue;
+            }
+            Floor::Absent => panic!(
+                "{relative} declares a package with no rust-version; it would compile against \
+                 whatever toolchain is installed",
+            ),
+            Floor::Stated(version) => version,
         };
         if relative.starts_with("extensions/money-pg/") {
             // Held equal to the lane's own clippy.toml by the lane's hygiene crate. Counted
@@ -99,6 +123,7 @@ fn every_declared_floor_belongs_to_a_side_that_owns_it() {
 
     assert!(public > 0, "no public manifest declared a floor to bind");
     assert!(lane > 0, "no lane manifest was seen; the side split would be untested");
+    assert!(inherited > 0, "no manifest inherited a floor; the workspace case would be untested");
 }
 
 fn listed(relative: &str, key: &str) -> Vec<String> {
@@ -178,17 +203,19 @@ fn nothing_actions_runs_selects_a_toolchain_by_literal_version() {
 /// above while selecting nothing this repository pins.
 #[test]
 fn every_selected_toolchain_is_a_reference_or_a_named_channel() {
+    // Counting any expression would let `${{ matrix.toolchain }}`, which this workflow already
+    // contains, satisfy the guard while nothing read a pin at all.
     let mut referenced = 0_usize;
     for (source, value) in selected_toolchains() {
         let value = unquoted(&value);
+        if value.contains("outputs.rust_") {
+            referenced += 1;
+        }
         let accepted = value.contains("${{") || matches!(value, "stable" | "nightly");
         assert!(
             accepted,
             "{source} selects {value}, which is neither a manifest reference nor a named channel"
         );
-        if value.contains("${{") {
-            referenced += 1;
-        }
     }
     assert!(referenced > 0, "nothing reads a pin; this would pass vacuously");
 }
@@ -220,64 +247,59 @@ fn the_toolchain_matrix_compiles_at_the_declared_floor() {
     assert!(matrices > 0, "no toolchain matrix found; this would pass vacuously");
 }
 
-fn outputs_block(text: &str, source: &str) -> String {
-    text.split_once("\noutputs:\n")
-        .unwrap_or_else(|| panic!("{source} declares no outputs"))
-        .1
-        .split("\nruns:")
-        .next()
-        .expect("split always yields a first part")
-        .to_owned()
-}
-
-/// An output's name promises which pin it carries. Nothing else checks the expression under
-/// it, and every job in the repository reaches the manifest through exactly these three.
+/// An output's name promises which pin it carries, and nothing else checks the expression
+/// under it. Every composite action is read, not the one this branch happens to have added.
 #[test]
 fn each_action_output_reads_the_manifest_key_its_name_states() {
-    let source = ".github/actions/read-dev-tools/action.yml";
-    let text = read(source);
-    let block = outputs_block(&text, source);
-
     let mut bound = 0_usize;
-    let mut name = String::new();
-    for line in block.lines() {
-        if let Some(declared) = line.strip_prefix("  ").and_then(|rest| rest.strip_suffix(':')) {
-            name = declared.to_owned();
-            continue;
-        }
-        let Some(value) = line.trim_start().strip_prefix("value:").map(str::trim) else {
+    for (source, text) in composite_actions() {
+        let Some((_, rest)) = text.split_once("\noutputs:\n") else {
             continue;
         };
-        let key = name
-            .strip_prefix("rust_")
-            .unwrap_or_else(|| panic!("{source} declares the output {name}, which names no pin"));
-        let expected = format!("${{{{ fromJSON(steps.read.outputs.manifest).rust.{key} }}}}");
-        assert_eq!(value, expected, "{source} output {name} reads {value}");
-        bound += 1;
+        let block = rest.split("\nruns:").next().expect("split yields a first part");
+        // An output name sits at exactly two spaces; `value:` under it sits deeper. Tracking
+        // "the last line ending in a colon" would let a block-form `description:` rebind it.
+        let names: Vec<String> = entries_at(block, 2).into_iter().map(|(name, _)| name).collect();
+        let values: Vec<String> =
+            entries_at(block, 4).into_iter().filter(|(key, _)| key == "value").map(|(_, v)| v).collect();
+        assert_eq!(
+            names.len(),
+            values.len(),
+            "{source} declares {} outputs and {} values",
+            names.len(),
+            values.len(),
+        );
+        for (name, value) in names.iter().zip(values) {
+            let key = name
+                .strip_prefix("rust_")
+                .unwrap_or_else(|| panic!("{source} declares the output {name}, which names no pin"));
+            let expected = format!("${{{{ fromJSON(steps.read.outputs.manifest).rust.{key} }}}}");
+            assert_eq!(value, expected, "{source} output {name} reads {value}");
+            bound += 1;
+        }
     }
     assert!(bound > 0, "no action output was bound; this would pass vacuously");
 }
 
-/// The job republishes the action's outputs so every other job can reach them. A pin renamed
-/// on the way through would be read under a name that no longer describes it.
+/// A job republishes the action's outputs so other jobs can reach them. A pin renamed on the
+/// way through would be read under a name that no longer describes it. Every workflow is
+/// scanned, not the one that republishes them today.
 #[test]
-fn the_changes_job_republishes_each_pin_under_its_own_name() {
-    let source = ".github/workflows/on-pr-synced.yml";
-    let text = read(source);
-    let declared: Vec<(String, String)> = text
-        .lines()
-        .filter_map(|line| line.strip_prefix("      "))
-        .filter_map(|line| line.split_once(':'))
-        .map(|(name, value)| (name.trim().to_owned(), value.trim().to_owned()))
-        .filter(|(name, _)| name.starts_with("rust_"))
-        .collect();
-
-    assert!(!declared.is_empty(), "the changes job republishes no pin");
-    for (name, value) in declared {
-        assert_eq!(
-            value,
-            format!("${{{{ steps.pins.outputs.{name} }}}}"),
-            "the changes job publishes {name} as {value}",
-        );
+fn every_republished_pin_keeps_its_own_name() {
+    let mut republished = 0_usize;
+    for (source, text) in actions_sources() {
+        for (name, value) in entries_at(&text, 6) {
+            if !name.starts_with("rust_") {
+                continue;
+            }
+            let Some(read_name) =
+                value.rsplit_once(".outputs.").map(|(_, tail)| tail.trim_end_matches([' ', '}']).to_owned())
+            else {
+                panic!("{source} publishes {name} as {value}, which reads no output");
+            };
+            assert_eq!(name, read_name, "{source} publishes {name} from {value}");
+            republished += 1;
+        }
     }
+    assert!(republished > 0, "no pin was republished; this would pass vacuously");
 }

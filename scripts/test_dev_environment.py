@@ -108,18 +108,28 @@ class DevelopmentEnvironmentPolicyTests(unittest.TestCase):
         rust = self.manifest["rust"]
         rendered = [" ".join(command) for command in commands]
 
-        self.assertTrue(
-            any(
-                f"toolchain install {rust['primary']}" in command
-                for command in rendered
-            )
+        # Derived from the manifest rather than listed: a channel added there without a setup
+        # command is what left the extension lane's toolchain installed only by coincidence.
+        channels = sorted(
+            key.removesuffix("_components")
+            for key in rust
+            if key.endswith("_components")
         )
-        self.assertTrue(
-            any(
-                f"toolchain install {rust['msrv']}" in command
-                for command in rendered
-            )
-        )
+        self.assertTrue(channels, "the manifest names no channel to install")
+        for channel in channels:
+            with self.subTest(channel=channel):
+                self.assertIn(channel, rust, f"{channel}_components names no channel")
+                installs = [
+                    command
+                    for command in rendered
+                    if f"toolchain install {rust[channel]}" in command
+                ]
+                self.assertTrue(installs, f"setup installs no {channel} toolchain")
+                for component in rust[f"{channel}_components"]:
+                    self.assertTrue(
+                        any(f"--component {component}" in command for command in installs),
+                        f"setup installs {channel} without {component}",
+                    )
         self.assertTrue(
             any(
                 command[:5]

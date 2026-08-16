@@ -22,9 +22,18 @@ runs:
   steps:
     - id: read
       shell: bash
+      env:
+        # Anchored on the workspace rather than the working directory: a job that checks out
+        # under a path, or sets a working-directory default, would otherwise reach for a file
+        # that is not there and fail as an opaque non-zero step.
+        MANIFEST: ${{ github.workspace }}/.config/dev-tools.json
       run: |
+        if [ ! -r "$MANIFEST" ]; then
+          echo "::error::read-dev-tools: $MANIFEST is not readable; check the repository out first"
+          exit 1
+        fi
         {
           echo 'manifest<<KAMU_DEV_TOOLS'
-          cat .config/dev-tools.json
+          cat "$MANIFEST"
           echo 'KAMU_DEV_TOOLS'
         } >>"$GITHUB_OUTPUT"

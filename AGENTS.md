@@ -266,7 +266,7 @@ their commands.
 
 `.github/workflows/on-pr-synced.yml` runs for pull requests and pushes to
 `main`. `scripts/ci_paths.py` classifies every changed path and fails when a
-repository surface has no owner. `just test-repo-policy` proves every tracked
+repository surface has no owner. `just test-scripts` proves every tracked
 path remains classified.
 
 Why working on one crate runs another's jobs is answered by `DERIVED_CLASSES` in
