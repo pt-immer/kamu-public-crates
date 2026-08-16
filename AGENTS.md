@@ -39,19 +39,24 @@ Repository-wide policy remains at the root. In particular, `lint-shell` and
   extension lane's channel. Each is a view of a file some tool honours and the
   manifest cannot — `rust-toolchain.toml` for the two channels, `Cargo.toml` for
   the floor — and `tools/repo-policy` holds them equal. The rest are tool pins,
-  one per tool CI installs, and every `tool:` request reads the pin belonging to
-  the tool it names rather than restating a version.
+  and every `tool:` request indexes the entry for the tool it names rather than
+  restating a version.
 
-  Each tool section is an object keyed by the name `install-action` requests,
-  because an Actions expression can index a value by name but cannot search a
-  list for the entry whose name matches; that key is also what cargo installs and
-  what a recipe runs, so an entry states `crate`, `package`, `binary` or
-  `version_args` only where one differs from it or from the default. A tool name
-  may not contain an underscore: an output name carries `_` where Actions would
-  parse `-` as subtraction, and that translation is reversible only while no name
-  uses both.
+  Each tool section is an object keyed by the name that tool is requested and
+  installed by — `install-action`'s spelling for the ones CI installs, the npm
+  package name for `node_tools`, which npm installs and no workflow requests.
+  Keying is what makes a pin reachable at all: an Actions expression can index a
+  value by name but cannot search a list for the entry whose name matches. That
+  key is also what cargo installs and what a recipe runs, so an entry states
+  `crate`, `package`, `binary` or `version_args` only where one differs from it
+  or from the default.
 
-  Workflows reference the manifest through `.github/actions/read-dev-tools`. A
+  `.github/actions/read-dev-tools` publishes the manifest itself, once, and a job
+  republishes that one output; each site indexes the pin it needs out of it. A
+  pin added to the manifest is therefore reachable without an output and a
+  republish being added to carry it, and every path a workflow indexes is checked
+  to exist — an unresolvable one is not an error in Actions, it is the empty
+  string, and a job handed one installs whatever the runner already had. A
   toolchain SELECTED by a version literal fails, in any file Actions executes and
   in either YAML spelling; a version named some other way, in a `run:` line or a
   container image, is not something that scan looks at. `test_dev_environment.py` still binds the literals in `clippy.toml`, the

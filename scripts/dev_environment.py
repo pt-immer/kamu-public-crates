@@ -161,7 +161,9 @@ def node_package_version(
     return None
 
 
-DEFAULT_VERSION_ARGS = ["--version"]
+# A tuple, so a caller that reaches the module constant and mutates it fails at the
+# mistake rather than silently rewriting the version query of every tool below.
+DEFAULT_VERSION_ARGS = ("--version",)
 
 
 def tools(manifest: dict[str, Any], section: str) -> list[dict[str, Any]]:
@@ -180,9 +182,7 @@ def tools(manifest: dict[str, Any], section: str) -> list[dict[str, Any]]:
             "crate": name,
             "package": name,
             "binary": name,
-            # Copied, not aliased: a caller adding a flag for one tool would otherwise
-            # rewrite the query every other tool took the default with.
-            "version_args": list(DEFAULT_VERSION_ARGS),
+            "version_args": DEFAULT_VERSION_ARGS,
             # A tool setup cannot install has to say which version to install, and saying
             # it here is what keeps that version out of the entry beside the pin.
             "install_hint": (
@@ -191,6 +191,9 @@ def tools(manifest: dict[str, Any], section: str) -> list[dict[str, Any]]:
             ),
         }
         merged.update(entry)
+        # The entry's own list belongs to the loaded manifest; handing it out would let one
+        # caller's edit reach every later reader of the same document.
+        merged["version_args"] = list(merged["version_args"])
         resolved.append(merged)
     return resolved
 

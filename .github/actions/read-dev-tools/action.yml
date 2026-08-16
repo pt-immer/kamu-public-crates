@@ -4,43 +4,12 @@ description: >-
   restating them. Requires the repository to be checked out.
 
 outputs:
-  rust_primary:
-    description: The toolchain CI installs, which also pins the compile-fail goldens.
-    value: ${{ fromJSON(steps.read.outputs.manifest).rust.primary }}
-  rust_msrv:
-    description: The floor the published manifests declare and CI tests exactly.
-    value: ${{ fromJSON(steps.read.outputs.manifest).rust.msrv }}
-  rust_lane:
+  manifest:
     description: >-
-      The excluded extension lane's channel, which pgrx requires. A lane job that installs
-      rust_primary instead still compiles correctly, because the lane's rust-toolchain.toml wins
-      -- after rustup has downloaded the wrong toolchain, in every job, on every run.
-    value: ${{ fromJSON(steps.read.outputs.manifest).rust.lane }}
-
-  tool_just:
-    description: The pinned just, which every job runs its recipes through.
-    value: ${{ fromJSON(steps.read.outputs.manifest).cargo_tools['just'].version }}
-  tool_taplo_cli:
-    description: The pinned taplo-cli, which owns TOML formatting.
-    value: ${{ fromJSON(steps.read.outputs.manifest).cargo_tools['taplo-cli'].version }}
-  tool_typos_cli:
-    description: The pinned typos-cli, which the spelling check runs.
-    value: ${{ fromJSON(steps.read.outputs.manifest).cargo_tools['typos-cli'].version }}
-  tool_cargo_llvm_cov:
-    description: The pinned cargo-llvm-cov, which measures the coverage floors.
-    value: ${{ fromJSON(steps.read.outputs.manifest).cargo_tools['cargo-llvm-cov'].version }}
-  tool_cargo_deny:
-    description: The pinned cargo-deny, which audits the dependency graph.
-    value: ${{ fromJSON(steps.read.outputs.manifest).cargo_tools['cargo-deny'].version }}
-  tool_cargo_nextest:
-    description: The pinned cargo-nextest, the ordinary test runner.
-    value: ${{ fromJSON(steps.read.outputs.manifest).cargo_tools['cargo-nextest'].version }}
-  tool_shellcheck:
-    description: The pinned ShellCheck, which the shell lint needs and setup cannot install.
-    value: ${{ fromJSON(steps.read.outputs.manifest).system_tools['shellcheck'].version }}
-  tool_cargo_pgrx:
-    description: The pinned cargo-pgrx, which only the excluded extension lane installs.
-    value: ${{ fromJSON(steps.read.outputs.manifest).ci_only_tools['cargo-pgrx'].version }}
+      The pinned-version manifest, verbatim. A job indexes the pin it needs out of this
+      rather than reading an output named after it, so a pin added to the manifest is
+      reachable without an output and a republish being added to carry it.
+    value: ${{ steps.read.outputs.manifest }}
 
 runs:
   using: composite

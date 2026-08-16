@@ -119,10 +119,11 @@ Then update this repository:
    `extensions/money-pg/Cargo.toml`;
 2. change pgrx and pgrx-test requirements in
    `extensions/money-pg/kamu-money-pg/Cargo.toml`;
-3. update every Docker `cargo-pgrx` pin, the `.config/dev-tools.json` entry, and the
-   workflow's `cargo-pgrx@` pins and `~/.pgrx` cache keys;
+3. update every Docker `cargo-pgrx` pin and the `.config/dev-tools.json` entry. The
+   workflow needs no edit: it indexes that entry rather than restating the version, and
+   writing a literal back into it now fails the gate;
 4. review every remaining version-specific claim. The pins themselves are checked by
-   `hygiene/tests/pgrx_pin.rs`, so this step is only for prose that names a version and
+   `hygiene/tests/pins.rs`, so this step is only for prose that names a version and
    for behaviour a new release may have changed:
 
    ```bash

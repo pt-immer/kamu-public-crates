@@ -77,20 +77,24 @@ fn every_anchored_line_carries(path: &Path, anchor: &str, expected: &str) {
     }
 }
 
-/// Every occurrence of `anchor` is immediately followed by `expected`.
+/// Every occurrence of `anchor` is followed, within the same request, by `expected`.
 ///
 /// Weaker than this -- asking only that the LINE mention `expected` somewhere -- a request
-/// such as `cargo-pgrx@0.19.1,cargo-nextest@${{ ...tool_cargo_pgrx }}` satisfies both the
-/// anchor and the expectation while installing a stale CLI.
+/// such as `cargo-pgrx@0.19.1,cargo-nextest@<the pin>` satisfies both the anchor and the
+/// expectation while installing a stale CLI. `expected` is the path indexed out of the
+/// published manifest, not a whole expression: the job publishing that manifest may be
+/// renamed without making this a false failure.
 fn every_anchor_is_followed_by(path: &Path, anchor: &str, expected: &str) {
     let contents = support::read(path);
     let mut found = 0_usize;
     for line in contents.lines() {
         for (index, _) in line.match_indices(anchor) {
             let tail = &line[index + anchor.len()..];
+            // One request, not the rest of the line: a sibling entry must not answer for this.
+            let request = tail.split(',').next().unwrap_or(tail);
             assert!(
-                tail.starts_with(expected),
-                "{}: `{}` must carry `{expected}` directly after `{anchor}`",
+                request.contains(expected),
+                "{}: `{}` must read `{expected}` in the request following `{anchor}`",
                 path.display(),
                 line.trim(),
             );
@@ -192,7 +196,7 @@ fn every_cargo_pgrx_installation_pins_the_same_version() {
     // `the_tool_manifest_installs_the_pinned_cargo_pgrx`, one claim in one place; asserting
     // the literal here would be a second copy of it that a bump would have to find.
     let workflow = repository.join(".github/workflows/on-pr-synced.yml");
-    let pin = "${{ needs.changes.outputs.tool_cargo_pgrx }}";
+    let pin = "ci_only_tools['cargo-pgrx'].version";
     every_anchor_is_followed_by(&workflow, "cargo-pgrx@", pin);
     every_anchor_is_followed_by(&workflow, "key: pgrx-", pin);
 }

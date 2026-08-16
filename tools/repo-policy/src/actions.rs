@@ -295,24 +295,28 @@ pub fn remote_uses() -> Vec<Use> {
     uses
 }
 
-/// Every tool an install-action step requests, as `(source, specification)`.
+/// Every tool an install-action step requests, as `(source, scope, specification)`.
 ///
 /// Read from the parsed step rather than from the line: the tool list is accepted as a plain
 /// scalar, as a block scalar spanning lines, and inside a flow mapping, and only the document
-/// knows which of those a step wrote. No tool version literal survives for a byte-level scan
-/// to be the right reader of.
-pub fn tool_requests() -> Vec<(&'static str, String)> {
+/// knows which of those a step wrote. The scope is the job, so a failure among many requests
+/// in one file says which job to open.
+pub fn tool_requests() -> Vec<(&'static str, String, String)> {
     let mut requests = Vec::new();
     for source in sources() {
-        let mut scopes: Vec<&Value> = Vec::new();
+        let mut scopes: Vec<(String, &Value)> = Vec::new();
         if let Some(jobs) = child(&source.tree, "jobs").and_then(Value::as_mapping) {
-            scopes.extend(jobs.iter().map(|(_, job)| job));
+            for (name, job) in jobs {
+                if let Some(name) = name.as_str() {
+                    scopes.push((name.to_owned(), job));
+                }
+            }
         }
         if let Some(runs) = child(&source.tree, "runs") {
-            scopes.push(runs);
+            scopes.push((source.path.clone(), runs));
         }
-        for scope in scopes {
-            for step in steps_of(scope) {
+        for (scope, body) in scopes {
+            for step in steps_of(body) {
                 let requested = child(step, "with").and_then(|with| child(with, "tool"));
                 let Some(requested) = requested.and_then(Value::as_str) else {
                     continue;
@@ -321,13 +325,63 @@ pub fn tool_requests() -> Vec<(&'static str, String)> {
                 for specification in requested.split([',', '\n']) {
                     let specification = specification.trim();
                     if !specification.is_empty() {
-                        requests.push((source.path.as_str(), specification.to_owned()));
+                        requests.push((source.path.as_str(), scope.clone(), specification.to_owned()));
                     }
                 }
             }
         }
     }
     requests
+}
+
+/// Every path an expression indexes out of the published manifest, as its segments.
+///
+/// Both spellings are read, because a key carrying a hyphen has to be indexed rather than
+/// dereferenced: `.rust.primary` and `.cargo_tools['cargo-nextest'].version` are the same
+/// kind of claim about the same document.
+pub fn manifest_paths(expression: &str) -> Vec<Vec<String>> {
+    const ANCHOR: &str = "outputs.manifest)";
+    let mut paths = Vec::new();
+    let mut rest = expression;
+    while let Some(start) = rest.find(ANCHOR) {
+        rest = &rest[start + ANCHOR.len()..];
+        let mut segments = Vec::new();
+        loop {
+            let mut characters = rest.chars();
+            match characters.next() {
+                Some('.') => {
+                    let tail = &rest[1..];
+                    let width =
+                        tail.find(|c: char| !c.is_ascii_alphanumeric() && c != '_').unwrap_or(tail.len());
+                    if width == 0 {
+                        break;
+                    }
+                    segments.push(tail[..width].to_owned());
+                    rest = &tail[width..];
+                }
+                Some('[') => {
+                    let tail = &rest[1..];
+                    let quote = match tail.chars().next() {
+                        Some(quote @ ('\'' | '"')) => quote,
+                        _ => break,
+                    };
+                    let body = &tail[1..];
+                    let Some(width) = body.find(quote) else { break };
+                    segments.push(body[..width].to_owned());
+                    let after = &body[width + 1..];
+                    match after.strip_prefix(']') {
+                        Some(after) => rest = after,
+                        None => break,
+                    }
+                }
+                _ => break,
+            }
+        }
+        if !segments.is_empty() {
+            paths.push(segments);
+        }
+    }
+    paths
 }
 
 /// Every `steps.<id>.outputs.<name>` an expression reads, as `(id, name)`.

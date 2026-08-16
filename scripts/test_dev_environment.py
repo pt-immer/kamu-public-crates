@@ -112,6 +112,22 @@ class DevelopmentEnvironmentPolicyTests(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertEqual(rust["msrv"], label)
 
+    def test_every_install_hint_names_the_version_it_asks_for(self) -> None:
+        """A tool setup cannot install has to say which version to install.
+
+        AGENTS.md states this as a guarantee, and the hint is built rather than
+        stored, so nothing but this binds the version into what a developer reads
+        when `just doctor` reports the tool missing.
+        """
+        seen = 0
+        for group in ("cargo_tools", "node_tools", "system_tools"):
+            for tool in tools(self.manifest, group):
+                with self.subTest(tool=tool["name"]):
+                    self.assertIn(tool["version"], tool["install_hint"])
+                    self.assertIn(tool["name"], tool["install_hint"])
+                seen += 1
+        self.assertTrue(seen, "the manifest pins no tool to check")
+
     def test_setup_commands_install_every_required_rust_item(self) -> None:
         commands = setup_commands(self.manifest)
         rust = self.manifest["rust"]
