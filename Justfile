@@ -1,8 +1,10 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-# Prefer repo-local tool installs (`just setup`) over nothing, then fall back to
-# whatever is already on PATH (system-wide installs win when no local copy exists).
-export PATH := justfile_directory() + "/.tools/bin:" + justfile_directory() + "/node_modules/.bin:" + env_var("PATH")
+# The host's own copy answers first, and the repository-local directories are the
+# fallback for what the host does not provide. A developer who already runs a
+# satisfying tool keeps running it; `just setup` fills the gaps rather than
+# shadowing the machine. See docs/TOOLCHAIN-REALMS.md.
+export PATH := env_var("PATH") + ":" + justfile_directory() + "/.tools/bin:" + justfile_directory() + "/node_modules/.bin"
 
 # List available recipes
 [doc("List available recipes.")]

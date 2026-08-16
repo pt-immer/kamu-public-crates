@@ -21,11 +21,11 @@ TOOLS_BIN = ROOT / ".tools" / "bin"
 NODE_MODULES = ROOT / "node_modules"
 NODE_BIN = NODE_MODULES / ".bin"
 
-# The Justfile exports this prefix order ahead of PATH, so a recipe runs the
-# repository-local copy where setup installed one and the system copy where it
-# did not. Doctor searches the same order, or it reports on a binary no recipe
-# would ever run.
-SEARCH_PREFIXES = (TOOLS_BIN, NODE_BIN)
+# The Justfile appends these AFTER PATH, so a recipe runs the host's own copy
+# where the host provides one and the repository-local copy where it does not.
+# Doctor searches the same order, or it reports on a binary no recipe would ever
+# run. See docs/TOOLCHAIN-REALMS.md.
+SEARCH_SUFFIXES = (TOOLS_BIN, NODE_BIN)
 SETUP_HINT = "run just setup"
 
 
@@ -113,20 +113,20 @@ def search_path() -> str:
     directory, so an unset PATH would otherwise let a file sitting in the
     repository root answer for a pinned tool — and doctor runs what it finds.
     """
-    entries = [str(prefix) for prefix in SEARCH_PREFIXES]
-    entries.extend(os.environ.get("PATH", "").split(os.pathsep))
+    entries = os.environ.get("PATH", "").split(os.pathsep)
+    entries.extend(str(suffix) for suffix in SEARCH_SUFFIXES)
     return os.pathsep.join(entry for entry in entries if entry)
 
 
 def resolve(binary: str) -> pathlib.Path | None:
-    """Find one tool the way a recipe does: repository-local, then PATH."""
+    """Find one tool the way a recipe does: the host's PATH, then repository-local."""
     found = shutil.which(binary, path=search_path())
     return pathlib.Path(found) if found else None
 
 
 def is_repository_local(path: pathlib.Path) -> bool:
     """Report whether a resolved tool is the copy setup installs."""
-    return path.parent in SEARCH_PREFIXES
+    return path.parent in SEARCH_SUFFIXES
 
 
 def node_package_version(
@@ -195,6 +195,9 @@ def tools(manifest: dict[str, Any], section: str) -> list[dict[str, Any]]:
             "package": name,
             "binary": name,
             "version_args": DEFAULT_VERSION_ARGS,
+            # Why this tool must be the exact version rather than at least it. Absent is a
+            # floor: on a developer machine any version at or above the pin satisfies it.
+            "exact": None,
         }
         # Every field is optional, so a key this does not know is a default silently kept:
         # `binry` leaves the binary named after the key, and doctor reports a tool missing
@@ -210,15 +213,6 @@ def tools(manifest: dict[str, Any], section: str) -> list[dict[str, Any]]:
         merged["version_args"] = list(merged["version_args"])
         resolved.append(merged)
     return resolved
-
-
-def local_tool_is_exact(tool: dict[str, Any]) -> bool:
-    """Check one repository-local Cargo binary against its manifest version."""
-    binary = TOOLS_BIN / tool["binary"]
-    if not binary.is_file():
-        return False
-    status, output = capture([str(binary), *tool["version_args"]])
-    return status == 0 and contains_version(output, tool["version"])
 
 
 def setup_commands(manifest: dict[str, Any]) -> list[list[str]]:
@@ -298,14 +292,31 @@ def setup(manifest: dict[str, Any]) -> int:
 
     TOOLS_BIN.parent.mkdir(parents=True, exist_ok=True)
     primary = manifest["rust"]["primary"]
+    shadowed = []
     for tool in tools(manifest, "cargo_tools"):
-        if local_tool_is_exact(tool):
-            print(
-                f"= {tool['binary']} {tool['version']} already installed",
-                flush=True,
-            )
+        found = resolve(tool["binary"])
+        installed = None
+        if found is not None:
+            status, output = capture([str(found), *tool["version_args"]])
+            installed = parse_version(output) if status == 0 else None
+        if tool_satisfied(tool, installed):
+            where = "repository-local" if is_repository_local(found) else "on this host"
+            print(f"= {tool['binary']} already {where}", flush=True)
+            continue
+        # The host answers before the repository-local copy, so installing beneath an
+        # unsatisfying host copy leaves a binary no recipe will ever run. Say so rather
+        # than reporting an install that changes nothing.
+        if found is not None and not is_repository_local(found):
+            shadowed.append((tool, found))
             continue
         run(cargo_install_command(primary, tool))
+
+    for tool, found in shadowed:
+        print(
+            f"! {tool['binary']} on this host does not answer its pin, and it comes "
+            f"before the repository-local copy; upgrade or remove {found}",
+            file=sys.stderr,
+        )
 
     run(commands[-1])
     return doctor(manifest)
@@ -448,36 +459,61 @@ def check_bootstrap(
     )
 
 
-def check_floor(
+def check_version(
     checks: Doctor,
     label: str,
     detail: str,
     installed: tuple[int, ...] | None,
     pinned: str,
     hint: str,
+    exact: str | None = None,
     path: pathlib.Path | None = None,
 ) -> None:
-    """Judge one tool against its pinned floor and record the verdict.
+    """Judge one tool against its pin and record the verdict.
+
+    A pin is a floor unless the entry states why it must be exact, and the row
+    prints the comparison it made so the two classes never read the same.
 
     A version that cannot be read is reported as unreadable, never as
     satisfied: a check that cannot see its input has not passed it.
     """
-    floor = parse_version(pinned)
-    if floor is None:
+    wanted = parse_version(pinned)
+    if wanted is None:
         checks.fail(label, detail, f"unreadable pin {pinned} in the manifest")
-    elif installed is None:
+        return
+    if installed is None:
         checks.fail(label, detail, f"no readable version; {hint}")
-    elif not satisfies_floor(installed, floor):
-        checks.fail(label, detail, f"below the pinned {pinned}; {hint}")
+        return
+
+    if exact is not None:
+        satisfied = installed == wanted
+        comparison = f"= {pinned}"
+        remedy = f"is not the pinned {pinned} ({exact}); {hint}"
     else:
-        # ShellCheck names itself on line one and versions itself on line two,
-        # so the banner alone does not always show what was compared.
-        found = ".".join(str(part) for part in installed)
-        shown = detail if found in detail else f"{detail} {found}"
-        if path is None or is_repository_local(path):
-            checks.ok(label, f"{shown}  ≥ {pinned}")
-        else:
-            checks.ok_system(label, f"{shown}  ≥ {pinned}", path)
+        satisfied = satisfies_floor(installed, wanted)
+        comparison = f"≥ {pinned}"
+        remedy = f"below the pinned {pinned}; {hint}"
+
+    if not satisfied:
+        checks.fail(label, detail, remedy)
+        return
+
+    # ShellCheck names itself on line one and versions itself on line two,
+    # so the banner alone does not always show what was compared.
+    found = ".".join(str(part) for part in installed)
+    shown = detail if found in detail else f"{detail} {found}"
+    if path is None or is_repository_local(path):
+        checks.ok(label, f"{shown}  {comparison}")
+    else:
+        checks.ok_system(label, f"{shown}  {comparison}", path)
+
+
+def tool_satisfied(tool: dict[str, Any], installed: tuple[int, ...] | None) -> bool:
+    """Whether a read version answers this tool's pin, by its own class."""
+    wanted = parse_version(tool["version"])
+    if wanted is None or installed is None:
+        return False
+    return installed == wanted if tool["exact"] else satisfies_floor(installed, wanted)
 
 
 def check_cargo_tool(checks: Doctor, tool: dict[str, Any]) -> None:
@@ -488,13 +524,14 @@ def check_cargo_tool(checks: Doctor, tool: dict[str, Any]) -> None:
         checks.fail(binary, "not found", SETUP_HINT)
         return
     status, output = capture([str(path), *tool["version_args"]])
-    check_floor(
+    check_version(
         checks,
         binary,
         first_line(output),
         parse_version(output) if status == 0 else None,
         tool["version"],
         SETUP_HINT,
+        tool["exact"],
         path,
     )
 
@@ -514,13 +551,14 @@ def check_node_tool(checks: Doctor, tool: dict[str, Any]) -> None:
             f"no {tool['package']} package.json beside it; {SETUP_HINT}",
         )
         return
-    check_floor(
+    check_version(
         checks,
         binary,
         f"{binary} {actual}",
         parse_version(actual),
         tool["version"],
         SETUP_HINT,
+        tool["exact"],
         path,
     )
 
@@ -618,13 +656,14 @@ def check_system_tool(checks: Doctor, tool: dict[str, Any]) -> None:
         checks.fail(tool["binary"], "not found", hint)
         return
     status, output = capture([path, *tool["version_args"]])
-    check_floor(
+    check_version(
         checks,
         tool["binary"],
         first_line(output),
         parse_version(output) if status == 0 else None,
         tool["version"],
         hint,
+        tool["exact"],
     )
 
 

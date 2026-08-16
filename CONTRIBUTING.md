@@ -21,6 +21,11 @@ the local tool directory makes those pinned binaries available in the current
 shell. ShellCheck is an operating-system package; `just doctor` names the
 version to install when it is missing.
 
+Your machine's own tools answer first, and setup fills only what they do not
+provide. Why a developer machine and a CI runner provision differently, and what
+a pin means in each, is in
+[`docs/TOOLCHAIN-REALMS.md`](docs/TOOLCHAIN-REALMS.md).
+
 ## Development loop
 
 ```sh

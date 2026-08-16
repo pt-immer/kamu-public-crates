@@ -22,11 +22,13 @@
     },
     "taplo-cli": {
       "binary": "taplo",
-      "version": "0.10.0"
+      "version": "0.10.0",
+      "exact": "its formatting is the verdict, so a different version disagrees with CI"
     },
     "typos-cli": {
       "binary": "typos",
-      "version": "1.48.0"
+      "version": "1.48.0",
+      "exact": "its findings are the verdict, so a different version disagrees with CI"
     },
     "cargo-llvm-cov": {
       "version": "0.8.7",
@@ -44,17 +46,20 @@
   },
   "node_tools": {
     "markdownlint-cli2": {
-      "version": "0.23.2"
+      "version": "0.23.2",
+      "exact": "its findings are the verdict, so a different version disagrees with CI"
     }
   },
   "system_tools": {
     "shellcheck": {
-      "version": "0.11.0"
+      "version": "0.11.0",
+      "exact": "its findings are the verdict, so a different version disagrees with CI"
     }
   },
   "ci_only_tools": {
     "cargo-pgrx": {
-      "version": "0.19.2"
+      "version": "0.19.2",
+      "exact": "must equal the pgrx the lane builds against, or the extension will not link"
     }
   }
 }

@@ -74,6 +74,10 @@ pub struct Tool {
     pub binary: Option<String>,
     #[serde(default)]
     pub version_args: Option<Vec<String>>,
+    /// Why this tool must be the exact version rather than at least it, stated at the pin.
+    /// Absent means a floor: any version at or above it satisfies a developer machine.
+    #[serde(default)]
+    pub exact: Option<String>,
 }
 
 /// Three Rust versions, each a different fact. `primary` is the toolchain CI installs for the

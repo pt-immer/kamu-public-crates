@@ -181,21 +181,25 @@ cross targets, then runs `just doctor`. ShellCheck is an operating-system
 package; setup prints the required version when it is absent.
 `VERBOSE=1` exposes full output behind compact aggregate recipes.
 
-The Justfile exports `.tools/bin` and `node_modules/.bin` ahead of `PATH`, so a
-recipe runs the repository-local tool where setup installed one and the system
-copy where it did not. `just doctor` resolves in that same order. Under
-**Repository tools**, where setup is what installs them, the marker names the
-copy it found: `✓` repository-local, `•` system. Elsewhere `✓` means satisfied,
-because nothing in those sections is setup's to install. `✗` is always absent,
-unreadable, or below its pin.
+The Justfile exports `.tools/bin` and `node_modules/.bin` after `PATH`, so a
+recipe runs the host's own tool where the host provides one and the
+repository-local copy where it does not. `just doctor` resolves in that same
+order. Under **Repository tools**, where setup is what installs them, the marker
+names the copy it found: `✓` repository-local, `•` host. Elsewhere `✓` means
+satisfied, because nothing in those sections is setup's to install. `✗` is
+always absent, unreadable, or not answering its pin.
 
-Pinned tool versions are floors, not equalities. Any tool at or above its
-`.config/dev-tools.json` version passes, and the row prints the comparison.
-`just setup` installs the exact pin and every workflow installs it, so a tool
-above the floor is running something CI is not: for `taplo`, `typos`,
-`markdownlint-cli2` and `shellcheck`, whose output is itself a gate verdict, that
-can pass locally and fail in CI. Rust toolchains stay exact, because
-`rustup run <version>` addresses one by name — an identity, not a floor.
+A pinned tool version is a floor unless its entry states why it must be exact,
+and the row prints the comparison it made. A tool whose output is itself a gate
+verdict is pinned exactly, because a copy above the floor passes locally and
+fails in CI. Rust toolchains stay exact, because `rustup run <version>`
+addresses one by name — an identity, not a floor.
+
+A developer machine and a CI runner provision differently on purpose, and
+[`docs/TOOLCHAIN-REALMS.md`](docs/TOOLCHAIN-REALMS.md) is the one place that
+describes both. It also carries the consequence of the search order: the host's
+copy answers before the repository-local one, so a host tool that misses its pin
+shadows anything setup installs, and setup refuses to install beneath it.
 
 `just pg doctor` follows the same rendering contract, with one marker of its
 own: `!` is an advisory warning, which never affects its exit code. It is a

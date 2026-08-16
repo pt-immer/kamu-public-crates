@@ -558,6 +558,33 @@ fn every_reader_of_a_manifest_expression_spells_the_same_output_name() {
     }
 }
 
+/// A pin is a floor unless the entry says why it must be exact. An exact pin with no reason
+/// is an exception nobody can weigh, and the reason belongs at the pin rather than in the
+/// document that explains the mechanism.
+#[test]
+fn every_exact_pin_states_why_it_is_exact() {
+    let manifest = tools();
+    let mut exact = 0_usize;
+    let mut floors = 0_usize;
+    for (section, entries) in &manifest.tools {
+        for (name, tool) in entries {
+            match tool.exact.as_deref() {
+                None => floors += 1,
+                Some(reason) => {
+                    assert!(
+                        reason.split_whitespace().count() >= 3,
+                        "{}: {section}.{name} is exact and states no reason worth reading",
+                        DevTools::PATH,
+                    );
+                    exact += 1;
+                }
+            }
+        }
+    }
+    assert!(exact > 0, "no pin is exact; this would pass vacuously");
+    assert!(floors > 0, "every pin is exact; the floor class would be untested");
+}
+
 /// What identifies a tool section is stated in both languages that read the manifest. Two
 /// readers of one document disagreeing quietly is what this branch keeps finding.
 #[test]

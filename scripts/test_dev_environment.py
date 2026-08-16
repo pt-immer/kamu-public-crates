@@ -31,7 +31,7 @@ from scripts.dev_environment import (
     cargo_install_command,
     capture,
     check_bootstrap,
-    check_floor,
+    check_version,
     check_targets,
     check_toolchain,
     contains_version,
@@ -236,26 +236,27 @@ class ToolResolutionTests(unittest.TestCase):
             local.mkdir()
             system.mkdir()
             with mock.patch.object(
-                dev_environment, "SEARCH_PREFIXES", (local,)
+                dev_environment, "SEARCH_SUFFIXES", (local,)
             ), mock.patch.dict(os.environ, {"PATH": str(system)}):
                 yield local, system
 
-    def test_the_repository_local_copy_wins_over_the_system_copy(
+    def test_the_system_copy_wins_over_the_repository_local_copy(
         self,
     ) -> None:
+        """The host answers first; setup fills gaps rather than shadowing a machine."""
         with self.workspace() as (local, system):
-            wanted = executable(local, "taplo")
-            executable(system, "taplo")
-            found = resolve("taplo")
-            self.assertEqual(wanted, found)
-            self.assertTrue(is_repository_local(found))
-
-    def test_resolution_falls_back_to_the_wider_path(self) -> None:
-        with self.workspace() as (_, system):
             wanted = executable(system, "taplo")
+            executable(local, "taplo")
             found = resolve("taplo")
             self.assertEqual(wanted, found)
             self.assertFalse(is_repository_local(found))
+
+    def test_resolution_falls_back_to_the_repository_local_copy(self) -> None:
+        with self.workspace() as (local, _):
+            wanted = executable(local, "taplo")
+            found = resolve("taplo")
+            self.assertEqual(wanted, found)
+            self.assertTrue(is_repository_local(found))
 
     def test_an_absent_tool_resolves_to_nothing(self) -> None:
         with self.workspace():
@@ -528,23 +529,24 @@ class VersionFloorTests(unittest.TestCase):
         self.assertTrue(satisfies_floor((2,), (1, 99, 99)))
 
 
-class FloorVerdictTests(unittest.TestCase):
-    """check_floor turns a parsed version into a recorded verdict."""
+class VersionVerdictTests(unittest.TestCase):
+    """check_version turns a parsed version into a recorded verdict."""
 
     def doctor(self) -> Doctor:
         return Doctor(Palette(enabled=False))
 
-    def judge(self, installed, pinned, path=None):
-        """Run one floor verdict and return the doctor beside its output."""
+    def judge(self, installed, pinned, path=None, exact=None):
+        """Run one version verdict and return the doctor beside its output."""
         checks = self.doctor()
         _, output = captured(
-            lambda: check_floor(
+            lambda: check_version(
                 checks,
                 "taplo",
                 "taplo banner",
                 installed,
                 pinned,
                 "run just setup",
+                exact,
                 path,
             )
         )
@@ -576,7 +578,7 @@ class FloorVerdictTests(unittest.TestCase):
         # what was actually compared.
         checks = self.doctor()
         _, output = captured(
-            lambda: check_floor(
+            lambda: check_version(
                 checks,
                 "shellcheck",
                 "ShellCheck - shell script analysis tool",
@@ -587,6 +589,23 @@ class FloorVerdictTests(unittest.TestCase):
         )
         self.assertEqual([], checks.failed)
         self.assertIn("0.11.0  ≥ 0.11.0", output)
+
+    def test_an_exact_pin_refuses_a_newer_copy(self) -> None:
+        """A floor would pass this. The entry says why it must not."""
+        checks, output = self.judge(
+            (0, 11, 0), "0.10.0", exact="its formatting is the verdict"
+        )
+        self.assertEqual(["taplo"], checks.failed)
+        self.assertIn("is not the pinned 0.10.0", output)
+        self.assertIn("its formatting is the verdict", output)
+
+    def test_an_exact_pin_shows_equality_rather_than_a_floor(self) -> None:
+        checks, output = self.judge(
+            (0, 10, 0), "0.10.0", exact="its formatting is the verdict"
+        )
+        self.assertEqual([], checks.failed)
+        self.assertIn("= 0.10.0", output)
+        self.assertNotIn("≥", output)
 
     def test_a_system_copy_above_the_floor_still_counts_as_system(self) -> None:
         checks, output = self.judge(
