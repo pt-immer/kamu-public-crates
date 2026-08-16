@@ -818,6 +818,8 @@ dependencies = [
 [[package]]
 name = "kamu-money-core"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8938812628d1d3ec3c6a3701ebb50e931c99b6cf0588ec1fd708feca32d2fb1"
 dependencies = [
  "ethnum",
  "proc-macro2",
@@ -844,7 +846,7 @@ dependencies = [
  "cargo_metadata",
  "kamu-money-core",
  "serde_json",
- "syn 2.0.119",
+ "syn 3.0.3",
  "toml 1.1.4+spec-1.1.0",
 ]
 
