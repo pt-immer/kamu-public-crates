@@ -65,6 +65,16 @@ Repository-wide policy lives at the root. In particular, `lint-shell` and
   four-component YugabyteDB image tag — reads the same as an ordinary number or
   an address, so that scan does not claim it, and each is bound by whatever else
   names it or by nothing.
+
+  Toolchain components and targets named in a job sit outside the one-home rule.
+  `rust.primary_components` and `rust.primary_targets` state what `just setup`
+  installs on a developer machine, held equal to `rust-toolchain.toml`; a
+  `components:` or `targets:` line in a job states what that job needs, which is
+  a different claim even where the two name the same string. Collapsing them
+  would make the manifest the home for a requirement each job owns, and would
+  leave the ones no developer machine installs — `llvm-tools-preview`, `miri` —
+  with nowhere to live.
+
   `test_dev_environment.py` binds the literals in `clippy.toml`, the
   `Justfile` and `README.md`. Toolchain literals matter more than the floor they
   restate: `rustup run <version>` addresses a toolchain by name, so one that
@@ -316,8 +326,9 @@ jobs change. A recipe added only to a local aggregate is not CI coverage—verif
 that some CI job reaches it.
 
 Third-party actions use full commit IDs with a readable release label in a
-comment. Workflow outputs and environment variables use underscores, never
-hyphens; GitHub expressions parse a hyphen as subtraction.
+comment. Workflow outputs and environment variables use underscores. An
+environment name becomes a shell variable, where a hyphen cannot appear in one;
+outputs take the same spelling so a reference never changes form between them.
 
 Workflows that receive the crates.io token target the `crates-io` environment,
 which scopes the token. It carries **no reviewer rule**: publishing is gated by
