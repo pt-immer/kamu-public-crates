@@ -41,6 +41,15 @@ Repository-wide policy remains at the root. In particular, `lint-shell` and
   addresses a toolchain by name, so one that outlives a bump either resolves to
   a stale install or does not resolve at all. The extension lane pins its own
   toolchain because pgrx 0.19.2 requires it, and binds it in its hygiene crate.
+  Its CI jobs install that toolchain rather than `rust.primary`, and
+  `test_workflows.py` tells the two apart by whether a job runs `just pg`.
+  `rust-toolchain.toml` wins over whatever a job installed, so a lane job given
+  the public workspace's toolchain still compiles with the lane's — after rustup
+  downloads it, inside every job, on every run, with no wrong answer to notice
+  it by. The lane's MSRV is a third value again: `clippy.toml` and the lane
+  manifest state it, `pins.rs` holds those two equal, and against the pinned
+  channel the tie is an inequality, because deriving a floor from the compiler
+  in use leaves `clippy::incompatible_msrv` comparing it against itself.
 - Never run workspace-wide `--all-features`. `kamu-logging` has mutually
   exclusive native and wasm feature sets; pgrx features select one PostgreSQL
   major. Use the feature matrices in the Justfiles.

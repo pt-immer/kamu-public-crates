@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+import tomllib
 import unittest
 
 from scripts.ci_paths import DERIVED_CLASSES, classify_paths, tracked_paths
@@ -17,6 +18,39 @@ JUSTFILE = ROOT / "Justfile"
 TOOL_MANIFEST = json.loads(
     (ROOT / ".config" / "dev-tools.json").read_text(encoding="utf-8")
 )
+
+
+def lane_channel() -> str:
+    """The toolchain rustup selects inside the extension lane.
+
+    A separate fact from `rust.primary`, and read from a separate file, because
+    assuming them equal is what the test below exists to refuse.
+    """
+    path = ROOT / "extensions" / "money-pg" / "rust-toolchain.toml"
+    pinned = tomllib.loads(path.read_text(encoding="utf-8"))
+    return pinned["toolchain"]["channel"]
+
+
+def workflow_job_bodies(source: str) -> dict[str, str]:
+    """Job id to body text.
+
+    Separate from `workflow_jobs`, which refuses `needs` and `if` spellings this
+    repository does not use. That is right for reachability and wrong here,
+    where all a caller needs is which job a step sits in.
+    """
+    split = source.split("\njobs:\n", 1)
+    if len(split) == 1:
+        return {}
+    jobs = split[1]
+    starts = list(re.finditer(r"(?m)^  ([a-z0-9-]+):\n", jobs))
+    return {
+        start.group(1): jobs[
+            start.end() : (
+                starts[index + 1].start() if index + 1 < len(starts) else len(jobs)
+            )
+        ]
+        for index, start in enumerate(starts)
+    }
 
 
 def workflow_jobs(source: str) -> dict[str, dict[str, object]]:
@@ -125,29 +159,51 @@ class WorkflowPolicyTests(unittest.TestCase):
                         self.assertEqual(versions[name], version)
 
     def test_rust_toolchain_steps_select_an_explicit_toolchain(self) -> None:
-        primary = TOOL_MANIFEST["rust"]["primary"]
-        allowed = {
-            f"toolchain: {primary}",
-            "toolchain: ${{ matrix.toolchain }}",
-            "toolchain: nightly",
-        }
+        """Each job installs the toolchain its own work will use.
 
+        `rust-toolchain.toml` wins over whatever a job installed, so an
+        extension-lane job handed the public workspace's toolchain still
+        compiles with the lane's -- after rustup has downloaded it, inside every
+        job, on every run, without ever producing a wrong answer to notice it
+        by. The two versions agree today and are owned by different files, so
+        nothing but this test would report the run where they stop agreeing.
+
+        A job is a lane job when it runs `just pg`, which is how a lane job
+        reaches the lane at all. Deriving it that way rather than from a list of
+        job names means a new one is covered on the day it is written.
+        """
+        primary = TOOL_MANIFEST["rust"]["primary"]
+        lane = lane_channel()
+        # Miri ships on no release channel, and the workspace suite tests the
+        # MSRV by matrix; neither is a missing pin.
+        floating = {"toolchain: nightly", "toolchain: ${{ matrix.toolchain }}"}
+
+        checked = 0
         for workflow in sorted(WORKFLOWS.glob("*.yml")):
             text = workflow.read_text(encoding="utf-8")
-            steps = re.findall(
-                r"(?ms)^      - uses: dtolnay/rust-toolchain@[0-9a-f]{40}"
-                r".*?(?=^      - |\Z)",
-                text,
-            )
-            for step in steps:
-                selected = {
-                    line.strip()
-                    for line in step.splitlines()
-                    if line.strip().startswith("toolchain:")
-                }
-                with self.subTest(workflow=workflow.name, step=step):
-                    self.assertEqual(1, len(selected))
-                    self.assertTrue(selected <= allowed)
+            for job, body in workflow_job_bodies(text).items():
+                expected = lane if "just pg " in body else primary
+                steps = re.findall(
+                    r"(?ms)^      - uses: dtolnay/rust-toolchain@[0-9a-f]{40}"
+                    r".*?(?=^      - |\Z)",
+                    body,
+                )
+                for step in steps:
+                    selected = {
+                        line.strip()
+                        for line in step.splitlines()
+                        if line.strip().startswith("toolchain:")
+                    }
+                    checked += 1
+                    with self.subTest(workflow=workflow.name, job=job):
+                        self.assertEqual(1, len(selected))
+                        self.assertTrue(
+                            selected <= floating | {f"toolchain: {expected}"},
+                            f"{job} installs {selected} but works in the "
+                            f"{'extension lane' if expected == lane else 'public workspace'}, "
+                            f"which pins {expected}",
+                        )
+        self.assertTrue(checked, "no toolchain step found; this test would pass vacuously")
 
     def test_workflow_steps_do_not_repeat_mapping_keys(self) -> None:
         for workflow in sorted(WORKFLOWS.glob("*.yml")):
