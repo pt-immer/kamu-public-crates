@@ -69,6 +69,29 @@ container image, which installs the server and its development headers and
 initialises `PGRX_HOME` against them. A job that provisions PostgreSQL by hand
 is re-implementing that image.
 
+## The builder image
+
+The reusable half of that image — a toolchain, `cargo-pgrx`, one PostgreSQL
+major with its development headers, and a `PGRX_HOME` initialised against them —
+is its own build stage and is published under a name that says what it is. It
+carries nothing specific to this repository, so anyone building a pgrx extension
+can pull it instead of reproducing the provisioning.
+
+**When it is rebuilt is not a schedule.** Its tag is derived from the inputs that
+decide it, so the question does not arise: an unchanged input names a tag that
+already exists and nothing is built, and a changed input names a tag that has
+never existed and it is built. There is no window in which a published image is
+stale, because no tag ever changes meaning.
+
+That holds only if every input is visible as a change. The base image is
+therefore pinned by digest as well as by tag: an upstream rebuild for a
+distribution security patch produces different bytes under the same tag, and
+without the digest nothing in this repository would move when it did.
+
+Publishing happens from the default branch, so a change to the image and the
+jobs that consume it cannot land in the same run — the image is published first,
+and the consumers move once the tag exists.
+
 ## Adding a tool
 
 1. Add an entry to `.config/dev-tools.json` under the section that owns how it

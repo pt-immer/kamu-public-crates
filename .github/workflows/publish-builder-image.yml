@@ -1,0 +1,98 @@
+name: Publish builder image
+
+# The pgrx build environment the extension lane compiles in: a toolchain, cargo-pgrx, one
+# PostgreSQL major with its development headers, and a PGRX_HOME initialised against them.
+# Published on its own so anyone can pull it and build a pgrx extension without reproducing the
+# provisioning, and so this repository's own jobs stop hand-rolling it.
+#
+# WHEN IT BUILDS is not a schedule. The tag is derived from the inputs that decide the image, so
+# an unchanged input names a tag that already exists and nothing is built, and a changed one
+# names a tag that has never existed and it is built. The base image is pinned by digest in the
+# Dockerfile for the same reason: an upstream security rebuild becomes an edit here rather than
+# silent drift under a tag that stayed the same.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - extensions/money-pg/kamu-money-pg/Dockerfile
+      - extensions/money-pg/rust-toolchain.toml
+      - .github/workflows/publish-builder-image.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: publish builder image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The only job in this repository that writes a package.
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - id: image
+        name: Derive the tag from what decides the image
+        env:
+          # hashFiles covers every instruction and both versions the Dockerfile states, so a
+          # change to any of them yields a tag that has never been pushed.
+          INPUTS_HASH: ${{ hashFiles('extensions/money-pg/kamu-money-pg/Dockerfile', 'extensions/money-pg/rust-toolchain.toml') }}
+          DOCKERFILE: extensions/money-pg/kamu-money-pg/Dockerfile
+          OWNER_AND_NAME: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -z "$INPUTS_HASH" ]; then
+            echo "::error::hashFiles matched none of the inputs; the tag would not be derived"
+            exit 1
+          fi
+          # The major has one home: the Dockerfile's own default. Reading it here keeps this
+          # workflow from becoming a second place that states it.
+          major="$(sed -n 's/^ARG PG_MAJOR=\([0-9][0-9]*\)$/\1/p' "$DOCKERFILE" | head -n 1)"
+          if [ -z "$major" ]; then
+            echo "::error::$DOCKERFILE states no ARG PG_MAJOR default to build"
+            exit 1
+          fi
+          {
+            echo "name=ghcr.io/${OWNER_AND_NAME,,}/money-pg-builder"
+            echo "tag=pg${major}-${INPUTS_HASH:0:16}"
+            echo "major=${major}"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Sign in to the registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: printf '%s\n' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$REGISTRY_USER" --password-stdin
+
+      - id: existing
+        name: Ask whether this tag was already published
+        env:
+          REFERENCE: ${{ steps.image.outputs.name }}:${{ steps.image.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Absent is the ordinary answer, not a failure; anything else is left to the build.
+          if docker buildx imagetools inspect "$REFERENCE" >/dev/null 2>&1; then
+            echo "published=true" >>"$GITHUB_OUTPUT"
+            echo "$REFERENCE is already published; nothing decides a new image."
+          else
+            echo "published=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and publish
+        if: ${{ steps.existing.outputs.published == 'false' }}
+        working-directory: extensions/money-pg
+        env:
+          REFERENCE: ${{ steps.image.outputs.name }}:${{ steps.image.outputs.tag }}
+          MAJOR: ${{ steps.image.outputs.major }}
+        run: |
+          set -euo pipefail
+          docker buildx build --push \
+            --target builder \
+            --build-arg "PG_MAJOR=${MAJOR}" \
+            -f kamu-money-pg/Dockerfile \
+            -t "$REFERENCE" \
+            .
+          echo "Published $REFERENCE"

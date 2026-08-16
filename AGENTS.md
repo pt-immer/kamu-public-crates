@@ -343,7 +343,12 @@ administrative override; exercising it does not relax the rule, and a merge that
 used one is not precedent for the next.
 
 `default_workflow_permissions` is `read`. Every workflow declares the
-permissions it needs.
+permissions it needs. `publish-builder-image.yml` is the one that writes a
+package, and it publishes the lane's reusable pgrx build environment from the
+default branch. Its tag is derived from the inputs that decide the image, so it
+builds when one of them changes and at no other time; the base image is pinned
+by digest so an upstream rebuild is one of those changes.
+[`docs/TOOLCHAIN-REALMS.md`](docs/TOOLCHAIN-REALMS.md) carries the model.
 
 Ordinary extension container tests receive Cargo's normalized
 `kamu-money-core` package through a named Docker context. Release proof sets
