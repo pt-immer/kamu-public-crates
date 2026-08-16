@@ -36,6 +36,8 @@ runs:
         fi
         {
           echo "manifest<<$delimiter"
-          cat "$MANIFEST"
+          # Normalised, not cat: a manifest saved without a trailing newline would run
+          # into the delimiter line and leave the heredoc unterminated.
+          printf '%s\n' "$(cat "$MANIFEST")"
           echo "$delimiter"
         } >>"$GITHUB_OUTPUT"
