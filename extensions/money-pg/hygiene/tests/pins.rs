@@ -93,8 +93,7 @@ fn every_anchor_is_followed_by(path: &Path, anchor: &str, expected: &str) {
             // The expression the anchor introduces, not the rest of the line: a sibling
             // request must not answer for this one, and a literal must not stand in front of
             // the pin it precedes.
-            let Some((expression, _)) =
-                tail.strip_prefix("${{").and_then(|open| open.split_once("}}"))
+            let Some((expression, _)) = tail.strip_prefix("${{").and_then(|open| open.split_once("}}"))
             else {
                 panic!(
                     "{}: `{}` must read `{expected}` immediately after `{anchor}`",
