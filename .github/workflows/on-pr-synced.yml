@@ -670,7 +670,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.pgrx
-          key: pgrx-0.19.2-pg18-${{ runner.os }}
+          key: pgrx-${{ needs.changes.outputs.tool_cargo_pgrx }}-pg18-${{ runner.os }}
       - name: Initialise PGRX_HOME against the installed server
         run: just pg pgrx-init /usr/lib/postgresql/18/bin/pg_config
       - run: just pg lint
@@ -703,7 +703,7 @@ jobs:
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.pgrx
-          key: pgrx-0.19.2-pg18-${{ runner.os }}
+          key: pgrx-${{ needs.changes.outputs.tool_cargo_pgrx }}-pg18-${{ runner.os }}
       - name: Initialise PGRX_HOME against the installed server
         run: just pg pgrx-init /usr/lib/postgresql/18/bin/pg_config
       # This runs `doc-pg` itself, both against a probed tree and against a clean one, so a

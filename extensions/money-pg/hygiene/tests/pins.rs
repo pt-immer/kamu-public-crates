@@ -159,9 +159,15 @@ fn every_cargo_pgrx_installation_pins_the_same_version() {
     // version because a PGRX_HOME initialised by one cargo-pgrx is not interchangeable
     // with another's -- reusing it across a bump is a silently wrong toolchain, not a
     // slow build.
+    //
+    // Both read the pin rather than restating it, so what is checked here is that they
+    // reach it. That the pin equals THIS version is held by
+    // `the_tool_manifest_installs_the_pinned_cargo_pgrx`, one claim in one place; asserting
+    // the literal here would be a second copy of it that a bump would have to find.
     let workflow = repository.join(".github/workflows/on-pr-synced.yml");
-    every_anchored_line_carries(&workflow, "cargo-pgrx@", &format!("cargo-pgrx@{version}"));
-    every_anchored_line_carries(&workflow, "key: pgrx-", &format!("key: pgrx-{version}-"));
+    let pin = "needs.changes.outputs.tool_cargo_pgrx";
+    every_anchored_line_carries(&workflow, "cargo-pgrx@", pin);
+    every_anchored_line_carries(&workflow, "key: pgrx-", pin);
 }
 
 /// The lane's Rust toolchain, from the file rustup itself obeys.
