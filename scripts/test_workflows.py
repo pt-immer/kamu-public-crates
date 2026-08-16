@@ -19,6 +19,40 @@ TOOL_MANIFEST = json.loads(
 )
 
 
+WORKFLOW_PREFIX = ".github/workflows/"
+ACTIONS_SPELLINGS = (".yml", ".yaml")
+
+
+def workflow_files() -> list[pathlib.Path]:
+    """Every workflow Actions runs.
+
+    Both spellings are accepted wherever Actions reads YAML, and GitHub reads
+    `.github/workflows` itself without recursing into it.
+    """
+    files = sorted(
+        ROOT / path
+        for path in tracked_paths()
+        if path.startswith(WORKFLOW_PREFIX)
+        and "/" not in path[len(WORKFLOW_PREFIX) :]
+        and path.endswith(ACTIONS_SPELLINGS)
+    )
+    assert files, "no workflow to check; this would pass vacuously"
+    return files
+
+
+def action_files() -> list[pathlib.Path]:
+    """Every action this repository defines.
+
+    An action is named by its own file, so one grouped into a subdirectory, or kept
+    outside `.github`, is still an action a `uses: ./path` step can reach.
+    """
+    return sorted(
+        ROOT / path
+        for path in tracked_paths()
+        if path.rsplit("/", 1)[-1] in {"action.yml", "action.yaml"}
+    )
+
+
 def selected_pin(line: str) -> str:
     """The pin a `toolchain:` line reads, as the output name it names.
 
@@ -150,7 +184,7 @@ def workflow_jobs(source: str) -> dict[str, dict[str, object]]:
 
 class WorkflowPolicyTests(unittest.TestCase):
     def test_remote_actions_are_pinned_to_full_commit_ids(self) -> None:
-        for workflow in sorted(WORKFLOWS.glob("*.yml")):
+        for workflow in workflow_files():
             text = workflow.read_text(encoding="utf-8")
             for reference in re.findall(r"\buses:\s+([^#\s]+)", text):
                 with self.subTest(workflow=workflow.name, reference=reference):
@@ -204,7 +238,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         }
         versions.update(TOOL_MANIFEST["ci_only_tools"])
 
-        for workflow in sorted(WORKFLOWS.glob("*.yml")):
+        for workflow in workflow_files():
             text = workflow.read_text(encoding="utf-8")
             for value in re.findall(r"(?m)^\s+tool:\s+(.+)$", text):
                 for specification in value.split(","):
@@ -216,6 +250,26 @@ class WorkflowPolicyTests(unittest.TestCase):
                         self.assertEqual("@", separator)
                         self.assertIn(name, versions)
                         self.assertEqual(versions[name], version)
+
+    def test_no_action_installs_a_rust_toolchain(self) -> None:
+        """The lane/public split is a property of the JOB, not of the step.
+
+        `test_rust_toolchain_steps_select_an_explicit_toolchain` classifies a step by
+        the recipes the job around it invokes. An action has no job, so a toolchain
+        installed from inside one is reached by whichever job calls it and belongs to
+        no side that could be checked -- it would pass that test by being invisible
+        to it rather than by agreeing with it.
+        """
+        actions = action_files()
+        self.assertTrue(actions, "no action to check; this would pass vacuously")
+        for action in actions:
+            with self.subTest(action=action.name):
+                self.assertNotIn(
+                    "dtolnay/rust-toolchain",
+                    action.read_text(encoding="utf-8"),
+                    f"{action.relative_to(ROOT)} installs a toolchain, which no job "
+                    "owns and nothing can classify",
+                )
 
     def test_rust_toolchain_steps_select_an_explicit_toolchain(self) -> None:
         """Each job installs the toolchain its own work will use.
@@ -236,7 +290,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         )
 
         checked = {"extension lane": 0, "public workspace": 0}
-        for workflow in sorted(WORKFLOWS.glob("*.yml")):
+        for workflow in workflow_files():
             text = workflow.read_text(encoding="utf-8")
             for job, body in workflow_job_bodies(text).items():
                 if enters_lane.search(body):
@@ -281,7 +335,7 @@ class WorkflowPolicyTests(unittest.TestCase):
                 self.assertTrue(count, f"no {where} toolchain step checked; this would pass vacuously")
 
     def test_workflow_steps_do_not_repeat_mapping_keys(self) -> None:
-        for workflow in sorted(WORKFLOWS.glob("*.yml")):
+        for workflow in workflow_files():
             lines = workflow.read_text(encoding="utf-8").splitlines()
             starts = [
                 index
@@ -310,7 +364,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.assertNotIn("npm install ", workflow)
 
     def test_registry_token_jobs_use_the_protected_environment(self) -> None:
-        for workflow in sorted(WORKFLOWS.glob("*.yml")):
+        for workflow in workflow_files():
             text = workflow.read_text(encoding="utf-8")
             if "SECRET_DEPLOY_CRATEIO" in text:
                 with self.subTest(workflow=workflow.name):

@@ -226,6 +226,8 @@ just test-all           # workspace and per-crate feature matrices
 just cov-all            # enforced coverage floors
 just check <crate>      # one crate, without the workspace sweep
 just test-fast          # workspace nextest plus doctests
+just test-scripts       # CI path ownership and workflow policy
+just test-policy        # the pinned versions and what Actions may run
 just pg selftest-all    # the compiler-free lane negative controls; CI runs this
 just pg doc-gate-selftest # the doc gate's controls; needs a populated PGRX_HOME
 just pg core-relock     # re-lock kamu-money-core with the lane patch active

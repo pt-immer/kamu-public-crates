@@ -52,10 +52,10 @@ flowchart LR
 
     classDef leaf fill:#172554,color:#fff,stroke:#60a5fa
     classDef adapter fill:#f8fafc,color:#0f172a,stroke:#94a3b8
-    classDef lane fill:#3f3f46,color:#fff,stroke:#f59e0b,stroke-dasharray: 5 5
+    classDef unpublished fill:#3f3f46,color:#fff,stroke:#f59e0b,stroke-dasharray: 5 5
     class ISO,LOG,MONEY,CRYPTO,RESPONSE leaf
     class CRYPTO_ACTIX,CRYPTO_AXUM,RESPONSE_ACTIX,RESPONSE_AXUM adapter
-    class PG lane
+    class PG,POLICY unpublished
 ```
 
 ## Public crate inventory

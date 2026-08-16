@@ -16,6 +16,14 @@ from typing import Any, TypeVar
 from unittest import mock
 
 from scripts import dev_environment
+
+# Channels the root `setup` deliberately does not install. The extension lane installs its
+# own from its own `rust-toolchain.toml` through `just pg setup`, and root setup doing it
+# too would download a second toolchain for every contributor who never enters the lane.
+# The manifest still names it because CI must select it without entering the lane. Stated
+# here rather than derived away, so a channel added without a setup command still fails.
+INSTALLED_BY_THE_LANE = {"lane"}
+
 from scripts.dev_environment import (
     Doctor,
     Palette,
@@ -108,17 +116,19 @@ class DevelopmentEnvironmentPolicyTests(unittest.TestCase):
         rust = self.manifest["rust"]
         rendered = [" ".join(command) for command in commands]
 
-        # Derived from the manifest rather than listed: a channel added there without a setup
-        # command is what left the extension lane's toolchain installed only by coincidence.
-        channels = sorted(
-            key.removesuffix("_components")
-            for key in rust
-            if key.endswith("_components")
-        )
+        # A channel is a key naming a version; the component and target lists are keyed off
+        # one. Deriving the set from `_components` instead exempts any channel that declares
+        # none, which is the same silence this test exists to break.
+        channels = {name for name, value in rust.items() if isinstance(value, str)}
         self.assertTrue(channels, "the manifest names no channel to install")
-        for channel in channels:
+        self.assertLessEqual(
+            INSTALLED_BY_THE_LANE,
+            channels,
+            f"{sorted(INSTALLED_BY_THE_LANE - channels)} is exempted but names no channel",
+        )
+        for channel in sorted(channels - INSTALLED_BY_THE_LANE):
             with self.subTest(channel=channel):
-                self.assertIn(channel, rust, f"{channel}_components names no channel")
+                self.assertIn(f"{channel}_components", rust, f"{channel} lists no component")
                 installs = [
                     command
                     for command in rendered

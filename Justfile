@@ -408,7 +408,8 @@ test-scripts:
 # also runs it is gated on `rust`.
 [doc("Test the pinned versions and what Actions is allowed to run.")]
 test-policy:
-    cargo test -p repo-policy
+    cargo nextest run -p repo-policy
+    cargo test -p repo-policy --doc
 
 # ---------------------------------------------------------------------------
 # Publish / vendored data / housekeeping
@@ -445,11 +446,12 @@ clean:
 gate:
     #!/usr/bin/env bash
     set -uo pipefail
-    names=("lint-all" "test-all" "test-money" "test-scripts" "msrv(1.94.0)" "cov-all" "doc" "build-nostd" "build-wasm" "build-wasm-snap" "check-worker-example" "check-examples" "deny")
+    names=("lint-all" "test-all" "test-money" "test-scripts" "test-policy" "msrv(1.94.0)" "cov-all" "doc" "build-nostd" "build-wasm" "build-wasm-snap" "check-worker-example" "check-examples" "deny")
     cmds=("just lint-all"
           "just test-all"
           "just test-money"
           "just test-scripts"
+          "just test-policy"
           "cargo +1.94.0 nextest run --workspace -E 'not binary(compile_fail)' && cargo +1.94.0 test --workspace --doc --quiet"
           "just cov-all"
           "just doc"
@@ -471,7 +473,7 @@ gate:
     # of a 430s run -- gigabytes of duplicated artifacts, cold on first use, to buy 5%.
     #
     # Every stage still runs. This overlaps them; it never drops one.
-    grps=(host host host host host cov host host host host misc host misc)
+    grps=(host host host host host host cov host host host host misc host misc)
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT
     run_group() {
