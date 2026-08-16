@@ -23,7 +23,7 @@ Every root workspace member is published except `tools/repo-policy`, which is
 
 The extension lane is structurally excluded from the root `Cargo.toml`. It owns
 its own Rust toolchain, `[patch.crates-io]`, profiles, `Cargo.lock`,
-`deny.toml`, and Docker-backed gate. It is `publish = false`, not a tenth public
+`deny.toml`, and Docker-backed gate. It is `publish = false`, not another public
 crate. Do not replace structural exclusion with repeated `--exclude` flags.
 Reach the lane through `just pg <recipe>`.
 
@@ -57,12 +57,13 @@ Repository-wide policy lives at the root. In particular, `lint-shell` and
   republish being added to carry it, and every path a workflow indexes is checked
   to exist — an unresolvable one is not an error in Actions, it is the empty
   string, and a job handed one installs whatever the runner already had. No file
-  Actions executes states a version literal outside a comment, in either YAML
-  spelling and on any line: not a toolchain selection, not a `tool:` request, not
-  a cache key, not a `run:` line. The manifest is the only home a version has, so
-  one arriving with something it does not yet pin — a container image, a package
-  the operating system installs — needs an entry there before it can be named at
-  all. `test_dev_environment.py` binds the literals in `clippy.toml`, the
+  Actions executes states a dotted version literal — two separators or more —
+  outside a comment, in either YAML spelling and on any line: not a toolchain
+  selection, not a `tool:` request, not a cache key, not a `run:` line. A version
+  written with fewer separators reads the same as any other number, so that scan
+  does not claim it; a PostgreSQL major or an image series is bound by whatever
+  else names it, or by nothing.
+  `test_dev_environment.py` binds the literals in `clippy.toml`, the
   `Justfile` and `README.md`. Toolchain literals matter more than the floor they
   restate: `rustup run <version>` addresses a toolchain by name, so one that
   outlives a bump either resolves to a stale install or does not resolve at all.
@@ -199,16 +200,17 @@ beneath it. `KMONEY_BUILD_CACHE_DIR` makes `test-matrix.sh` and the `yb-build`
 recipe export and restore those layers through `docker buildx`; locally it stays
 unset because the daemon already holds the layers.
 
-CI sets it for the YugabyteDB job only. A cached target costs about 1.6 GiB per
-manifest state, and a branch plus a pull request touching a manifest are two
-live states, so caching every target exceeds the repository cache limit; saves
-are then refused and each run rebuilds the layer whose stale near-miss it just
-paid to download, which is worse than not caching. One target fits, and
-YugabyteDB is the one worth it: the PostgreSQL jobs run in parallel, so an
-uncached major sets their pace whether or not its siblings are cached, while the
-YugabyteDB job is both the longest and alone. The PostgreSQL images build their
-dependencies in a layer; only the export is dropped. Exporting needs the
-docker-container buildx driver, which the selected builder is not by default;
+CI sets it for the YugabyteDB job only, because the PostgreSQL jobs run in
+parallel: an uncached major sets their pace whether or not its siblings are
+cached, while the YugabyteDB job is both the longest and alone. Whether a size
+cap also binds this choice is UNKNOWN — the arithmetic once recorded here
+assumed a 10 GB repository cache, and active caches exceed that. Re-derive it
+from `gh api repos/<owner>/<repo>/actions/cache/usage` and the repository's
+current limit before relying on it. A target that is cached and then evicted is
+worse than one never cached: each run pays to download a stale near-miss and
+rebuilds the layer anyway. The PostgreSQL images build their dependencies in a
+layer; only the export is dropped. Exporting needs the docker-container buildx
+driver, which the selected builder is not by default;
 `scripts/require-cache-exporter.sh` refuses rather than letting the build abort
 part-way. The YugabyteDB export names the `deps` build target: `mode=max` over
 the whole graph would also export the package step's `target/`, which nothing

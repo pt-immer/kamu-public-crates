@@ -2,10 +2,10 @@
 //!
 //! Three readings, because the questions differ in kind.
 //!
-//! The typed model answers what a document *means*: which jobs exist, what each declares in
-//! `needs` whether written as a scalar or a list, what an action publishes under which name.
-//! Parsing into it also decides whether the file is a workflow at all, so a malformed one
-//! fails here rather than being half-read by a scan that finds nothing and reports nothing.
+//! The typed model answers what a document *means*: which jobs exist, and what each declares
+//! in `needs` whether written as a scalar or a list. Parsing into it also decides whether the
+//! file is a workflow at all, so a malformed one fails here rather than being half-read by a
+//! scan that finds nothing and reports nothing.
 //!
 //! The generic tree answers "every string anywhere under this job", and "the direct keys of
 //! each step". Neither can be asked of the typed model without naming the fields involved,
@@ -242,14 +242,7 @@ pub struct Use {
 /// adding step forms and a match over the ones that exist today is a list that goes stale.
 fn uses_clauses(source: &Source) -> Vec<&str> {
     let mut clauses = Vec::new();
-    let mut scopes: Vec<&Value> = Vec::new();
-    if let Some(jobs) = child(&source.tree, "jobs").and_then(Value::as_mapping) {
-        scopes.extend(jobs.iter().map(|(_, job)| job));
-    }
-    if let Some(runs) = child(&source.tree, "runs") {
-        scopes.push(runs);
-    }
-    for scope in scopes {
+    for (_, scope) in scopes_of(source) {
         // A job calling a reusable workflow carries `uses:` itself rather than in a step.
         if let Some(clause) = child(scope, "uses").and_then(Value::as_str) {
             clauses.push(clause);
@@ -384,6 +377,57 @@ pub fn tool_requests() -> Vec<(&'static str, String, String)> {
     requests
 }
 
+/// One output a composite action publishes.
+#[derive(Debug)]
+pub struct ActionOutput {
+    /// The action's path.
+    pub source: &'static str,
+    /// The name a caller reads it under.
+    pub name: String,
+    /// The expression it resolves to.
+    pub value: String,
+    /// Every `(id, run body)` this action's steps declare. An output is only as good as the
+    /// step it names, and only this action's steps are in scope for it.
+    pub steps: Vec<(String, String)>,
+}
+
+/// Every output a composite action publishes.
+///
+/// A workflow states its outputs under a job or under `on.workflow_call`, so a top-level
+/// `outputs` key belongs to an action.
+pub fn action_outputs() -> Vec<ActionOutput> {
+    let mut outputs = Vec::new();
+    for source in sources() {
+        let Some(runs) = child(&source.tree, "runs") else {
+            continue;
+        };
+        let Some(entries) = child(&source.tree, "outputs").and_then(Value::as_mapping) else {
+            continue;
+        };
+        let steps: Vec<(String, String)> = steps_of(runs)
+            .into_iter()
+            .filter_map(|step| {
+                let id = child(step, "id").and_then(Value::as_str)?;
+                let body = child(step, "run").and_then(Value::as_str)?;
+                Some((id.to_owned(), body.to_owned()))
+            })
+            .collect();
+        for (name, entry) in entries {
+            let (Some(name), Some(value)) = (name.as_str(), child(entry, "value").and_then(Value::as_str))
+            else {
+                continue;
+            };
+            outputs.push(ActionOutput {
+                source: source.path.as_str(),
+                name: name.to_owned(),
+                value: value.to_owned(),
+                steps: steps.clone(),
+            });
+        }
+    }
+    outputs
+}
+
 /// Every path an expression indexes out of the published manifest, as its segments.
 ///
 /// Both spellings are read, because a key carrying a hyphen has to be indexed rather than
@@ -404,8 +448,7 @@ pub fn manifest_paths(expression: &str) -> Vec<Vec<String>> {
         rest = after;
         let mut segments = Vec::new();
         loop {
-            let mut characters = rest.chars();
-            match characters.next() {
+            match rest.chars().next() {
                 Some('.') => {
                     let tail = &rest[1..];
                     let width =

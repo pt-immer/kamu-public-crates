@@ -169,7 +169,9 @@ DEFAULT_VERSION_ARGS = ("--version",)
 TOOL_SECTION_SUFFIX = "_tools"
 
 # Sections CI installs from and setup does not; doctor reports on what a developer runs.
-INSTALLED_BY_CI = {"ci_only_tools"}
+# Found by prefix, like the tool sections themselves, so a second CI-only section is a
+# recognised kind rather than one that stops doctor.
+CI_SECTION_PREFIX = "ci_"
 
 
 def tool_sections(manifest: dict[str, Any]) -> set[str]:
@@ -669,7 +671,11 @@ def doctor(manifest: dict[str, Any]) -> int:
     # section that passed; a check whose section the manifest no longer states would reach
     # `tools` and raise `KeyError` over a partial report.
     stated = tool_sections(manifest)
-    unknown = stated - set(SECTION_CHECKS) - INSTALLED_BY_CI
+    unknown = {
+        section
+        for section in stated - set(SECTION_CHECKS)
+        if not section.startswith(CI_SECTION_PREFIX)
+    }
     if unknown:
         raise SystemExit(
             f"{MANIFEST_PATH} states tool sections nothing checks: {sorted(unknown)}"

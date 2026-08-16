@@ -15,7 +15,7 @@ pub const TOOL_SECTION_SUFFIX: &str = "_tools";
 #[derive(Debug)]
 pub struct DevTools {
     pub rust: Rust,
-    /// Each tool section, under its own name, in manifest order.
+    /// Each tool section, under its own name, ordered by that name.
     pub tools: BTreeMap<String, BTreeMap<String, Tool>>,
 }
 

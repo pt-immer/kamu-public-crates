@@ -59,7 +59,7 @@ def selected_channel(line: str) -> str:
     value = line.split(":", 1)[1].strip()
     # The pins are indexed out of the published manifest rather than read from an output
     # named after each one, so what identifies the channel is the path, not an output name.
-    indexed = re.search(r"outputs\.manifest\)\.rust\.([a-z0-9_]+)", value)
+    indexed = re.search(r"outputs\.manifest\s*\)\.rust\.([a-z0-9_]+)", value)
     if indexed:
         return f"rust.{indexed.group(1)}"
     if "matrix.toolchain" in value:

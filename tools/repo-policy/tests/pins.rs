@@ -1,10 +1,13 @@
 //! Every pinned version has one home, and the copies a tool insists on are held equal to it.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::OnceLock;
+
+use regex_lite::Regex;
 
 use repo_policy::actions::{
-    INSTALL_ACTION, install_action_steps, job_outputs, manifest_paths, needs_output_references,
-    sources as actions_sources, step_uses, tool_requests,
+    ActionOutput, INSTALL_ACTION, action_outputs, install_action_steps, job_outputs, manifest_paths,
+    needs_output_references, sources as actions_sources, step_uses, tool_requests,
 };
 use repo_policy::dev_tools::{DevTools, TOOL_SECTION_SUFFIX};
 use repo_policy::{read, repo_root, tracked};
@@ -369,7 +372,7 @@ fn no_tool_is_pinned_twice() {
 /// receives it, and the pins every job reads are gone while the gate reports green.
 #[test]
 fn every_republished_manifest_comes_from_the_action_that_reads_it() {
-    let published: BTreeSet<(&str, String)> = job_outputs()
+    let published: BTreeSet<(&str, String, String)> = job_outputs()
         .into_iter()
         .filter(|(_, _, name, _)| name == "manifest")
         .map(|(source, job, _, value)| {
@@ -382,21 +385,21 @@ fn every_republished_manifest_comes_from_the_action_that_reads_it() {
                 .unwrap_or_else(|| {
                     panic!("{source} job {job} publishes the manifest as {value}, which reads no step")
                 });
-            (source, format!("{job}\u{1}{step}"))
+            (source, job.clone(), step)
         })
         .collect();
     assert!(!published.is_empty(), "no job republishes the manifest; this would pass vacuously");
 
-    let reading: BTreeSet<(&str, String)> = step_uses()
+    let reading: BTreeSet<(&str, String, String)> = step_uses()
         .into_iter()
         .filter(|(_, _, _, clause)| clause.contains("read-dev-tools"))
-        .map(|(source, scope, id, _)| (source, format!("{scope}\u{1}{id}")))
+        .map(|(source, scope, id, _)| (source, scope, id))
         .collect();
 
-    for (source, key) in &published {
-        let (job, step) = key.split_once('\u{1}').expect("the key carries both parts");
+    for entry in &published {
+        let (source, job, step) = entry;
         assert!(
-            reading.contains(&(source, key.clone())),
+            reading.contains(entry),
             "{source} job {job} republishes the manifest from step {step}, which does not run \
              the read-dev-tools action",
         );
@@ -415,7 +418,7 @@ fn no_actions_source_states_a_version_literal() {
     let mut scanned = 0_usize;
     for source in actions_sources() {
         for (number, line) in source.text.lines().enumerate() {
-            if let Some(found) = regex_lite_version(code_of(line)) {
+            if let Some(found) = version_literal(code_of(line)) {
                 panic!(
                     "{}:{} states the version literal {found}; index it out of the manifest \
                      the read-dev-tools action publishes, or -- if this repository pins no \
@@ -457,30 +460,16 @@ fn code_of(line: &str) -> &str {
     start.map_or(line, |index| &line[..index])
 }
 
-/// The first `<digits>.<digits>.<digits>` in a line, if any.
-fn regex_lite_version(line: &str) -> Option<String> {
-    let bytes: Vec<char> = line.chars().collect();
-    let mut index = 0;
-    while index < bytes.len() {
-        if !bytes[index].is_ascii_digit() {
-            index += 1;
-            continue;
-        }
-        let start = index;
-        while index < bytes.len() && (bytes[index].is_ascii_digit() || bytes[index] == '.') {
-            index += 1;
-        }
-        let token: String = bytes[start..index].iter().collect();
-        // A trailing dot ends a sentence rather than a version, so what it separates is
-        // counted after it is dropped rather than before.
-        let token = token.trim_end_matches('.').to_owned();
-        if token.matches('.').count() >= 2
-            && token.split('.').all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
-        {
-            return Some(token);
-        }
-    }
-    None
+/// The first dotted version literal in a line, if any.
+///
+/// Two separators at least, so an ordinary decimal is not one. A trailing dot ends a sentence
+/// rather than a version and is outside the match by construction.
+fn version_literal(line: &str) -> Option<String> {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN
+        .get_or_init(|| Regex::new(r"[0-9]+\.[0-9]+(?:\.[0-9]+)+").expect("the pattern compiles"))
+        .find(line)
+        .map(|found| found.as_str().to_owned())
 }
 
 /// Every manifest path a workflow indexes has to exist. A path Actions cannot resolve is not
@@ -517,6 +506,38 @@ fn every_manifest_path_a_workflow_reads_exists() {
         }
     }
     assert!(read > 0, "no manifest path was read; this would pass vacuously");
+}
+
+/// Every output a composite action publishes is written by the step it names.
+///
+/// An action's `value:` is reached by no job output, so the republish rule cannot see it. Left
+/// unbound, repointing it at a step output nothing writes still parses, still names a step that
+/// exists, and still passes every path check -- and every job in every workflow then receives
+/// the empty string.
+#[test]
+fn every_action_output_is_written_by_the_step_it_names() {
+    let mut checked = 0_usize;
+    for output in action_outputs() {
+        let ActionOutput { source, name, value, steps } = &output;
+        let (id, key) = value
+            .split_once("steps.")
+            .and_then(|(_, tail)| tail.split_once(".outputs."))
+            .map(|(id, tail)| (id, tail.trim_end_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_')))
+            .unwrap_or_else(|| panic!("{source} publishes {name} as {value}, which reads no step output"));
+        let body = steps
+            .iter()
+            .find(|(step, _)| step == id)
+            .map(|(_, body)| body.as_str())
+            .unwrap_or_else(|| panic!("{source} publishes {name} from step {id}, which it has no"));
+        // A step writes an output by naming it to $GITHUB_OUTPUT, as an assignment or as the
+        // opening of a heredoc.
+        assert!(
+            body.contains(&format!("{key}<<")) || body.contains(&format!("{key}=")),
+            "{source} publishes {name} from {id}.outputs.{key}, which that step never writes",
+        );
+        checked += 1;
+    }
+    assert!(checked > 0, "no action publishes an output; this would pass vacuously");
 }
 
 /// Every step that installs a tool asks for it by the input that can carry a pin.

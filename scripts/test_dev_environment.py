@@ -25,7 +25,7 @@ from scripts import dev_environment
 INSTALLED_BY_THE_LANE = {"lane"}
 
 from scripts.dev_environment import (
-    INSTALLED_BY_CI,
+    CI_SECTION_PREFIX,
     Doctor,
     Palette,
     cargo_install_command,
@@ -125,11 +125,10 @@ class DevelopmentEnvironmentPolicyTests(unittest.TestCase):
         checked = 0
         for tool in tools(self.manifest, "system_tools"):
             checks = Doctor(palette())
-            absent = dict(tool, binary=f"{tool['name']}-absent-from-this-machine")
             with mock.patch.object(dev_environment.shutil, "which", return_value=None):
                 buffer = io.StringIO()
                 with contextlib.redirect_stdout(buffer):
-                    dev_environment.check_system_tool(checks, absent)
+                    dev_environment.check_system_tool(checks, tool)
             with self.subTest(tool=tool["name"]):
                 self.assertIn(tool["version"], buffer.getvalue())
             checked += 1
@@ -455,7 +454,9 @@ class DoctorReportingTests(unittest.TestCase):
         # The sections doctor reports on, found by shape. A list here would be a fourth
         # place a section has to be named, and the one that fails silently: a name too long
         # for the column would break alignment rather than any check.
-        for group in tool_sections(manifest) - INSTALLED_BY_CI:
+        for group in tool_sections(manifest):
+            if group.startswith(CI_SECTION_PREFIX):
+                continue
             labels += [tool["binary"] for tool in tools(manifest, group)]
         for label in labels:
             with self.subTest(label=label):

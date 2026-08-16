@@ -6,9 +6,10 @@ description: >-
 outputs:
   manifest:
     description: >-
-      The pinned-version manifest, verbatim. A job indexes the pin it needs out of this
-      rather than reading an output named after it, so a pin added to the manifest is
-      reachable without an output and a republish being added to carry it.
+      The pinned-version manifest, normalised only in its trailing newline. A job indexes
+      the pin it needs out of this rather than reading an output named after it, so a pin
+      added to the manifest is reachable without an output and a republish being added to
+      carry it.
     value: ${{ steps.read.outputs.manifest }}
 
 runs:
