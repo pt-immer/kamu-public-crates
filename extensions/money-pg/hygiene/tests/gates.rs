@@ -13,7 +13,16 @@ fn gates_compose_every_required_check() {
     let offline = support::recipe_dependencies(&lane_dump, "gate-offline");
     assert_eq!(
         offline,
-        ["fmt-check", "lint", "deny", "doc-pg", "test-hygiene", "miri-payload", "selftest-all"],
+        [
+            "fmt-check",
+            "lint",
+            "deny",
+            "doc-pg",
+            "doc-gate-selftest",
+            "test-hygiene",
+            "miri-payload",
+            "selftest-all",
+        ],
         "gate-offline no longer composes exactly the checks the lane gate promises"
     );
 
@@ -31,17 +40,16 @@ fn gates_compose_every_required_check() {
     ] {
         assert!(selftests.contains(&required), "selftest-all must depend on {required}");
     }
-    // A whole RUN STEP, not a substring anywhere in the file: `just pg doc-pg` is a prefix of
-    // every recipe name that extends it, and it matches a commented-out step exactly as well as
-    // a live one.
+    // WHICH recipes CI must reach is the lane's own claim, so it is asserted here. HOW a step is
+    // spelled is workflow shape, and `scripts/test_workflows.py` owns that -- a `- run:` here
+    // and a `- name:` with its own `run:` are the same step, and this file has no business
+    // preferring one.
     let workflow = support::read(support::repository_root().join(".github/workflows/on-pr-synced.yml"));
-    let steps: Vec<&str> =
-        workflow.lines().filter_map(|line| line.trim().strip_prefix("- run: ")).map(str::trim_end).collect();
-    for required in ["just pg selftest-all", "just pg doc-pg"] {
+    for required in ["just pg selftest-all", "just pg doc-pg", "just pg doc-gate-selftest"] {
         assert!(
-            steps.contains(&required),
-            "a CI job must run `{required}` as its own step; no CI job runs `gate-offline`, so \
-             composing it there is not what reaches a required check"
+            workflow.contains(required),
+            "a CI job must run `{required}`; no CI job runs `gate-offline`, so composing it there \
+             is not what reaches a required check"
         );
     }
     assert!(
@@ -102,79 +110,60 @@ fn release_gate_covers_one_immutable_deployable_artifact() {
     );
 }
 
-/// Nothing a recipe can leave out may decide whether rustdoc warnings fail.
-///
-/// Cargo configuration rather than a recipe, because a guard over recipe TEXT is a second copy
-/// of the recipe: `cargo +nightly doc`, `@cargo doc`, a backslash-wrapped invocation and a
-/// `{{ VARIABLE }}` fragment are one command spelled four ways, and each spelling costs such a
-/// guard another clause it can be wrong about. Here the deny is a parsed array with one owner.
-#[test]
-fn the_lane_denies_every_rustdoc_warning_from_cargo_configuration() {
-    let path = support::lane_root().join(".cargo/config.toml");
-    let config = support::manifest(&path);
-    let flags: Vec<&str> = config
-        .get("build")
-        .and_then(|build| build.get("rustdocflags"))
-        .and_then(toml::Value::as_array)
-        .unwrap_or_else(|| panic!("{} must set build.rustdocflags", path.display()))
-        .iter()
-        .map(|flag| flag.as_str().expect("every rustdocflags entry must be a string"))
-        .collect();
-
-    assert!(
-        flags.iter().any(|flag| flag.replace("-D warnings", "-Dwarnings") == "-Dwarnings"),
-        "{}: build.rustdocflags is {flags:?}, which denies no rustdoc warning -- rustdoc then \
-         reports a broken intra-doc link and exits 0",
-        path.display()
-    );
-    // rustdoc takes the LAST verdict on a lint, so an allow appended after the deny is the same
-    // vacuity as never denying, reached by adding rather than by removing.
-    let allows: Vec<&&str> =
-        flags.iter().filter(|flag| flag.starts_with("-A") || flag.starts_with("--allow")).collect();
-    assert!(allows.is_empty(), "{}: {allows:?} re-allows what the deny refused", path.display());
-}
-
-/// Every feature that gates prose must be one the doc gate turns on.
+/// Every feature that gates code must be one the doc gate turns on.
 ///
 /// `--document-private-items` decides what rustdoc KEEPS; the feature list decides what the
 /// compiler hands it at all. A `#[cfg(feature = "x")]` block the recipe does not enable is not
-/// documented, not link-checked, and not visibly absent. The features are read out of the source
-/// rather than listed here, so a new one fails this test instead of falling silently outside the
-/// gate.
+/// documented, not link-checked, and not visibly absent.
+///
+/// `doc-gate-selftest.sh` proves the regions that exist today by planting a link in each. This
+/// covers the one it cannot: a region added later. The recipe's `--features` argument is parsed
+/// rather than searched, because its body also carries `target/doc/kmoney` and
+/// `--no-default-features`, which make a substring test answer yes to `doc`, `test` and `pg`.
 #[test]
 fn the_doc_gate_compiles_every_feature_gated_block() {
     let mut gated: Vec<String> = Vec::new();
-    let mut walk = vec![support::lane_root().join("kamu-money-pg/src")];
-    while let Some(directory) = walk.pop() {
-        for entry in std::fs::read_dir(&directory).expect("the crate source must be readable") {
-            let path = entry.expect("a readable directory entry").path();
-            if path.is_dir() {
-                walk.push(path);
-                continue;
-            }
-            if path.extension().is_none_or(|extension| extension != "rs") {
-                continue;
-            }
-            for line in support::read(&path).lines().filter(|line| line.contains("#[cfg(")) {
-                let mut rest = line;
-                while let Some(at) = rest.find("feature = \"") {
-                    rest = &rest[at + "feature = \"".len()..];
-                    let (name, tail) = rest.split_once('"').expect("a closed feature literal");
+    for path in support::rust_sources_under(&support::lane_root().join("kamu-money-pg/src")) {
+        let source = support::read(&path);
+        // `cfg_attr` and `cfg!` gate code the same way `cfg` does, so the match is on `cfg`
+        // rather than on `#[cfg(`.
+        for line in source.lines().filter(|line| line.contains("cfg")) {
+            let mut rest = line;
+            while let Some(at) = rest.find("feature").map(|at| at + "feature".len()) {
+                rest = &rest[at..];
+                let Some(quoted) = rest.strip_prefix(" = \"").or_else(|| rest.strip_prefix("=\"")) else {
+                    continue;
+                };
+                let Some((name, tail)) = quoted.split_once('"') else {
+                    panic!("{}: unterminated feature literal in `{}`", path.display(), line.trim());
+                };
+                // `not(feature = "x")` documents the branch taken when x is OFF, so requiring the
+                // gate to enable it would demand the opposite of what the code says.
+                if !line.contains("not(feature") {
                     gated.push(name.to_owned());
-                    rest = tail;
                 }
+                rest = tail;
             }
         }
     }
     gated.sort_unstable();
     gated.dedup();
-    assert!(!gated.is_empty(), "no `#[cfg(feature = ...)]` found -- this guard would pass vacuously");
+    assert!(!gated.is_empty(), "no `cfg(feature = ...)` found -- this guard would pass vacuously");
 
     let body = support::recipe_body(&support::just_dump(&support::lane_root()), "doc-pg");
-    let missing: Vec<&String> = gated.iter().filter(|feature| !body.contains(*feature)).collect();
+    let enabled: Vec<&str> = body
+        .split_whitespace()
+        .skip_while(|token| *token != "--features")
+        .nth(1)
+        .unwrap_or_else(|| panic!("doc-pg must pass --features; its body is:\n{body}"))
+        .split(',')
+        .collect();
+    let missing: Vec<&String> = gated.iter().filter(|feature| !enabled.contains(&feature.as_str())).collect();
     assert!(
         missing.is_empty(),
-        "doc-pg does not enable {missing:?}, so rustdoc never compiles the prose behind them"
+        "doc-pg enables {enabled:?} and so never compiles the code behind {missing:?}. A pgrx \
+         major among these cannot simply be added: they are mutually exclusive, so one rustdoc \
+         run cannot cover them all and the gap is real."
     );
 }
 

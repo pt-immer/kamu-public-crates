@@ -40,9 +40,15 @@ def workflow_job_bodies(source: str) -> dict[str, str]:
     """
     split = source.split("\njobs:\n", 1)
     if len(split) == 1:
-        return {}
+        raise AssertionError("workflow has no `jobs:` block to attribute steps to")
     jobs = split[1]
     starts = list(re.finditer(r"(?m)^  ([a-z0-9-]+):\n", jobs))
+    # A job id this pattern misses is not skipped, it is CONCATENATED onto the previous job's
+    # body, which would classify that job by another one's steps. Refuse instead.
+    declared = re.findall(r"(?m)^  (\S+):$", jobs)
+    unmatched = set(declared) - {start.group(1) for start in starts}
+    if unmatched:
+        raise AssertionError(f"job ids outside [a-z0-9-]+ cannot be attributed: {sorted(unmatched)}")
     return {
         start.group(1): jobs[
             start.end() : (
@@ -174,15 +180,24 @@ class WorkflowPolicyTests(unittest.TestCase):
         """
         primary = TOOL_MANIFEST["rust"]["primary"]
         lane = lane_channel()
-        # Miri ships on no release channel, and the workspace suite tests the
-        # MSRV by matrix; neither is a missing pin.
-        floating = {"toolchain: nightly", "toolchain: ${{ matrix.toolchain }}"}
 
-        checked = 0
+        checked = {"extension lane": 0, "public workspace": 0}
         for workflow in sorted(WORKFLOWS.glob("*.yml")):
             text = workflow.read_text(encoding="utf-8")
             for job, body in workflow_job_bodies(text).items():
-                expected = lane if "just pg " in body else primary
+                if "just pg " in body:
+                    expected, where = lane, "extension lane"
+                    # The lane builds with one toolchain. Miri is the exception it
+                    # actually has; a matrix is not, and would install the public
+                    # workspace's MSRV into a lane job.
+                    allowed = {f"toolchain: {expected}", "toolchain: nightly"}
+                else:
+                    expected, where = primary, "public workspace"
+                    allowed = {
+                        f"toolchain: {expected}",
+                        "toolchain: nightly",
+                        "toolchain: ${{ matrix.toolchain }}",
+                    }
                 steps = re.findall(
                     r"(?ms)^      - uses: dtolnay/rust-toolchain@[0-9a-f]{40}"
                     r".*?(?=^      - |\Z)",
@@ -194,16 +209,21 @@ class WorkflowPolicyTests(unittest.TestCase):
                         for line in step.splitlines()
                         if line.strip().startswith("toolchain:")
                     }
-                    checked += 1
+                    checked[where] += 1
                     with self.subTest(workflow=workflow.name, job=job):
                         self.assertEqual(1, len(selected))
                         self.assertTrue(
-                            selected <= floating | {f"toolchain: {expected}"},
-                            f"{job} installs {selected} but works in the "
-                            f"{'extension lane' if expected == lane else 'public workspace'}, "
+                            selected <= allowed,
+                            f"{job} installs {selected} but works in the {where}, "
                             f"which pins {expected}",
                         )
-        self.assertTrue(checked, "no toolchain step found; this test would pass vacuously")
+
+        # Per side, because the two values agree today: a single counter is kept
+        # non-zero by the ~30 public-workspace jobs while every lane job goes
+        # unchecked, which is the half this test was added for.
+        for where, count in checked.items():
+            with self.subTest(side=where):
+                self.assertTrue(count, f"no {where} toolchain step checked; this would pass vacuously")
 
     def test_workflow_steps_do_not_repeat_mapping_keys(self) -> None:
         for workflow in sorted(WORKFLOWS.glob("*.yml")):

@@ -201,21 +201,34 @@ fn every_container_starts_from_the_pinned_rust_toolchain() {
     }
 }
 
-/// `major.minor` as numbers, so `1.100` orders above `1.96` and the legal
-/// `rust-version = "1.96.0"` compares equal to `clippy.toml`'s `"1.96"`.
-fn series(version: &str, source: &str) -> (u32, u32) {
+/// A Rust version as numbers, so `1.100` orders above `1.96`.
+///
+/// The patch is carried, not truncated. Cargo enforces `rust-version` at patch
+/// precision, so `1.96.5` against a `1.96.0` channel is a lane where every
+/// command fails -- and a comparison on `major.minor` alone would call the two
+/// equal. An omitted patch is `0`, which is what `1.96` means, so `clippy.toml`
+/// may keep the shorter spelling.
+fn series(version: &str, source: &str) -> (u32, u32, u32) {
     let mut parts = version.split('.');
-    let mut component = || {
+    let mut required = || {
         parts
             .next()
             .and_then(|part| part.parse::<u32>().ok())
             .unwrap_or_else(|| panic!("{source} must name a numeric Rust version, not `{version}`"))
     };
-    (component(), component())
+    let (major, minor) = (required(), required());
+    let patch = match parts.next() {
+        None => 0,
+        Some(part) => part
+            .parse::<u32>()
+            .unwrap_or_else(|_| panic!("{source} must name a numeric Rust version, not `{version}`")),
+    };
+    assert!(parts.next().is_none(), "{source} must not carry a fourth component: `{version}`");
+    (major, minor, patch)
 }
 
 /// The lane's MSRV, from the file Clippy prefers, and the file Cargo enforces.
-fn declared_msrv() -> ((u32, u32), String) {
+fn declared_msrv() -> ((u32, u32, u32), String) {
     let clippy_path = support::lane_root().join("clippy.toml");
     let clippy = support::manifest(&clippy_path)
         .get("msrv")

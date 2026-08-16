@@ -676,6 +676,7 @@ jobs:
       - name: Initialise PGRX_HOME against the installed server
         run: just pg pgrx-init /usr/lib/postgresql/18/bin/pg_config
       - run: just pg doc-pg
+      - run: just pg doc-gate-selftest
 
   test-money-pg-matrix:
     name: test (kamu-money-pg PG${{ matrix.pg }})

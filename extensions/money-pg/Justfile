@@ -286,30 +286,26 @@ miri-payload:
 # private `fn` and `ffi` and `safe` are private modules, because the published
 # surface is SQL rather than Rust, so without `--document-private-items` the input
 # set is the generated `pub struct` per currency. `pg_test` and `boundary-probe`
-# gate a third of the crate's prose, and `pg18` implies neither. The deny is in
-# `.cargo/config.toml`, where no recipe can leave it out.
+# gate a third of the crate's prose, and `pg18` implies neither.
 #
-# The rendered tree is then the proof: these four directories exist only when the
-# private surface and both feature-gated blocks were all in the input set, so a
-# dropped flag fails the recipe on its own output rather than on a reading of its
-# text. `#[doc(hidden)]` items stay out either way.
+# The deny is written here, on the invocation, rather than as `build.rustdocflags`
+# in `.cargo/config.toml`: an ambient `RUSTDOCFLAGS` REPLACES a configured value
+# outright, and this repository already exports the sibling `RUSTFLAGS` at
+# workflow level. Assigned here it overrides an inherited one instead of being
+# overridden by it. The space matters too -- cargo splits this variable on
+# whitespace, while a one-element `["-D warnings"]` array reaches rustdoc as a
+# single argv token it rejects, warning about the flag and about nothing else.
 #
-# One major, like every other native recipe. `pgrx-init` registers the single
-# major its `pg_config` names, so an every-major variant resolves nowhere, and
-# rustdoc reads the same prose under each of them.
-[doc("Build the extension's API docs against one major, failing on any rustdoc warning.")]
-doc-pg pg="18":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cargo doc {{ CORE_PATCH }} -p kamu-money-pg --no-default-features \
-        --features pg{{ pg }},pg_test,boundary-probe --no-deps --document-private-items
-    for rendered in safe tests safe/mixed/tests ffi/wire/tests; do
-        [ -d "target/doc/kmoney/${rendered}" ] || {
-            echo "doc-pg: rustdoc rendered no kmoney/${rendered}, so it read far less than this" >&2
-            echo "doc-pg: recipe claims -- check --document-private-items and the feature list" >&2
-            exit 1
-        }
-    done
+# `scripts/doc-gate-selftest.sh` proves all three settings by planting a broken
+# link in each region and requiring this recipe to report every one. A test that
+# read the settings instead was twice wrong about exactly the spellings above.
+#
+# pg18 alone. `pgrx-init` registers the single major its `pg_config` names, and
+# both lane CI jobs point it at PostgreSQL 18, so any other major fails in the
+# `pgrx-pg-sys` build script rather than in rustdoc.
+[doc("Build the extension's API docs, failing on a broken intra-doc link.")]
+doc-pg:
+    RUSTDOCFLAGS='-D warnings' cargo doc {{ CORE_PATCH }} -p kamu-money-pg --no-default-features --features pg18,pg_test,boundary-probe --no-deps --document-private-items
 
 # Database and artifact tests
 [doc("The text adapter against a live YugabyteDB. The suite is in the main workspace; the image identity is resolved here.")]
@@ -499,6 +495,13 @@ require-cache-exporter-selftest:
 [doc("Run every negative control: regress, artifact, copy-out, cache exporter, lock, NUMA.")]
 selftest-all: test-regress-selftest artifact-selftest exactly-one-selftest require-cache-exporter-selftest workspace-lock-selftest numa-selftest
 
+# Deliberately NOT part of `selftest-all`, which is compiler-free and reached by a CI job that
+# installs no PostgreSQL. This one runs `doc-pg`, so it needs a populated PGRX_HOME; it belongs
+# beside that recipe, in the job that already has one.
+[doc("Negative controls for the doc gate: a planted link in each region it must reach.")]
+doc-gate-selftest:
+    ./scripts/doc-gate-selftest.sh
+
 # Measurements; never gates
 [doc("SQL cost: kmoney vs numeric(36,18) on stock PostgreSQL, with the floor. Never a gate.")]
 bench-pg major="18":
@@ -614,7 +617,7 @@ test-pg-all: test-yb (test-pg PG_MAJORS "4") test-pg-driver test-yb-driver
 
 # Gates
 [doc("The gate for a change that touches no database: format, lint, audit, docs, Miri, and offline tests.")]
-gate-offline: fmt-check lint deny doc-pg test-hygiene miri-payload selftest-all
+gate-offline: fmt-check lint deny doc-pg doc-gate-selftest test-hygiene miri-payload selftest-all
 
 [doc("The offline gate plus every suite reachable without a from-source YugabyteDB build.")]
 gate-pg: gate-offline yb-image-selftest test-pg-all
