@@ -17,7 +17,7 @@ The supported native combination is defined by five pins:
 | YugabyteDB image | [`YB-PINNED.txt`](YB-PINNED.txt), tag plus registry digest |
 | pgrx fork | lane-root `Cargo.toml` `[patch.crates-io]` |
 | pgrx version | `kamu-money-pg/Cargo.toml` and Docker build arguments |
-| Rust toolchain | lane-root `rust-toolchain.toml`, and the three container images |
+| Rust toolchain | lane-root `rust-toolchain.toml`, the three container images, and the toolchain step of every CI job that enters the lane |
 | Rust MSRV | `clippy.toml` and `workspace.package.rust-version`, equal to each other and at or below the toolchain |
 
 The fork is

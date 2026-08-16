@@ -31,12 +31,50 @@ def lane_channel() -> str:
     return pinned["toolchain"]["channel"]
 
 
+def lane_entry_recipes() -> set[str]:
+    """Root recipes that run inside the extension lane, transitively.
+
+    `just pg` is not the only way in -- `gate-pg` cds there too and `gate-all`
+    composes it -- so a hand-written marker would be a claim about the Justfile
+    rather than a reading of it. Derived, so a new entry point is covered on the
+    day it is written.
+    """
+    text = (JUSTFILE).read_text(encoding="utf-8")
+    bodies: dict[str, str] = {}
+    dependencies: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in text.splitlines():
+        header = re.match(r"^([a-z0-9-]+)([^:=\n]*):(?!=)(.*)$", line)
+        if header:
+            current = header.group(1)
+            bodies[current] = ""
+            dependencies[current] = re.findall(r"[a-z0-9-]+", header.group(3))
+        elif current is not None and line[:1] in {" ", "\t"}:
+            bodies[current] += line + "\n"
+        elif line.strip():
+            current = None
+
+    entries = {name for name, body in bodies.items() if "cd extensions/money-pg" in body}
+    while True:
+        reached = {
+            name
+            for name, needs in dependencies.items()
+            if name not in entries and entries.intersection(needs)
+        }
+        if not reached:
+            break
+        entries |= reached
+    if not entries:
+        raise AssertionError("no root recipe enters the extension lane; re-point this derivation")
+    return entries
+
+
 def workflow_job_bodies(source: str) -> dict[str, str]:
     """Job id to body text.
 
-    Separate from `workflow_jobs`, which refuses `needs` and `if` spellings this
-    repository does not use. That is right for reachability and wrong here,
-    where all a caller needs is which job a step sits in.
+    Separate from the `needs`/`if` parsing in `workflow_jobs`, which refuses
+    spellings this repository does not use, because all a caller needs here is
+    which job a step sits in.
     """
     split = source.split("\njobs:\n", 1)
     if len(split) == 1:
@@ -44,8 +82,10 @@ def workflow_job_bodies(source: str) -> dict[str, str]:
     jobs = split[1]
     starts = list(re.finditer(r"(?m)^  ([a-z0-9-]+):\n", jobs))
     # A job id this pattern misses is not skipped, it is CONCATENATED onto the previous job's
-    # body, which would classify that job by another one's steps. Refuse instead.
-    declared = re.findall(r"(?m)^  (\S+):$", jobs)
+    # body, which would classify that job by another one's steps. The declaration pattern
+    # deliberately does NOT anchor at end of line: requiring `:$` would share the very blind
+    # spot it is here to close, and a trailing comment or space would evade both.
+    declared = re.findall(r"(?m)^  (\S+):", jobs)
     unmatched = set(declared) - {start.group(1) for start in starts}
     if unmatched:
         raise AssertionError(f"job ids outside [a-z0-9-]+ cannot be attributed: {sorted(unmatched)}")
@@ -60,13 +100,12 @@ def workflow_job_bodies(source: str) -> dict[str, str]:
 
 
 def workflow_jobs(source: str) -> dict[str, dict[str, object]]:
-    jobs = source.split("\njobs:\n", 1)[1]
-    starts = list(re.finditer(r"(?m)^  ([a-z0-9-]+):\n", jobs))
+    # ONE splitter, so the refusal to attribute an unparsable job id protects the reachability
+    # tests too. A job folded into its predecessor takes its `needs` and `if` with it, and both
+    # `test_ci_success_reaches_every_leaf_job` and the cascade simulation would then be reasoning
+    # about a job list that is missing an entry.
     parsed: dict[str, dict[str, object]] = {}
-    for index, start in enumerate(starts):
-        end = starts[index + 1].start() if index + 1 < len(starts) else len(jobs)
-        body = jobs[start.end() : end]
-
+    for name, body in workflow_job_bodies(source).items():
         needs: list[str] = []
         inline = re.search(r"(?m)^    needs: \[([^]]+)\]$", body)
         scalar = re.search(r"(?m)^    needs: ([a-z0-9-]+)$", body)
@@ -79,7 +118,7 @@ def workflow_jobs(source: str) -> dict[str, dict[str, object]]:
             needs = re.findall(r"(?m)^      - ([a-z0-9-]+)$", block.group(1))
         elif re.search(r"(?m)^    needs:", body):
             raise AssertionError(
-                f"unsupported needs syntax in job {start.group(1)}"
+                f"unsupported needs syntax in job {name}"
             )
 
         condition = re.search(r"(?m)^    if: (.+)$", body)
@@ -92,12 +131,12 @@ def workflow_jobs(source: str) -> dict[str, dict[str, object]]:
             )
             if selected is None:
                 raise AssertionError(
-                    f"unsupported condition in job {start.group(1)}: "
+                    f"unsupported condition in job {name}: "
                     f"{condition.group(1)}"
                 )
             output = selected.group(1)
 
-        parsed[start.group(1)] = {
+        parsed[name] = {
             "needs": needs,
             "output": output,
             "always": always,
@@ -174,18 +213,21 @@ class WorkflowPolicyTests(unittest.TestCase):
         by. The two versions agree today and are owned by different files, so
         nothing but this test would report the run where they stop agreeing.
 
-        A job is a lane job when it runs `just pg`, which is how a lane job
-        reaches the lane at all. Deriving it that way rather than from a list of
-        job names means a new one is covered on the day it is written.
+        A job is a lane job when it invokes a root recipe that cds into the lane,
+        and that set is read out of the Justfile rather than written here.
         """
         primary = TOOL_MANIFEST["rust"]["primary"]
         lane = lane_channel()
+        entries = lane_entry_recipes()
+        enters_lane = re.compile(
+            r"just (?:{})(?:\s|$)".format("|".join(re.escape(name) for name in sorted(entries)))
+        )
 
         checked = {"extension lane": 0, "public workspace": 0}
         for workflow in sorted(WORKFLOWS.glob("*.yml")):
             text = workflow.read_text(encoding="utf-8")
             for job, body in workflow_job_bodies(text).items():
-                if "just pg " in body:
+                if enters_lane.search(body):
                     expected, where = lane, "extension lane"
                     # The lane builds with one toolchain. Miri is the exception it
                     # actually has; a matrix is not, and would install the public
@@ -209,7 +251,11 @@ class WorkflowPolicyTests(unittest.TestCase):
                         for line in step.splitlines()
                         if line.strip().startswith("toolchain:")
                     }
-                    checked[where] += 1
+                    # Only a step that names the PINNED value counts. `nightly` is allowed on
+                    # both sides, so counting it lets the lane tally be non-zero while
+                    # `lane_channel()` was never compared to anything.
+                    if selected == {f"toolchain: {expected}"}:
+                        checked[where] += 1
                     with self.subTest(workflow=workflow.name, job=job):
                         self.assertEqual(1, len(selected))
                         self.assertTrue(

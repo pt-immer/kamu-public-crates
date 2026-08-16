@@ -492,7 +492,7 @@ numa-selftest:
 require-cache-exporter-selftest:
     ./scripts/require-cache-exporter-selftest.sh
 
-[doc("Run every negative control: regress, artifact, copy-out, cache exporter, lock, NUMA.")]
+[doc("Run the compiler-free negative controls: regress, artifact, copy-out, cache exporter, lock, NUMA. The doc gate's are in doc-gate-selftest.")]
 selftest-all: test-regress-selftest artifact-selftest exactly-one-selftest require-cache-exporter-selftest workspace-lock-selftest numa-selftest
 
 # Deliberately NOT part of `selftest-all`, which is compiler-free and reached by a CI job that
@@ -617,7 +617,7 @@ test-pg-all: test-yb (test-pg PG_MAJORS "4") test-pg-driver test-yb-driver
 
 # Gates
 [doc("The gate for a change that touches no database: format, lint, audit, docs, Miri, and offline tests.")]
-gate-offline: fmt-check lint deny doc-pg doc-gate-selftest test-hygiene miri-payload selftest-all
+gate-offline: fmt-check lint deny doc-gate-selftest test-hygiene miri-payload selftest-all
 
 [doc("The offline gate plus every suite reachable without a from-source YugabyteDB build.")]
 gate-pg: gate-offline yb-image-selftest test-pg-all

@@ -42,7 +42,9 @@ Repository-wide policy remains at the root. In particular, `lint-shell` and
   a stale install or does not resolve at all. The extension lane pins its own
   toolchain because pgrx 0.19.2 requires it, and binds it in its hygiene crate.
   Its CI jobs install that toolchain rather than `rust.primary`, and
-  `test_workflows.py` tells the two apart by whether a job runs `just pg`.
+  `test_workflows.py` tells the two apart by whether a job invokes a root recipe
+  that cds into the lane, a set it derives from the `Justfile` rather than lists
+  — `just pg` is not the only way in, and `gate-all` composes `gate-pg`.
   `rust-toolchain.toml` wins over whatever a job installed, so a lane job given
   the public workspace's toolchain still compiles with the lane's — after rustup
   downloads it, inside every job, on every run, with no wrong answer to notice
@@ -217,14 +219,20 @@ just test-all           # workspace and per-crate feature matrices
 just cov-all            # enforced coverage floors
 just check <crate>      # one crate, without the workspace sweep
 just test-fast          # workspace nextest plus doctests
-just pg selftest-all    # every lane negative control; CI runs this recipe
+just pg selftest-all    # the compiler-free lane negative controls; CI runs this
+just pg doc-gate-selftest # the doc gate's controls; needs a populated PGRX_HOME
 just pg core-relock     # re-lock kamu-money-core with the lane patch active
 ```
 
-Negative controls belong to `selftest-all`, and a CI job runs that recipe
-directly. A control reachable only through `gate-offline` is not covered by any
-required check, and one that never runs cannot be told from one that cannot
-fail.
+Every negative control must be reached by a required check directly. A control
+reachable only through `gate-offline` is covered by nothing, and one that never
+runs cannot be told from one that cannot fail.
+
+`selftest-all` gathers the controls that need no compiler, and the CI job that
+runs it installs no PostgreSQL. `doc-gate-selftest` plants broken intra-doc links
+and runs `doc-pg`, so it needs the toolchain and a populated `PGRX_HOME`; it has
+its own recipe and its own step in the job that already has both. Adding it to
+`selftest-all` moves it to a job where `cargo doc` dies on `$PGRX_HOME`.
 
 New recipes use the `<area>-<verb>` / `*-all` naming scheme. Aggregates compose
 granular recipes; CI should call the same granular recipes rather than duplicate

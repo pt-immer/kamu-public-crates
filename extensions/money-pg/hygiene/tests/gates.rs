@@ -13,16 +13,9 @@ fn gates_compose_every_required_check() {
     let offline = support::recipe_dependencies(&lane_dump, "gate-offline");
     assert_eq!(
         offline,
-        [
-            "fmt-check",
-            "lint",
-            "deny",
-            "doc-pg",
-            "doc-gate-selftest",
-            "test-hygiene",
-            "miri-payload",
-            "selftest-all",
-        ],
+        // `doc-gate-selftest` rather than `doc-pg`: it runs that recipe against a probed tree and
+        // then against a clean one, so composing both would be a second full rustdoc pass.
+        ["fmt-check", "lint", "deny", "doc-gate-selftest", "test-hygiene", "miri-payload", "selftest-all"],
         "gate-offline no longer composes exactly the checks the lane gate promises"
     );
 
@@ -40,16 +33,24 @@ fn gates_compose_every_required_check() {
     ] {
         assert!(selftests.contains(&required), "selftest-all must depend on {required}");
     }
-    // WHICH recipes CI must reach is the lane's own claim, so it is asserted here. HOW a step is
-    // spelled is workflow shape, and `scripts/test_workflows.py` owns that -- a `- run:` here
-    // and a `- name:` with its own `run:` are the same step, and this file has no business
-    // preferring one.
+    // WHICH recipes CI must reach is the lane's own claim, so it is asserted here. The match is
+    // on a `run:` VALUE, parsed rather than searched: a bare substring is satisfied by a
+    // commented-out step, by a step whose `name:` merely mentions the recipe, and by any longer
+    // recipe name sharing the prefix -- `just pg doc-pg` is a prefix of the `doc-pg-all` step
+    // this change deletes. Both `- run:` and a `run:` under its own `name:` are the same step.
     let workflow = support::read(support::repository_root().join(".github/workflows/on-pr-synced.yml"));
-    for required in ["just pg selftest-all", "just pg doc-pg", "just pg doc-gate-selftest"] {
+    let commands: Vec<&str> = workflow
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| line.strip_prefix("- run: ").or_else(|| line.strip_prefix("run: ")))
+        .map(str::trim)
+        .collect();
+    assert!(!commands.is_empty(), "no `run:` step parsed -- this guard would pass vacuously");
+    for required in ["just pg selftest-all", "just pg doc-gate-selftest"] {
         assert!(
-            workflow.contains(required),
-            "a CI job must run `{required}`; no CI job runs `gate-offline`, so composing it there \
-             is not what reaches a required check"
+            commands.contains(&required),
+            "a CI job must run `{required}` as a whole step; no CI job runs `gate-offline`, so \
+             composing it there is not what reaches a required check"
         );
     }
     assert!(
@@ -117,35 +118,70 @@ fn release_gate_covers_one_immutable_deployable_artifact() {
 /// documented, not link-checked, and not visibly absent.
 ///
 /// `doc-gate-selftest.sh` proves the regions that exist today by planting a link in each. This
-/// covers the one it cannot: a region added later. The recipe's `--features` argument is parsed
-/// rather than searched, because its body also carries `target/doc/kmoney` and
-/// `--no-default-features`, which make a substring test answer yes to `doc`, `test` and `pg`.
+/// covers the one it cannot: a region added later.
+///
+/// Parsed, not scanned. A line-based reader misses an attribute rustfmt wrapped across lines,
+/// harvests a feature merely NAMED in prose, and cannot see which clause a `not(...)` negates --
+/// so `all(feature = "a", not(feature = "b"))` either demands `b` or, if the whole line is
+/// vetoed, silently stops requiring `a`. The recipe's `--features` argument is likewise parsed
+/// rather than searched, because a body carrying `--no-default-features` and
+/// `--document-private-items` answers yes to a substring test for `doc`.
 #[test]
 fn the_doc_gate_compiles_every_feature_gated_block() {
-    let mut gated: Vec<String> = Vec::new();
-    for path in support::rust_sources_under(&support::lane_root().join("kamu-money-pg/src")) {
-        let source = support::read(&path);
-        // `cfg_attr` and `cfg!` gate code the same way `cfg` does, so the match is on `cfg`
-        // rather than on `#[cfg(`.
-        for line in source.lines().filter(|line| line.contains("cfg")) {
-            let mut rest = line;
-            while let Some(at) = rest.find("feature").map(|at| at + "feature".len()) {
-                rest = &rest[at..];
-                let Some(quoted) = rest.strip_prefix(" = \"").or_else(|| rest.strip_prefix("=\"")) else {
-                    continue;
-                };
-                let Some((name, tail)) = quoted.split_once('"') else {
-                    panic!("{}: unterminated feature literal in `{}`", path.display(), line.trim());
-                };
-                // `not(feature = "x")` documents the branch taken when x is OFF, so requiring the
-                // gate to enable it would demand the opposite of what the code says.
-                if !line.contains("not(feature") {
-                    gated.push(name.to_owned());
+    /// Features whose code must be compiled somewhere the doc gate can reach.
+    ///
+    /// A `not(...)` describes the build where its feature is OFF, so features inside one are not
+    /// requirements. Everything else nested under `cfg`, `cfg_attr`, `all` or `any` is.
+    fn required(meta: &syn::Meta, negated: bool, into: &mut Vec<String>) {
+        match meta {
+            syn::Meta::NameValue(value) if value.path.is_ident("feature") => {
+                if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(name), .. }) = &value.value {
+                    if !negated {
+                        into.push(name.value());
+                    }
                 }
-                rest = tail;
             }
+            syn::Meta::List(list) => {
+                let negated = negated || list.path.is_ident("not");
+                let parser = syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated;
+                if let Ok(nested) = list.parse_args_with(parser) {
+                    for item in &nested {
+                        required(item, negated, into);
+                    }
+                }
+            }
+            _ => {}
         }
     }
+
+    struct Gated(Vec<String>);
+    impl syn::visit::Visit<'_> for Gated {
+        fn visit_attribute(&mut self, attribute: &syn::Attribute) {
+            if attribute.path().is_ident("cfg") || attribute.path().is_ident("cfg_attr") {
+                required(&attribute.meta, false, &mut self.0);
+            }
+            syn::visit::visit_attribute(self, attribute);
+        }
+        fn visit_macro(&mut self, item: &syn::Macro) {
+            // `cfg!(...)` selects code the same way the attribute does; its body is the same
+            // grammar with the wrapper stripped.
+            if item.path.is_ident("cfg") {
+                if let Ok(meta) = item.parse_body::<syn::Meta>() {
+                    required(&meta, false, &mut self.0);
+                }
+            }
+            syn::visit::visit_macro(self, item);
+        }
+    }
+
+    let mut visitor = Gated(Vec::new());
+    for path in support::rust_sources_under(&support::lane_root().join("kamu-money-pg/src")) {
+        let source = support::read(&path);
+        let parsed = syn::parse_file(&source)
+            .unwrap_or_else(|error| panic!("{} must parse as Rust: {error}", path.display()));
+        syn::visit::Visit::visit_file(&mut visitor, &parsed);
+    }
+    let mut gated = visitor.0;
     gated.sort_unstable();
     gated.dedup();
     assert!(!gated.is_empty(), "no `cfg(feature = ...)` found -- this guard would pass vacuously");
