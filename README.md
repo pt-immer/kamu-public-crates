@@ -131,7 +131,7 @@ Automation details live in [`AGENTS.md`](AGENTS.md).
 
 ## Quality policy
 
-- Rust 1.94.0 is the public-workspace MSRV. Rust 1.96.0 owns primary and
+- Rust 1.94.0 is the public-workspace MSRV. Rust 1.97.1 owns primary and
   compile-fail checks; CI also tests current stable.
 - Warnings and Clippy findings are denied.
 - Unsafe Rust is forbidden in ISO and SNAP crates. The extension confines

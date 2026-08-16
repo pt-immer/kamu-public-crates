@@ -80,7 +80,7 @@ fn legacy_parse_fixed_point(text: &str) -> Result<i128, ParseMoneyError> {
 
 /// Every structural shape a short input can take: both signs, the point in every position,
 /// missing parts, repeated separators, and a non-digit to force the syntax arm.
-const ALPHABET: [u8; 7] = [b'0', b'1', b'9', b'-', b'.', b'a', b' '];
+const ALPHABET: [u8; 7] = *b"019-.a ";
 
 #[test]
 fn the_rewrite_agrees_with_the_previous_parser_on_every_short_input() {
