@@ -92,7 +92,7 @@ a standalone paragraph before any trailer block:
 ```text
 chore(deps): refresh workspace dependencies
 
-Update requirements within the Rust 1.94 compatibility range.
+Update requirements within the declared compatibility range.
 
 tdkc-1
 ```
