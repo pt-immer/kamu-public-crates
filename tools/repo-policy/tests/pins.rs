@@ -62,29 +62,66 @@ fn the_lane_channel_is_the_one_rustup_selects_inside_the_lane() {
     assert_eq!(manifest.rust.lane, channel("extensions/money-pg/rust-toolchain.toml"),);
 }
 
-/// Every manifest that declares a floor. The Worker example is a separate workspace, so it
-/// cannot inherit the root manifest's and states its own.
-const MSRV_MANIFESTS: [&str; 2] = ["Cargo.toml", "crates/logging/examples/cloudflare-worker/Cargo.toml"];
+/// Every path git tracks, so a scan covers what the repository actually contains rather than
+/// what someone remembered to list.
+fn tracked(pattern: &str) -> Vec<String> {
+    let output = std::process::Command::new("git")
+        .args(["ls-files", "-z", "--", pattern])
+        .current_dir(repo_root())
+        .output()
+        .expect("git ls-files runs");
+    assert!(output.status.success(), "git ls-files failed for {pattern}");
+    let listed: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .collect();
+    assert!(!listed.is_empty(), "git tracks nothing matching {pattern}");
+    listed
+}
 
+/// A manifest's own `rust-version`, or `None` when it inherits the workspace's.
+fn declared_floor(relative: &str) -> Option<String> {
+    let document = toml_value(relative);
+    document
+        .get("workspace")
+        .and_then(|workspace| workspace.get("package"))
+        .and_then(|package| package.get("rust-version"))
+        .or_else(|| document.get("package").and_then(|package| package.get("rust-version")))
+        .and_then(toml::Value::as_str)
+        .map(str::to_owned)
+}
+
+/// The public workspace and the excluded lane declare different floors, and each is owned
+/// elsewhere. Listing the manifests that state one is what goes stale, so every tracked
+/// manifest is read and every literal has to be placed on one side or the other.
 #[test]
-fn every_manifest_declares_the_same_floor() {
+fn every_declared_floor_belongs_to_a_side_that_owns_it() {
     let manifest = tools();
-    for relative in MSRV_MANIFESTS {
-        let document = toml_value(relative);
-        let declared = document
-            .get("workspace")
-            .and_then(|workspace| workspace.get("package"))
-            .and_then(|package| package.get("rust-version"))
-            .or_else(|| document.get("package").and_then(|package| package.get("rust-version")))
-            .and_then(toml::Value::as_str)
-            .unwrap_or_else(|| panic!("{relative} declares no rust-version"));
+    let mut public = 0_usize;
+    let mut lane = 0_usize;
+
+    for relative in tracked("*Cargo.toml") {
+        let Some(declared) = declared_floor(&relative) else {
+            continue;
+        };
+        if relative.starts_with("extensions/money-pg/") {
+            // The lane's floor is held equal to its own clippy.toml by the lane's hygiene
+            // crate. Counted here so a lane manifest cannot pass by going unread.
+            lane += 1;
+            continue;
+        }
         assert!(
-            same_series(&manifest.rust.msrv, DevTools::PATH, declared, relative),
+            same_series(&manifest.rust.msrv, DevTools::PATH, &declared, &relative),
             "{} states msrv {} while {relative} declares rust-version {declared}",
             DevTools::PATH,
             manifest.rust.msrv,
         );
+        public += 1;
     }
+
+    assert!(public > 0, "no public manifest declared a floor to bind");
+    assert!(lane > 0, "no lane manifest was seen; the side split would be untested");
 }
 
 #[test]
@@ -112,22 +149,19 @@ fn the_root_toolchain_file_carries_every_component_and_target_the_manifest_names
     }
 }
 
+/// Everything Actions executes: the workflows, and the composite actions they call. A pin
+/// restated in an action is the same copy as one restated in a workflow.
 fn workflow_sources() -> Vec<(String, String)> {
-    let directory = repo_root().join(".github/workflows");
-    let mut sources: Vec<(String, String)> = std::fs::read_dir(&directory)
-        .expect("the workflow directory is readable")
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "yml"))
-        .map(|path| {
-            let name =
-                path.file_name().expect("a directory entry has a file name").to_string_lossy().into_owned();
-            let text = std::fs::read_to_string(&path).expect("a workflow is readable");
-            (name, text)
+    let mut sources: Vec<(String, String)> = tracked(".github/workflows/*.yml")
+        .into_iter()
+        .chain(tracked(".github/actions/*/action.yml"))
+        .map(|relative| {
+            let text = read(&relative);
+            (relative, text)
         })
         .collect();
     sources.sort();
-    assert!(!sources.is_empty(), "no workflow to scan");
+    assert!(!sources.is_empty(), "nothing to scan");
     sources
 }
 
