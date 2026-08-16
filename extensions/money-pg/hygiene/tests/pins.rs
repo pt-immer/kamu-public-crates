@@ -101,6 +101,15 @@ fn every_anchor_is_followed_by(path: &Path, anchor: &str, expected: &str) {
                     line.trim(),
                 )
             };
+            // Out of the published manifest, not out of any context that happens to spell the
+            // path: `env.ci_only_tools[...]` and `vars.ci_only_tools[...]` both carry it and
+            // both resolve to the empty string.
+            assert!(
+                expression.contains("fromJSON(") && expression.contains("outputs.manifest"),
+                "{}: `{}` must read `{expected}` out of the published manifest after `{anchor}`",
+                path.display(),
+                line.trim(),
+            );
             assert!(
                 expression.contains(expected),
                 "{}: `{}` must read `{expected}` in the expression following `{anchor}`",

@@ -460,16 +460,20 @@ fn code_of(line: &str) -> &str {
     start.map_or(line, |index| &line[..index])
 }
 
-/// The first dotted version literal in a line, if any.
+/// The first version literal in a line, if any.
 ///
-/// Two separators at least, so an ordinary decimal is not one. A trailing dot ends a sentence
-/// rather than a version and is outside the match by construction.
+/// Exactly three components, which is what every version this repository pins is, and what a
+/// dotted address is not: `127.0.0.1` and `0.0.0.0` are four, and a `run:` line is entitled to
+/// carry one. Fewer than three reads the same as an ordinary decimal. A trailing dot ends a
+/// sentence rather than a version and is outside the match by construction.
 fn version_literal(line: &str) -> Option<String> {
     static PATTERN: OnceLock<Regex> = OnceLock::new();
     PATTERN
-        .get_or_init(|| Regex::new(r"[0-9]+\.[0-9]+(?:\.[0-9]+)+").expect("the pattern compiles"))
-        .find(line)
-        .map(|found| found.as_str().to_owned())
+        .get_or_init(|| {
+            Regex::new(r"(?:^|[^0-9.])([0-9]+\.[0-9]+\.[0-9]+)(?:[^0-9.]|$)").expect("the pattern compiles")
+        })
+        .captures(line)
+        .map(|found| found[1].to_owned())
 }
 
 /// Every manifest path a workflow indexes has to exist. A path Actions cannot resolve is not
@@ -483,7 +487,9 @@ fn every_manifest_path_a_workflow_reads_exists() {
     let document = manifest_json();
     let mut read = 0_usize;
     for source in actions_sources() {
-        for path in manifest_paths(&source.text) {
+        // Per line and past the comment, as the literal scan reads them. Whole-file text would
+        // check a path written in a comment as though Actions resolved it.
+        for path in source.text.lines().flat_map(|line| manifest_paths(code_of(line))) {
             let mut value = &document;
             for segment in &path {
                 value = value.get(segment).unwrap_or_else(|| {
@@ -508,6 +514,84 @@ fn every_manifest_path_a_workflow_reads_exists() {
     assert!(read > 0, "no manifest path was read; this would pass vacuously");
 }
 
+/// What identifies a tool section is stated in both languages that read the manifest. Two
+/// readers of one document disagreeing quietly is what this branch keeps finding.
+#[test]
+fn both_readers_of_the_manifest_agree_what_a_tool_section_is() {
+    let python = read("scripts/dev_environment.py");
+    let stated = python
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix("TOOL_SECTION_SUFFIX = ")?
+                .trim()
+                .strip_prefix('"')?
+                .strip_suffix('"')
+                .map(str::to_owned)
+        })
+        .expect("scripts/dev_environment.py states TOOL_SECTION_SUFFIX");
+    assert_eq!(
+        stated, TOOL_SECTION_SUFFIX,
+        "scripts/dev_environment.py and repo-policy disagree on what names a tool section",
+    );
+}
+
+/// The guide states which root workspace members are published. A count went stale by being a
+/// count; an invariant nothing reads goes stale the same way, one member later.
+#[test]
+fn the_guide_names_every_unpublished_workspace_member() {
+    let output = std::process::Command::new("cargo")
+        .args(["metadata", "--no-deps", "--format-version", "1"])
+        .current_dir(repo_root())
+        .output()
+        .expect("cargo metadata runs");
+    assert!(output.status.success(), "cargo metadata failed");
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("cargo metadata emits JSON");
+    let packages = metadata["packages"].as_array().expect("metadata lists packages");
+    assert!(!packages.is_empty(), "the workspace has no member; this would pass vacuously");
+
+    // `publish = false` is an empty registry list; anything else may be published. The
+    // directory is what the guide names, because that is what a reader opens.
+    let root = repo_root();
+    let unpublished: BTreeSet<String> = packages
+        .iter()
+        .filter(|package| package["publish"].as_array().is_some_and(Vec::is_empty))
+        .map(|package| {
+            let manifest = package["manifest_path"].as_str().expect("a package has a manifest");
+            let directory = std::path::Path::new(manifest).parent().expect("a manifest has a directory");
+            directory
+                .strip_prefix(&root)
+                .expect("a member lives under the repository root")
+                .display()
+                .to_string()
+        })
+        .collect();
+    assert!(
+        packages.len() > unpublished.len(),
+        "no member is publishable; the guide's exception would be the rule",
+    );
+
+    // Whitespace-normalised, so the sentence may be rewrapped without becoming a false
+    // failure. Naming the crate anywhere would not do: the repository map names it too, and a
+    // check the map satisfies cannot fail when the exception itself is deleted.
+    let guide: String = read("AGENTS.md").split_whitespace().collect::<Vec<_>>().join(" ");
+    let stated: BTreeSet<String> = unpublished
+        .iter()
+        .filter(|directory| guide.contains(&format!("published except `{directory}`")))
+        .cloned()
+        .collect();
+    assert_eq!(
+        stated, unpublished,
+        "AGENTS.md must state every unpublished member as an exception to what is published",
+    );
+    assert_eq!(
+        guide.matches("published except `").count(),
+        unpublished.len(),
+        "AGENTS.md states more exceptions than the workspace has",
+    );
+}
+
 /// Every output a composite action publishes is written by the step it names.
 ///
 /// An action's `value:` is reached by no job output, so the republish rule cannot see it. Left
@@ -530,11 +614,14 @@ fn every_action_output_is_written_by_the_step_it_names() {
             .map(|(_, body)| body.as_str())
             .unwrap_or_else(|| panic!("{source} publishes {name} from step {id}, which it has no"));
         // A step writes an output by naming it to $GITHUB_OUTPUT, as an assignment or as the
-        // opening of a heredoc.
-        assert!(
-            body.contains(&format!("{key}<<")) || body.contains(&format!("{key}=")),
-            "{source} publishes {name} from {id}.outputs.{key}, which that step never writes",
-        );
+        // opening of a heredoc. A line that merely begins `<key>=` is a shell variable of that
+        // name, which is what the step already sets up its delimiter with.
+        let writes = body.contains("GITHUB_OUTPUT")
+            && body.lines().map(str::trim).any(|line| {
+                !line.starts_with(&format!("{key}="))
+                    && (line.contains(&format!("{key}<<")) || line.contains(&format!("{key}=")))
+            });
+        assert!(writes, "{source} publishes {name} from {id}.outputs.{key}, which that step never writes",);
         checked += 1;
     }
     assert!(checked > 0, "no action publishes an output; this would pass vacuously");
@@ -556,7 +643,12 @@ fn every_tool_is_requested_by_the_input_that_can_carry_a_pin() {
             "{source} job {scope} uses {clause}, which names its tool in the path and pins no \
              version; request it through the tool input instead",
         );
-        assert!(requested.is_some(), "{source} job {scope} uses {clause} and asks for no tool",);
+        // An empty list is not a request: `tool_requests` drops it, so the pin rule never sees
+        // the step and the job installs whatever the runner already had.
+        assert!(
+            requested.is_some_and(|list| !list.trim().is_empty()),
+            "{source} job {scope} uses {clause} and asks for no tool",
+        );
         steps += 1;
     }
     assert!(steps > 0, "no step installs a tool; this would pass vacuously");

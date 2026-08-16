@@ -169,8 +169,8 @@ DEFAULT_VERSION_ARGS = ("--version",)
 TOOL_SECTION_SUFFIX = "_tools"
 
 # Sections CI installs from and setup does not; doctor reports on what a developer runs.
-# Found by prefix, like the tool sections themselves, so a second CI-only section is a
-# recognised kind rather than one that stops doctor.
+# Found by prefix rather than listed, so a second CI-only section is a recognised kind rather
+# than one that stops doctor.
 CI_SECTION_PREFIX = "ci_"
 
 
@@ -593,10 +593,11 @@ def system_install_hint(tool: dict[str, Any]) -> str:
     """What to do about a tool `just setup` cannot install.
 
     It names the version because setup will not supply one, and it is built from the entry
-    so that version is not also written beside the pin.
+    so that version is not also written beside the pin. The package is what a package manager
+    is asked for, which an entry states where it differs from the name the tool is run by.
     """
     return (
-        f"install {tool['name']} {tool['version']} with the operating system "
+        f"install {tool['package']} {tool['version']} with the operating system "
         "package manager, then rerun setup"
     )
 
@@ -634,6 +635,27 @@ def doctor(manifest: dict[str, Any]) -> int:
     checks = Doctor(style)
     rust = manifest["rust"]
 
+    # Every tool section the manifest states is found by shape and dispatched here, and the
+    # two have to agree in both directions. A section nothing checks reads exactly like a
+    # section that passed; a check whose section the manifest no longer states would reach
+    # `tools` and raise `KeyError`. Both are settled before the first row is printed, so a
+    # manifest doctor cannot report on stops instead of half-reporting.
+    stated = tool_sections(manifest)
+    unknown = {
+        section
+        for section in stated - set(SECTION_CHECKS)
+        if not section.startswith(CI_SECTION_PREFIX)
+    }
+    if unknown:
+        raise SystemExit(
+            f"{MANIFEST_PATH} states tool sections nothing checks: {sorted(unknown)}"
+        )
+    missing = set(SECTION_CHECKS) - stated
+    if missing:
+        raise SystemExit(
+            f"{MANIFEST_PATH} states no {sorted(missing)}, which doctor checks"
+        )
+
     print(
         f"\n{style('kamu · doctor', 'bold', 'cyan')}  "
         f"{style('root-gate prerequisites', 'dim')}"
@@ -665,26 +687,6 @@ def doctor(manifest: dict[str, Any]) -> int:
         rust["msrv_components"],
     )
     check_targets(checks, rust["primary"], rust["primary_targets"])
-
-    # Every tool section the manifest states is found by shape and dispatched here, and the
-    # two have to agree in both directions. A section nothing checks reads exactly like a
-    # section that passed; a check whose section the manifest no longer states would reach
-    # `tools` and raise `KeyError` over a partial report.
-    stated = tool_sections(manifest)
-    unknown = {
-        section
-        for section in stated - set(SECTION_CHECKS)
-        if not section.startswith(CI_SECTION_PREFIX)
-    }
-    if unknown:
-        raise SystemExit(
-            f"{MANIFEST_PATH} states tool sections nothing checks: {sorted(unknown)}"
-        )
-    missing = set(SECTION_CHECKS) - stated
-    if missing:
-        raise SystemExit(
-            f"{MANIFEST_PATH} states no {sorted(missing)}, which doctor checks"
-        )
 
     grouped: dict[str, list[tuple[str, Any]]] = {}
     for section, (banner, check) in SECTION_CHECKS.items():

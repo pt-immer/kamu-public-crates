@@ -1,6 +1,6 @@
 # Contributing to kamu-public-crates
 
-Thank you for contributing. The root Cargo workspace contains nine public
+Thank you for contributing. The root Cargo workspace contains public
 libraries that version and release independently. The PostgreSQL extension under
 `extensions/money-pg` is a separate, excluded workspace.
 
@@ -18,14 +18,14 @@ The recursive clone matters: `kamu-iso3166` generates lookup tables from its
 vendored Git submodule. The bootstrap command works before `just` exists,
 installs the versions in `.config/dev-tools.json`, and uses `npm ci`. Exporting
 the local tool directory makes those pinned binaries available in the current
-shell. ShellCheck remains an operating-system package; `just doctor` names the
+shell. ShellCheck is an operating-system package; `just doctor` names the
 version to install when it is missing.
 
 ## Development loop
 
 ```sh
 just check-all  # fast format, Clippy, and test signal
-just gate       # complete barrier for the nine public crates
+just gate       # complete barrier for the public crates
 just ci         # gate plus publish dry-runs
 ```
 
@@ -69,11 +69,11 @@ Do not use workspace-wide `--all-features`. `kamu-logging` has mutually
 exclusive native and wasm features, and pgrx features select one PostgreSQL
 major. The Justfiles hold the supported matrices.
 
-Five crates carry a line-coverage floor, one `cov-*` recipe each, gathered by
-`just cov-all`. Each floor lives in its recipe and nowhere else, beside the
-reason it sits where it does; `just cov-all` prints the measurement against it.
-A floor is set from a measurement, never from a target. The four thin
-Actix/axum adapters are behavior- and compile-tested without one.
+Each crate that carries a line-coverage floor states it in its own `cov-*`
+recipe and nowhere else, beside the reason it sits where it does; `just cov-all`
+gathers them and prints each measurement against its floor. A floor is set from
+a measurement, never from a target. The thin Actix/axum adapters carry none;
+they are behavior- and compile-tested instead.
 
 ## Commits
 

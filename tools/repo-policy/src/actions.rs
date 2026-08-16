@@ -434,18 +434,25 @@ pub fn action_outputs() -> Vec<ActionOutput> {
 /// dereferenced: `.rust.primary` and `.cargo_tools['cargo-nextest'].version` are the same
 /// kind of claim about the same document.
 pub fn manifest_paths(expression: &str) -> Vec<Vec<String>> {
-    // The call's own closing parenthesis, past whatever spacing the author left before it. An
-    // anchor that demanded one spelling would read a differently spaced call as no read at
-    // all, and a path never parsed is a path never checked.
+    // A read is the whole call, not the name of its argument: `steps.pins.outputs.manifest`
+    // republished by a job reads nothing out of the document. The argument is taken up to the
+    // call's own closing parenthesis, past whatever spacing the author left, so a differently
+    // spaced call is still a read -- and a path never parsed is a path never checked.
+    //
+    // A newline ends the argument. Scanning whole-file text, an `outputs.manifest` ending one
+    // line would otherwise reach the `)` opening the next and read that expression's path.
+    const CALL: &str = "fromJSON(";
     const ANCHOR: &str = "outputs.manifest";
     let mut paths = Vec::new();
     let mut rest = expression;
-    while let Some(start) = rest.find(ANCHOR) {
-        rest = rest[start + ANCHOR.len()..].trim_start();
-        let Some(after) = rest.strip_prefix(')') else {
+    while let Some(start) = rest.find(CALL) {
+        rest = &rest[start + CALL.len()..];
+        let Some(end) = rest.find(')') else { break };
+        let (argument, after) = rest.split_at(end);
+        if argument.contains('\n') || !argument.trim_end_matches([' ', '\t']).ends_with(ANCHOR) {
             continue;
-        };
-        rest = after;
+        }
+        rest = &after[1..];
         let mut segments = Vec::new();
         loop {
             match rest.chars().next() {
