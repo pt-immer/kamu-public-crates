@@ -102,6 +102,9 @@ SHARED_PREFIXES = (
     ".github/actions/",
     ".github/workflows/",
     "scripts/",
+    # `tools/` holds the repository-policy crate, whose tests read every workflow, manifest and
+    # toolchain file on both sides of the exclusion boundary. A change there can only be proven
+    # by the classes it polices, so it selects all of them.
     "tools/",
 )
 

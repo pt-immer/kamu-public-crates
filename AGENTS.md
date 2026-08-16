@@ -15,6 +15,7 @@ single automation guide. Human-facing orientation belongs in
 | `crates/money-core` | Exact ISO 4217 money, rates, allocation, wire, and driver adapters | Root workspace |
 | `crates/snap-*` | Two SNAP BI domain crates plus four Actix/axum adapters | Root workspace |
 | `extensions/money-pg` | `kmoney` pgrx extension and YugabyteDB harness | Excluded nested workspace |
+| `tools/repo-policy` | Decoders for the repository's own artifacts, and the checks that read them | Root workspace, `publish = false` |
 
 The root workspace contains exactly nine publishable crates. Versions and
 releases are per crate; each crate's `Cargo.toml` and `CHANGELOG.md` are
@@ -31,17 +32,22 @@ Repository-wide policy remains at the root. In particular, `lint-shell` and
 
 ## Hard invariants
 
-- The public workspace uses Edition 2024. `.config/dev-tools.json` owns both
-  Rust versions: `rust.msrv` is the floor the root manifest declares and CI
-  tests exactly, and `rust.primary` is the toolchain that pins compile-fail
-  goldens. `test_dev_environment.py` binds every literal that names a Rust
-  version in the two manifests, the CI toolchain matrix, `clippy.toml`, the
-  `Justfile` and `README.md` — a literal that is neither version fails. Toolchain
+- The public workspace uses Edition 2024. `.config/dev-tools.json` is the one file
+  CI reads its versions from, and states three: `rust.msrv` is the floor the
+  published manifests declare and CI tests exactly, `rust.primary` is the
+  toolchain that pins compile-fail goldens, and `rust.lane` is the excluded
+  extension lane's channel. Each is a view of a file some tool honours and the
+  manifest cannot — `rust-toolchain.toml` for the two channels, `Cargo.toml` for
+  the floor — and `tools/repo-policy` holds them equal. Workflows reference the
+  manifest through `.github/actions/read-dev-tools`; a version literal anywhere
+  Actions executes fails, whichever spelling of the file extension it is written
+  in. `test_dev_environment.py` still binds the literals in `clippy.toml`, the
+  `Justfile` and `README.md`. Toolchain
   literals matter more than the floor they restate: `rustup run <version>`
   addresses a toolchain by name, so one that outlives a bump either resolves to
   a stale install or does not resolve at all. The extension lane pins its own
   toolchain because pgrx 0.19.2 requires it, and binds it in its hygiene crate.
-  Its CI jobs install that toolchain rather than `rust.primary`, and
+  Its CI jobs install `rust.lane` rather than `rust.primary`, and
   `test_workflows.py` tells the two apart by whether a job invokes a root recipe
   that cds into the lane, a set it derives from the `Justfile` rather than lists
   — `just pg` is not the only way in, and `gate-all` composes `gate-pg`.

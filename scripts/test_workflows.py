@@ -191,7 +191,7 @@ class WorkflowPolicyTests(unittest.TestCase):
             ROOT / ".github" / "actions" / "read-dev-tools" / "action.yml"
         ).read_text(encoding="utf-8")
         outputs = action.split("\noutputs:\n", 1)[1].split("\nruns:", 1)[0]
-        pins = set(re.findall(r"(?m)^  ([a-z0-9_]+):$", outputs)) - {"manifest"}
+        pins = set(re.findall(r"(?m)^  ([a-z0-9_]+):$", outputs))
         self.assertTrue(pins, "the pins action declares no named output")
 
         self.assertEqual(set(DERIVED_CLASSES) | pins, declared)

@@ -178,6 +178,10 @@ def setup_commands(manifest: dict[str, Any]) -> list[list[str]]:
     for version, component_key in (
         (rust["primary"], "primary_components"),
         (rust["msrv"], "msrv_components"),
+        # The excluded lane pins its own channel. Until it differed from `primary` this was
+        # installed by coincidence, and a fresh clone reached a green doctor with the lane
+        # toolchain absent.
+        (rust["lane"], "lane_components"),
     ):
         command = [
             "rustup",
@@ -598,6 +602,12 @@ def doctor(manifest: dict[str, Any]) -> int:
         "MSRV compiler",
         rust["msrv"],
         rust["msrv_components"],
+    )
+    check_toolchain(
+        checks,
+        "extension lane compiler",
+        rust["lane"],
+        rust["lane_components"],
     )
     check_targets(checks, rust["primary"], rust["primary_targets"])
 

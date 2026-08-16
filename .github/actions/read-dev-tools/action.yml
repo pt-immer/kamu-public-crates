@@ -4,9 +4,6 @@ description: >-
   restating them. Requires the repository to be checked out.
 
 outputs:
-  manifest:
-    description: The manifest verbatim, for pins that have no named output here yet.
-    value: ${{ steps.read.outputs.manifest }}
   rust_primary:
     description: The toolchain CI installs, which also pins the compile-fail goldens.
     value: ${{ fromJSON(steps.read.outputs.manifest).rust.primary }}

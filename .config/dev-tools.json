@@ -11,6 +11,10 @@
     "msrv_components": [
       "rust-src"
     ],
+    "lane_components": [
+      "clippy",
+      "rustfmt"
+    ],
     "primary_targets": [
       "thumbv7em-none-eabi",
       "wasm32-unknown-unknown"
