@@ -720,8 +720,9 @@ jobs:
       #
       # Whether a size cap also forbids it is UNKNOWN. The arithmetic once written here assumed a
       # 10 GB repository cache and concluded that five targets could not fit; active caches now
-      # exceed 10 GB, so the premise is gone and the conclusion does not follow from it. Re-derive
-      # from the repository's current limit and `actions/cache/usage` before citing a size reason.
+      # exceed 10 GB, so the premise is gone and the conclusion does not follow from it. The cap
+      # is the missing half: `actions/cache/usage` reports consumption only, and the limit comes
+      # from the organization's cache usage policy or this repository's Actions settings.
       # What stays true either way: a target cached and then evicted is worse than one never
       # cached, because each run pays to download a stale near-miss and rebuilds the layer anyway.
       #

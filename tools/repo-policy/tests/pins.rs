@@ -6,8 +6,9 @@ use std::sync::OnceLock;
 use regex_lite::Regex;
 
 use repo_policy::actions::{
-    ActionOutput, INSTALL_ACTION, action_outputs, install_action_steps, job_outputs, manifest_paths,
-    needs_output_references, sources as actions_sources, step_uses, tool_requests,
+    ActionOutput, INSTALL_ACTION, MANIFEST_OUTPUT, action_outputs, code_of, install_action_steps,
+    job_outputs, manifest_paths, needs_output_references, sources as actions_sources, step_scopes, step_uses,
+    tool_requests,
 };
 use repo_policy::dev_tools::{DevTools, TOOL_SECTION_SUFFIX};
 use repo_policy::{read, repo_root, tracked};
@@ -433,33 +434,6 @@ fn no_actions_source_states_a_version_literal() {
     assert!(scanned > 0, "no Actions source was scanned; this would pass vacuously");
 }
 
-/// The code half of a line, with any trailing comment removed.
-fn code_of(line: &str) -> &str {
-    // A `#` opens a comment where a value is not already open: at the start of the line, or
-    // after whitespace outside quotes. A line that ends inside a quote never opened one --
-    // that was an apostrophe in plain text -- and is read again with quoting ignored.
-    let scan = |respect_quotes: bool| {
-        let mut quote = None;
-        let mut start = None;
-        for (index, character) in line.char_indices() {
-            if let Some(open) = quote {
-                if character == open {
-                    quote = None;
-                }
-            } else if respect_quotes && (character == '\'' || character == '"') {
-                quote = Some(character);
-            } else if character == '#' && (index == 0 || line[..index].ends_with(char::is_whitespace)) {
-                start = Some(index);
-                break;
-            }
-        }
-        (quote.is_none(), start)
-    };
-    let (balanced, start) = scan(true);
-    let start = if balanced { start } else { scan(false).1 };
-    start.map_or(line, |index| &line[..index])
-}
-
 /// The first version literal in a line, if any.
 ///
 /// Exactly three components, which is what every version this repository pins is, and what a
@@ -489,29 +463,99 @@ fn every_manifest_path_a_workflow_reads_exists() {
     for source in actions_sources() {
         // Per line and past the comment, as the literal scan reads them. Whole-file text would
         // check a path written in a comment as though Actions resolved it.
-        for path in source.text.lines().flat_map(|line| manifest_paths(code_of(line))) {
-            let mut value = &document;
-            for segment in &path {
-                value = value.get(segment).unwrap_or_else(|| {
-                    panic!(
-                        "{} indexes {}, and {} states no {segment} there",
-                        source.path,
-                        path.join("."),
-                        DevTools::PATH,
-                    )
-                });
-            }
-            assert!(
-                value.is_string(),
-                "{} indexes {}, which is not a version in {}",
+        for (number, line) in source.text.lines().enumerate() {
+            let code = code_of(line);
+            let paths = manifest_paths(code);
+            // Every call accounted for. A read the parser cannot read yields no path, and a check
+            // that only counts what it parsed cannot tell that from a line with no read on it.
+            assert_eq!(
+                paths.len(),
+                code.matches("fromJSON(").count(),
+                "{}:{} writes a manifest read this cannot parse; it would be checked by nothing",
                 source.path,
-                path.join("."),
-                DevTools::PATH,
+                number + 1,
             );
-            read += 1;
+            for path in paths {
+                let mut value = &document;
+                for segment in &path {
+                    value = value.get(segment).unwrap_or_else(|| {
+                        panic!(
+                            "{} indexes {}, and {} states no {segment} there",
+                            source.path,
+                            path.join("."),
+                            DevTools::PATH,
+                        )
+                    });
+                }
+                assert!(
+                    value.is_string(),
+                    "{} indexes {}, which is not a version in {}",
+                    source.path,
+                    path.join("."),
+                    DevTools::PATH,
+                );
+                read += 1;
+            }
         }
     }
     assert!(read > 0, "no manifest path was read; this would pass vacuously");
+}
+
+/// A job reading `needs.<job>.outputs.manifest` names a job that publishes it.
+///
+/// Depending on a job is not the same as that job answering: the branch bound a step output to
+/// the step that writes it, and an action output to its own step, and left the rung between
+/// them open. A read of an output no job declares is the empty string, and every pin indexed
+/// out of it is gone while the gate stays green.
+#[test]
+fn every_manifest_a_job_reads_is_published_by_the_job_it_names() {
+    let published: BTreeSet<(&str, String)> = job_outputs()
+        .into_iter()
+        .filter(|(_, _, name, _)| name == MANIFEST_OUTPUT)
+        .map(|(source, job, _, _)| (source, job))
+        .collect();
+    assert!(!published.is_empty(), "no job publishes the manifest; this would pass vacuously");
+
+    let mut checked = 0_usize;
+    for scope in step_scopes() {
+        for expression in &scope.expressions {
+            for (job, name) in needs_output_references(expression) {
+                if name != MANIFEST_OUTPUT {
+                    continue;
+                }
+                assert!(
+                    published.contains(&(scope.source, job.clone())),
+                    "{} job {} reads needs.{job}.outputs.{name}, and {job} publishes no {name}",
+                    scope.source,
+                    scope.name,
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 0, "no job read the manifest; this would pass vacuously");
+}
+
+/// The name the manifest is published under is spelled by every reader of an expression, and
+/// only one of them can import it. Renaming the action's output leaves the readers that cannot
+/// recognising no reads and reporting nothing.
+#[test]
+fn every_reader_of_a_manifest_expression_spells_the_same_output_name() {
+    let expected = format!("outputs.{MANIFEST_OUTPUT}");
+    for relative in [
+        ".github/actions/read-dev-tools/action.yml",
+        ".github/workflows/on-pr-synced.yml",
+        "scripts/test_workflows.py",
+        "extensions/money-pg/hygiene/tests/pins.rs",
+    ] {
+        // Compared with escapes dropped: one of these readers spells the name inside a regex,
+        // where the separator is written `\.`.
+        let text = read(relative).replace('\\', "");
+        assert!(
+            text.contains(&expected),
+            "{relative} reads the manifest under some other name than {expected}",
+        );
+    }
 }
 
 /// What identifies a tool section is stated in both languages that read the manifest. Two
@@ -608,18 +652,27 @@ fn every_action_output_is_written_by_the_step_it_names() {
             .and_then(|(_, tail)| tail.split_once(".outputs."))
             .map(|(id, tail)| (id, tail.trim_end_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_')))
             .unwrap_or_else(|| panic!("{source} publishes {name} as {value}, which reads no step output"));
-        let body = steps
+        let (_, body) = steps
             .iter()
             .find(|(step, _)| step == id)
-            .map(|(_, body)| body.as_str())
             .unwrap_or_else(|| panic!("{source} publishes {name} from step {id}, which it has no"));
+        let body = body.as_deref().unwrap_or_else(|| {
+            panic!(
+                "{source} publishes {name} from step {id}, which runs an action rather than a \
+                 script; what that step writes is beyond this check"
+            )
+        });
         // A step writes an output by naming it to $GITHUB_OUTPUT, as an assignment or as the
-        // opening of a heredoc. A line that merely begins `<key>=` is a shell variable of that
-        // name, which is what the step already sets up its delimiter with.
+        // opening of a heredoc. A line merely beginning `<key>=` is a shell variable of that
+        // name, which is what this step sets its own delimiter up with. A naming line that
+        // redirects somewhere else writes that file instead, whatever the rest of the body
+        // mentions; one that redirects nowhere is inside a group, and the group's own redirect
+        // is what the body has to carry.
         let writes = body.contains("GITHUB_OUTPUT")
             && body.lines().map(str::trim).any(|line| {
-                !line.starts_with(&format!("{key}="))
-                    && (line.contains(&format!("{key}<<")) || line.contains(&format!("{key}=")))
+                let names = !line.starts_with(&format!("{key}="))
+                    && (line.contains(&format!("{key}<<")) || line.contains(&format!("{key}=")));
+                names && (!line.contains('>') || line.contains("GITHUB_OUTPUT"))
             });
         assert!(writes, "{source} publishes {name} from {id}.outputs.{key}, which that step never writes",);
         checked += 1;

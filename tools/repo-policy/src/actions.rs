@@ -32,6 +32,39 @@ use crate::{read, tracked};
 /// version at all.
 pub const INSTALL_ACTION: &str = "taiki-e/install-action";
 
+/// The name the pinned-version manifest is published and republished under. Every reader of a
+/// manifest expression has to spell it, so it is stated here and held equal in the readers that
+/// cannot import it.
+pub const MANIFEST_OUTPUT: &str = "manifest";
+
+/// The code half of a line, with any trailing comment removed.
+///
+/// A `#` opens a comment where a value is not already open: at the start of the line, or after
+/// whitespace outside quotes. A line that ends inside a quote never opened one -- that was an
+/// apostrophe in plain text -- and is read again with quoting ignored.
+pub fn code_of(line: &str) -> &str {
+    let scan = |respect_quotes: bool| {
+        let mut quote = None;
+        let mut start = None;
+        for (index, character) in line.char_indices() {
+            if let Some(open) = quote {
+                if character == open {
+                    quote = None;
+                }
+            } else if respect_quotes && (character == '\'' || character == '"') {
+                quote = Some(character);
+            } else if character == '#' && (index == 0 || line[..index].ends_with(char::is_whitespace)) {
+                start = Some(index);
+                break;
+            }
+        }
+        (quote.is_none(), start)
+    };
+    let (balanced, start) = scan(true);
+    let start = if balanced { start } else { scan(false).1 };
+    start.map_or(line, |index| &line[..index])
+}
+
 /// A file GitHub Actions executes, parsed as what it is.
 #[derive(Debug)]
 pub enum Executable {
@@ -267,19 +300,17 @@ pub fn remote_uses() -> Vec<Use> {
             let Uses::Repository(repository) = parsed else {
                 continue;
             };
-            // The label is a comment, so it is read from the line rather than the document.
-            let label = source
-                .text
-                .lines()
-                .find(|line| line.contains(clause))
-                .and_then(|line| line.split_once('#'))
-                .map(|(_, label)| label.trim().to_owned());
-            uses.push(Use {
-                source: source.path.clone(),
-                action: repository.slug().to_owned(),
-                pinned_to: repository.git_ref().to_owned(),
-                label,
-            });
+            // The label is a comment, so it is read from the line rather than the document --
+            // and from EVERY line the clause is written on. Taking the first would leave one
+            // label read and the rest bound by nothing, which is most of them.
+            for line in source.text.lines().filter(|line| code_of(line).contains(clause)) {
+                uses.push(Use {
+                    source: source.path.clone(),
+                    action: repository.slug().to_owned(),
+                    pinned_to: repository.git_ref().to_owned(),
+                    label: line.split_once('#').map(|(_, label)| label.trim().to_owned()),
+                });
+            }
         }
     }
     uses
@@ -386,9 +417,10 @@ pub struct ActionOutput {
     pub name: String,
     /// The expression it resolves to.
     pub value: String,
-    /// Every `(id, run body)` this action's steps declare. An output is only as good as the
-    /// step it names, and only this action's steps are in scope for it.
-    pub steps: Vec<(String, String)>,
+    /// Every step this action declares an id for, with its `run` body where it has one. A step
+    /// that runs another action has none, and an output read from it is beyond what this
+    /// models -- which is a different answer from a step that is not there at all.
+    pub steps: Vec<(String, Option<String>)>,
 }
 
 /// Every output a composite action publishes.
@@ -404,12 +436,12 @@ pub fn action_outputs() -> Vec<ActionOutput> {
         let Some(entries) = child(&source.tree, "outputs").and_then(Value::as_mapping) else {
             continue;
         };
-        let steps: Vec<(String, String)> = steps_of(runs)
+        let steps: Vec<(String, Option<String>)> = steps_of(runs)
             .into_iter()
             .filter_map(|step| {
                 let id = child(step, "id").and_then(Value::as_str)?;
-                let body = child(step, "run").and_then(Value::as_str)?;
-                Some((id.to_owned(), body.to_owned()))
+                let body = child(step, "run").and_then(Value::as_str).map(str::to_owned);
+                Some((id.to_owned(), body))
             })
             .collect();
         for (name, entry) in entries {
@@ -428,6 +460,34 @@ pub fn action_outputs() -> Vec<ActionOutput> {
     outputs
 }
 
+/// What a `fromJSON` call is reading the manifest out of.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ManifestSource {
+    /// `needs.<job>.outputs.manifest`, naming the job that republished it.
+    Job(String),
+    /// `steps.<id>.outputs.manifest`, naming the step that read it.
+    Step(String),
+}
+
+/// The context a manifest argument names, or `None` when it names none.
+///
+/// Only two contexts can carry the manifest. Accepting the rest -- or accepting any expression
+/// that merely ends in `outputs.manifest`, which `env.pins_outputs.manifest` does -- treats a
+/// context nothing sets as a read, and every pin indexed out of it is the empty string.
+pub fn manifest_source(argument: &str) -> Option<ManifestSource> {
+    let suffix = format!(".outputs.{MANIFEST_OUTPUT}");
+    let named = |rest: &str| -> Option<String> {
+        let name = rest.strip_suffix(&suffix)?;
+        let legal =
+            !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        legal.then(|| name.to_owned())
+    };
+    if let Some(rest) = argument.strip_prefix("needs.") {
+        return named(rest).map(ManifestSource::Job);
+    }
+    argument.strip_prefix("steps.").and_then(named).map(ManifestSource::Step)
+}
+
 /// Every path an expression indexes out of the published manifest, as its segments.
 ///
 /// Both spellings are read, because a key carrying a hyphen has to be indexed rather than
@@ -442,14 +502,13 @@ pub fn manifest_paths(expression: &str) -> Vec<Vec<String>> {
     // A newline ends the argument. Scanning whole-file text, an `outputs.manifest` ending one
     // line would otherwise reach the `)` opening the next and read that expression's path.
     const CALL: &str = "fromJSON(";
-    const ANCHOR: &str = "outputs.manifest";
     let mut paths = Vec::new();
     let mut rest = expression;
     while let Some(start) = rest.find(CALL) {
         rest = &rest[start + CALL.len()..];
         let Some(end) = rest.find(')') else { break };
         let (argument, after) = rest.split_at(end);
-        if argument.contains('\n') || !argument.trim_end_matches([' ', '\t']).ends_with(ANCHOR) {
+        if argument.contains('\n') || manifest_source(argument.trim_matches([' ', '\t'])).is_none() {
             continue;
         }
         rest = &after[1..];

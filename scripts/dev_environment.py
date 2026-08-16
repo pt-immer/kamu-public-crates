@@ -196,6 +196,14 @@ def tools(manifest: dict[str, Any], section: str) -> list[dict[str, Any]]:
             "binary": name,
             "version_args": DEFAULT_VERSION_ARGS,
         }
+        # Every field is optional, so a key this does not know is a default silently kept:
+        # `binry` leaves the binary named after the key, and doctor reports a tool missing
+        # that is installed.
+        unknown = set(entry) - set(merged) - {"version"}
+        if unknown:
+            raise SystemExit(
+                f"{MANIFEST_PATH}: {section}.{name} states {sorted(unknown)}, which nothing reads"
+            )
         merged.update(entry)
         # The entry's own list belongs to the loaded manifest; handing it out would let one
         # caller's edit reach every later reader of the same document.

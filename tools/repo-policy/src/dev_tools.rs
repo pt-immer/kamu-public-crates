@@ -56,9 +56,24 @@ impl<'de> Deserialize<'de> for DevTools {
 
 /// One pinned tool, keyed by the name it is requested and installed by. An entry names a crate,
 /// package, binary or version query only where one differs from that name or the default.
+///
+/// Unknown fields are refused. Every field an entry may state is optional, so a mistyped one is
+/// otherwise a default silently kept: `binry` leaves the binary named after the key, and doctor
+/// reports a tool missing that is installed.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Tool {
     pub version: String,
+    /// The rest are stated only where one differs from the key, and are modelled so that the
+    /// decoder can tell a spelling it does not know from one it does.
+    #[serde(default, rename = "crate")]
+    pub crate_name: Option<String>,
+    #[serde(default)]
+    pub package: Option<String>,
+    #[serde(default)]
+    pub binary: Option<String>,
+    #[serde(default)]
+    pub version_args: Option<Vec<String>>,
 }
 
 /// Three Rust versions, each a different fact. `primary` is the toolchain CI installs for the

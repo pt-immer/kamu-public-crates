@@ -88,6 +88,12 @@ fn every_anchor_is_followed_by(path: &Path, anchor: &str, expected: &str) {
     let contents = support::read(path);
     let mut found = 0_usize;
     for line in contents.lines() {
+        // A comment is prose about the pin, not a request for it. The public rule exempts one
+        // explicitly, and two readers of one file disagreeing about that is a failure `just
+        // gate` cannot reproduce.
+        if line.trim_start().starts_with('#') {
+            continue;
+        }
         for (index, _) in line.match_indices(anchor) {
             let tail = &line[index + anchor.len()..];
             // The expression the anchor introduces, not the rest of the line: a sibling
@@ -101,11 +107,16 @@ fn every_anchor_is_followed_by(path: &Path, anchor: &str, expected: &str) {
                     line.trim(),
                 )
             };
-            // Out of the published manifest, not out of any context that happens to spell the
-            // path: `env.ci_only_tools[...]` and `vars.ci_only_tools[...]` both carry it and
-            // both resolve to the empty string.
+            // Out of the published manifest, which only two contexts carry. Asking merely for
+            // `outputs.manifest` somewhere in the expression accepts `env.pins_outputs.manifest`
+            // -- a context nothing sets, whose every pin is the empty string.
+            let reads_manifest = expression.split("fromJSON(").skip(1).any(|call| {
+                let argument = call.split(')').next().unwrap_or(call).trim();
+                (argument.starts_with("needs.") || argument.starts_with("steps."))
+                    && argument.ends_with(".outputs.manifest")
+            });
             assert!(
-                expression.contains("fromJSON(") && expression.contains("outputs.manifest"),
+                reads_manifest,
                 "{}: `{}` must read `{expected}` out of the published manifest after `{anchor}`",
                 path.display(),
                 line.trim(),

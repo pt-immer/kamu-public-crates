@@ -57,12 +57,14 @@ Repository-wide policy lives at the root. In particular, `lint-shell` and
   republish being added to carry it, and every path a workflow indexes is checked
   to exist — an unresolvable one is not an error in Actions, it is the empty
   string, and a job handed one installs whatever the runner already had. No file
-  Actions executes states a dotted version literal — two separators or more —
-  outside a comment, in either YAML spelling and on any line: not a toolchain
-  selection, not a `tool:` request, not a cache key, not a `run:` line. A version
-  written with fewer separators reads the same as any other number, so that scan
-  does not claim it; a PostgreSQL major or an image series is bound by whatever
-  else names it, or by nothing.
+  Actions executes states a three-component version literal outside a comment, in
+  either YAML spelling and on any line: not a toolchain selection, not a `tool:`
+  request, not a cache key, not a `run:` line. Three is what every version this
+  repository pins has, and what a dotted address is not. A version written with
+  any other number of components — a PostgreSQL major, an image series, the
+  four-component YugabyteDB image tag — reads the same as an ordinary number or
+  an address, so that scan does not claim it, and each is bound by whatever else
+  names it or by nothing.
   `test_dev_environment.py` binds the literals in `clippy.toml`, the
   `Justfile` and `README.md`. Toolchain literals matter more than the floor they
   restate: `rustup run <version>` addresses a toolchain by name, so one that
@@ -204,9 +206,11 @@ CI sets it for the YugabyteDB job only, because the PostgreSQL jobs run in
 parallel: an uncached major sets their pace whether or not its siblings are
 cached, while the YugabyteDB job is both the longest and alone. Whether a size
 cap also binds this choice is UNKNOWN — the arithmetic once recorded here
-assumed a 10 GB repository cache, and active caches exceed that. Re-derive it
-from `gh api repos/<owner>/<repo>/actions/cache/usage` and the repository's
-current limit before relying on it. A target that is cached and then evicted is
+assumed a 10 GB repository cache, and active caches exceed that. The cap is the
+half that is missing: `actions/cache/usage` reports consumption only, and the
+limit comes from the organization's cache usage policy or the repository's
+Actions settings. Re-derive both before relying on a size reason. A target that
+is cached and then evicted is
 worse than one never cached: each run pays to download a stale near-miss and
 rebuilds the layer anyway. The PostgreSQL images build their dependencies in a
 layer; only the export is dropped. Exporting needs the docker-container buildx
