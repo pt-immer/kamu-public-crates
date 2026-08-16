@@ -1,6 +1,15 @@
 //! The lane pins two toolchains, and each is ONE fact spelled in many places: pgrx across
-//! manifests, Dockerfiles, the tool manifest and CI, and Rust across `rust-toolchain.toml`
-//! and three container images.
+//! manifests, Dockerfiles, the tool manifest and CI, and Rust across `rust-toolchain.toml`,
+//! three container images, and the toolchain step of every CI job that enters the lane. That
+//! last one is bound in `scripts/test_workflows.py` rather than here, because which jobs those
+//! are is workflow policy; the version it compares against is read from the same
+//! `rust-toolchain.toml` this file derives from.
+//!
+//! The lane's MSRV is a THIRD fact, spelled in `clippy.toml` and the lane manifest, and it is
+//! not the pinned toolchain. An MSRV is the oldest compiler the lane supports; the channel is
+//! the one it is built with. Deriving either from the other would re-declare a floor nobody
+//! verified, and would leave `clippy::incompatible_msrv` comparing the compiler against itself,
+//! unable to report anything. What ties them is an inequality, checked below.
 //!
 //! The two disagree differently, which is why both are here.
 //!
@@ -193,6 +202,109 @@ fn every_container_starts_from_the_pinned_rust_toolchain() {
             &format!("--default-toolchain {channel}"),
         );
     }
+}
+
+/// A Rust version as numbers, so `1.100` orders above `1.96`.
+///
+/// The patch is carried, not truncated. Cargo enforces `rust-version` at patch
+/// precision, so `1.96.5` against a `1.96.0` channel is a lane where every
+/// command fails -- and a comparison on `major.minor` alone would call the two
+/// equal. An omitted patch is `0`, which is what `1.96` means, so `clippy.toml`
+/// may keep the shorter spelling.
+fn series(version: &str, source: &str) -> (u32, u32, u32) {
+    let mut parts = version.split('.');
+    let mut required = || {
+        parts
+            .next()
+            .and_then(|part| part.parse::<u32>().ok())
+            .unwrap_or_else(|| panic!("{source} must name a numeric Rust version, not `{version}`"))
+    };
+    let (major, minor) = (required(), required());
+    let patch = match parts.next() {
+        None => 0,
+        Some(part) => part
+            .parse::<u32>()
+            .unwrap_or_else(|_| panic!("{source} must name a numeric Rust version, not `{version}`")),
+    };
+    assert!(parts.next().is_none(), "{source} must not carry a fourth component: `{version}`");
+    (major, minor, patch)
+}
+
+/// The lane's MSRV, from the file Clippy prefers, and the file Cargo enforces.
+fn declared_msrv() -> ((u32, u32, u32), String) {
+    let clippy_path = support::lane_root().join("clippy.toml");
+    let clippy = support::manifest(&clippy_path)
+        .get("msrv")
+        .and_then(toml::Value::as_str)
+        .unwrap_or_else(|| panic!("{} must pin an msrv", clippy_path.display()))
+        .to_owned();
+
+    let manifest_path = support::lane_root().join("Cargo.toml");
+    let manifest = support::manifest(&manifest_path)
+        .get("workspace")
+        .and_then(|workspace| workspace.get("package"))
+        .and_then(|package| package.get("rust-version"))
+        .and_then(toml::Value::as_str)
+        .unwrap_or_else(|| panic!("{} must declare workspace.package.rust-version", manifest_path.display()))
+        .to_owned();
+
+    // Clippy prefers `clippy.toml` over `rust-version` and reports the disagreement as a session
+    // warning rather than a lint, so `-D warnings` does not promote it and nothing else here
+    // would fail on the drift.
+    assert_eq!(
+        series(&clippy, "clippy.toml"),
+        series(&manifest, "Cargo.toml"),
+        "the lane states one MSRV twice: clippy.toml says `{clippy}` and Cargo.toml says \
+         `{manifest}`"
+    );
+    (series(&clippy, "clippy.toml"), clippy)
+}
+
+#[test]
+fn the_lane_states_one_msrv_in_both_places() {
+    declared_msrv();
+}
+
+#[test]
+fn the_lane_repeats_the_repository_doc_idents_exactly() {
+    // A child `clippy.toml` REPLACES the parent rather than merging with it, which is why this
+    // list exists twice. Two copies of one list is not a design, it is a pending divergence: a
+    // word added at the root would leave the lane failing `doc_markdown` on prose the rest of
+    // the repository accepts.
+    let lane = support::lane_root().join("clippy.toml");
+    let repository = support::repository_root().join("clippy.toml");
+    let idents = |path: &Path| {
+        support::manifest(path)
+            .get("doc-valid-idents")
+            .and_then(toml::Value::as_array)
+            .unwrap_or_else(|| panic!("{} must set doc-valid-idents", path.display()))
+            .clone()
+    };
+    assert_eq!(
+        idents(&lane),
+        idents(&repository),
+        "{} and {} disagree; the child replaces the parent, so the lane keeps a full copy",
+        lane.display(),
+        repository.display()
+    );
+}
+
+#[test]
+fn the_lane_msrv_is_not_above_the_toolchain_that_builds_it() {
+    // An INEQUALITY, because the two are different facts. Equality would mechanically raise the
+    // declared floor on every toolchain bump -- re-stating a requirement nobody verified, and
+    // leaving `clippy::incompatible_msrv` comparing the compiler against itself. What is a
+    // defect is a floor ABOVE the compiler: Clippy would then apply lints for a Rust the lane
+    // cannot build with, and Cargo would refuse the toolchain rustup selects.
+    let (msrv, declared) = declared_msrv();
+    let channel = pinned_toolchain();
+    let built_with = series(&channel, "rust-toolchain.toml");
+
+    assert!(
+        msrv <= built_with,
+        "the lane claims to support Rust `{declared}` while rust-toolchain.toml pins `{channel}`, \
+         which cannot build it"
+    );
 }
 
 #[test]

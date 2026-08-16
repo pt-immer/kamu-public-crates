@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+import tomllib
 import unittest
 
 from scripts.ci_paths import DERIVED_CLASSES, classify_paths, tracked_paths
@@ -19,14 +20,92 @@ TOOL_MANIFEST = json.loads(
 )
 
 
-def workflow_jobs(source: str) -> dict[str, dict[str, object]]:
-    jobs = source.split("\njobs:\n", 1)[1]
-    starts = list(re.finditer(r"(?m)^  ([a-z0-9-]+):\n", jobs))
-    parsed: dict[str, dict[str, object]] = {}
-    for index, start in enumerate(starts):
-        end = starts[index + 1].start() if index + 1 < len(starts) else len(jobs)
-        body = jobs[start.end() : end]
+def lane_channel() -> str:
+    """The toolchain rustup selects inside the extension lane.
 
+    A separate fact from `rust.primary`, and read from a separate file, because
+    assuming them equal is what the test below exists to refuse.
+    """
+    path = ROOT / "extensions" / "money-pg" / "rust-toolchain.toml"
+    pinned = tomllib.loads(path.read_text(encoding="utf-8"))
+    return pinned["toolchain"]["channel"]
+
+
+def lane_entry_recipes() -> set[str]:
+    """Root recipes that run inside the extension lane, transitively.
+
+    `just pg` is not the only way in -- `gate-pg` cds there too and `gate-all`
+    composes it -- so a hand-written marker would be a claim about the Justfile
+    rather than a reading of it. Derived, so a new entry point is covered on the
+    day it is written.
+    """
+    text = (JUSTFILE).read_text(encoding="utf-8")
+    bodies: dict[str, str] = {}
+    dependencies: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in text.splitlines():
+        header = re.match(r"^([a-z0-9-]+)([^:=\n]*):(?!=)(.*)$", line)
+        if header:
+            current = header.group(1)
+            bodies[current] = ""
+            dependencies[current] = re.findall(r"[a-z0-9-]+", header.group(3))
+        elif current is not None and line[:1] in {" ", "\t"}:
+            bodies[current] += line + "\n"
+        elif line.strip():
+            current = None
+
+    entries = {name for name, body in bodies.items() if "cd extensions/money-pg" in body}
+    while True:
+        reached = {
+            name
+            for name, needs in dependencies.items()
+            if name not in entries and entries.intersection(needs)
+        }
+        if not reached:
+            break
+        entries |= reached
+    if not entries:
+        raise AssertionError("no root recipe enters the extension lane; re-point this derivation")
+    return entries
+
+
+def workflow_job_bodies(source: str) -> dict[str, str]:
+    """Job id to body text.
+
+    Separate from the `needs`/`if` parsing in `workflow_jobs`, which refuses
+    spellings this repository does not use, because all a caller needs here is
+    which job a step sits in.
+    """
+    split = source.split("\njobs:\n", 1)
+    if len(split) == 1:
+        raise AssertionError("workflow has no `jobs:` block to attribute steps to")
+    jobs = split[1]
+    starts = list(re.finditer(r"(?m)^  ([a-z0-9-]+):\n", jobs))
+    # A job id this pattern misses is not skipped, it is CONCATENATED onto the previous job's
+    # body, which would classify that job by another one's steps. The declaration pattern
+    # deliberately does NOT anchor at end of line: requiring `:$` would share the very blind
+    # spot it is here to close, and a trailing comment or space would evade both.
+    declared = re.findall(r"(?m)^  (\S+):", jobs)
+    unmatched = set(declared) - {start.group(1) for start in starts}
+    if unmatched:
+        raise AssertionError(f"job ids outside [a-z0-9-]+ cannot be attributed: {sorted(unmatched)}")
+    return {
+        start.group(1): jobs[
+            start.end() : (
+                starts[index + 1].start() if index + 1 < len(starts) else len(jobs)
+            )
+        ]
+        for index, start in enumerate(starts)
+    }
+
+
+def workflow_jobs(source: str) -> dict[str, dict[str, object]]:
+    # ONE splitter, so the refusal to attribute an unparsable job id protects the reachability
+    # tests too. A job folded into its predecessor takes its `needs` and `if` with it, and both
+    # `test_ci_success_reaches_every_leaf_job` and the cascade simulation would then be reasoning
+    # about a job list that is missing an entry.
+    parsed: dict[str, dict[str, object]] = {}
+    for name, body in workflow_job_bodies(source).items():
         needs: list[str] = []
         inline = re.search(r"(?m)^    needs: \[([^]]+)\]$", body)
         scalar = re.search(r"(?m)^    needs: ([a-z0-9-]+)$", body)
@@ -39,7 +118,7 @@ def workflow_jobs(source: str) -> dict[str, dict[str, object]]:
             needs = re.findall(r"(?m)^      - ([a-z0-9-]+)$", block.group(1))
         elif re.search(r"(?m)^    needs:", body):
             raise AssertionError(
-                f"unsupported needs syntax in job {start.group(1)}"
+                f"unsupported needs syntax in job {name}"
             )
 
         condition = re.search(r"(?m)^    if: (.+)$", body)
@@ -52,12 +131,12 @@ def workflow_jobs(source: str) -> dict[str, dict[str, object]]:
             )
             if selected is None:
                 raise AssertionError(
-                    f"unsupported condition in job {start.group(1)}: "
+                    f"unsupported condition in job {name}: "
                     f"{condition.group(1)}"
                 )
             output = selected.group(1)
 
-        parsed[start.group(1)] = {
+        parsed[name] = {
             "needs": needs,
             "output": output,
             "always": always,
@@ -125,29 +204,72 @@ class WorkflowPolicyTests(unittest.TestCase):
                         self.assertEqual(versions[name], version)
 
     def test_rust_toolchain_steps_select_an_explicit_toolchain(self) -> None:
-        primary = TOOL_MANIFEST["rust"]["primary"]
-        allowed = {
-            f"toolchain: {primary}",
-            "toolchain: ${{ matrix.toolchain }}",
-            "toolchain: nightly",
-        }
+        """Each job installs the toolchain its own work will use.
 
+        `rust-toolchain.toml` wins over whatever a job installed, so an
+        extension-lane job handed the public workspace's toolchain still
+        compiles with the lane's -- after rustup has downloaded it, inside every
+        job, on every run, without ever producing a wrong answer to notice it
+        by. The two versions agree today and are owned by different files, so
+        nothing but this test would report the run where they stop agreeing.
+
+        A job is a lane job when it invokes a root recipe that cds into the lane,
+        and that set is read out of the Justfile rather than written here.
+        """
+        primary = TOOL_MANIFEST["rust"]["primary"]
+        lane = lane_channel()
+        entries = lane_entry_recipes()
+        enters_lane = re.compile(
+            r"just (?:{})(?:\s|$)".format("|".join(re.escape(name) for name in sorted(entries)))
+        )
+
+        checked = {"extension lane": 0, "public workspace": 0}
         for workflow in sorted(WORKFLOWS.glob("*.yml")):
             text = workflow.read_text(encoding="utf-8")
-            steps = re.findall(
-                r"(?ms)^      - uses: dtolnay/rust-toolchain@[0-9a-f]{40}"
-                r".*?(?=^      - |\Z)",
-                text,
-            )
-            for step in steps:
-                selected = {
-                    line.strip()
-                    for line in step.splitlines()
-                    if line.strip().startswith("toolchain:")
-                }
-                with self.subTest(workflow=workflow.name, step=step):
-                    self.assertEqual(1, len(selected))
-                    self.assertTrue(selected <= allowed)
+            for job, body in workflow_job_bodies(text).items():
+                if enters_lane.search(body):
+                    expected, where = lane, "extension lane"
+                    # The lane builds with one toolchain. Miri is the exception it
+                    # actually has; a matrix is not, and would install the public
+                    # workspace's MSRV into a lane job.
+                    allowed = {f"toolchain: {expected}", "toolchain: nightly"}
+                else:
+                    expected, where = primary, "public workspace"
+                    allowed = {
+                        f"toolchain: {expected}",
+                        "toolchain: nightly",
+                        "toolchain: ${{ matrix.toolchain }}",
+                    }
+                steps = re.findall(
+                    r"(?ms)^      - uses: dtolnay/rust-toolchain@[0-9a-f]{40}"
+                    r".*?(?=^      - |\Z)",
+                    body,
+                )
+                for step in steps:
+                    selected = {
+                        line.strip()
+                        for line in step.splitlines()
+                        if line.strip().startswith("toolchain:")
+                    }
+                    # Only a step that names the PINNED value counts. `nightly` is allowed on
+                    # both sides, so counting it lets the lane tally be non-zero while
+                    # `lane_channel()` was never compared to anything.
+                    if selected == {f"toolchain: {expected}"}:
+                        checked[where] += 1
+                    with self.subTest(workflow=workflow.name, job=job):
+                        self.assertEqual(1, len(selected))
+                        self.assertTrue(
+                            selected <= allowed,
+                            f"{job} installs {selected} but works in the {where}, "
+                            f"which pins {expected}",
+                        )
+
+        # Per side, because the two values agree today: a single counter is kept
+        # non-zero by the ~30 public-workspace jobs while every lane job goes
+        # unchecked, which is the half this test was added for.
+        for where, count in checked.items():
+            with self.subTest(side=where):
+                self.assertTrue(count, f"no {where} toolchain step checked; this would pass vacuously")
 
     def test_workflow_steps_do_not_repeat_mapping_keys(self) -> None:
         for workflow in sorted(WORKFLOWS.glob("*.yml")):

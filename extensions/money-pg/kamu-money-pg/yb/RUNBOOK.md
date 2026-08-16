@@ -10,14 +10,15 @@ adapter described in [Fallback](#fallback-to-canonical-text).
 
 ## Standing support condition
 
-The supported native combination is defined by four pins:
+The supported native combination is defined by five pins:
 
 | Pin | Source of truth |
 | --- | --- |
 | YugabyteDB image | [`YB-PINNED.txt`](YB-PINNED.txt), tag plus registry digest |
 | pgrx fork | lane-root `Cargo.toml` `[patch.crates-io]` |
 | pgrx version | `kamu-money-pg/Cargo.toml` and Docker build arguments |
-| Rust version | lane-root `rust-toolchain.toml` and `workspace.package.rust-version` |
+| Rust toolchain | lane-root `rust-toolchain.toml`, the three container images, and the toolchain step of every CI job that enters the lane |
+| Rust MSRV | `clippy.toml` and `workspace.package.rust-version`, equal to each other and at or below the toolchain |
 
 The fork is
 [`pt-immer/pgrx-yugabytedb`](https://github.com/pt-immer/pgrx-yugabytedb),

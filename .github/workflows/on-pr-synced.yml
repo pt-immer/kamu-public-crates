@@ -675,7 +675,9 @@ jobs:
           key: pgrx-0.19.2-pg18-${{ runner.os }}
       - name: Initialise PGRX_HOME against the installed server
         run: just pg pgrx-init /usr/lib/postgresql/18/bin/pg_config
-      - run: just pg doc-pg
+      # This runs `doc-pg` itself, both against a probed tree and against a clean one, so a
+      # separate `doc-pg` step here would be a second full rustdoc pass proving nothing more.
+      - run: just pg doc-gate-selftest
 
   test-money-pg-matrix:
     name: test (kamu-money-pg PG${{ matrix.pg }})

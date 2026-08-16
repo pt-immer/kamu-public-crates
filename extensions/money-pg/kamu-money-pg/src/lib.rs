@@ -212,11 +212,12 @@ macro_rules! pinned_money_type {
         // SQL type already guarantees both operands are this currency, so these
         // read units and nothing else.
         //
-        // Note what is absent. `kmoney` calls `same_currency` in every ordering
-        // operator and REFUSES a cross-currency comparison at run time. A pinned
-        // type has no such call to make and no such refusal to raise: ordering
-        // here is TOTAL, because the question it would have refused cannot be
-        // asked. Equality is likewise total, and for the same reason.
+        // Note what is absent. There is no currency check to make and no
+        // cross-currency comparison to refuse: ordering here is TOTAL, because
+        // the SQL type fixes the currency, so the question a check would answer
+        // cannot be asked. Equality is likewise total, and for the same reason.
+        // `kmoney_mixed`, which does carry a currency in the value, registers
+        // equality alone and no ordering at all.
         //
         // Deliberately NO btree or hash operator class. These are sequential-scan
         // predicates only. The absent default-opclass ordering is the one surface
@@ -809,9 +810,10 @@ mod tests {
 
     /// Ordering is TOTAL within a pinned type.
     ///
-    /// `kmoney` calls `same_currency` in every ordering operator and refuses a
-    /// cross-currency comparison at run time. Here the operator has nothing to
-    /// check, because the question it would refuse cannot be asked.
+    /// The SQL type fixes the currency, so the operator has nothing to check
+    /// and nothing to refuse: the question a currency check would answer cannot
+    /// be asked. `kmoney_mixed` registers no ordering at all, for the converse
+    /// reason — it carries a currency the comparison would have to reconcile.
     #[pg_test]
     fn pinned_ordering_needs_no_currency_check() {
         let ordered = Spi::get_one::<bool>("SELECT '1.00'::kmoney_usd < '2.00'::kmoney_usd")

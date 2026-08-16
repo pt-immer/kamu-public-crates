@@ -57,7 +57,8 @@ CREATE TYPE kmoney_mixed (
 
 // Equality is total and currency-aware. No operator class is registered, so
 // these operators are predicates only: no value index, grouping, uniqueness,
-// or ordering. Convert through `kmoney_from_mixed` before arithmetic or order.
+// or ordering. Cast through text to a per-currency type before arithmetic or
+// ordering; that type's input function refuses a tag it does not carry.
 
 #[pg_operator(immutable, parallel_safe, requires = ["kmoney_mixed_concrete"])]
 #[opname(=)]
@@ -81,8 +82,9 @@ fn kmoney_mixed_ne(a: kmoney_mixed, b: kmoney_mixed) -> bool {
 
 /// Return the stable payload hash folded to `int4`.
 ///
-/// The mixed type has no hash operator class. This function pins parity with
-/// [`kmoney_hash`] for byte-identical payloads.
+/// The mixed type has no hash operator class. A per-currency type hashes the
+/// same logical amount to the same value even though the payloads differ in
+/// width, because both feed `stable_hash` the currency and the units.
 #[pg_extern(immutable, parallel_safe, requires = ["kmoney_mixed_concrete"])]
 fn kmoney_mixed_hash(value: kmoney_mixed) -> i32 {
     let amount = validated_or_error(value.payload(), "kmoney_mixed");
