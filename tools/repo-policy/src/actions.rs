@@ -24,8 +24,13 @@ use yaml_serde::Value;
 
 use crate::{read, tracked};
 
-/// The action every pinned tool is installed through.
-pub const INSTALL_ACTION: &str = "taiki-e/install-action@";
+/// The action every pinned tool is installed through, as its repository.
+///
+/// The reference is not part of it because the action answers to two spellings and both have
+/// to be recognised: `taiki-e/install-action@<ref>`, which takes a `tool:` list, and
+/// `taiki-e/install-action/<tool>@<ref>`, which names one tool in its own path and states no
+/// version at all.
+pub const INSTALL_ACTION: &str = "taiki-e/install-action";
 
 /// A file GitHub Actions executes, parsed as what it is.
 #[derive(Debug)]
@@ -322,49 +327,57 @@ pub fn step_uses() -> Vec<(&'static str, String, String, String)> {
     used
 }
 
-/// Every tool an install-action step requests, as `(source, scope, specification)`.
+/// Every step that uses the tool installer, as `(source, scope, uses clause, tool list)`.
 ///
-/// Read from the parsed step rather than from the line: the tool list is accepted as a plain
-/// scalar, as a block scalar spanning lines, and inside a flow mapping, and only the document
-/// knows which of those a step wrote. The scope is the job, so a failure among many requests
-/// in one file says which job to open.
-pub fn tool_requests() -> Vec<(&'static str, String, String)> {
-    let mut requests = Vec::new();
+/// The list is read from the parsed step rather than from the line, because it is accepted as
+/// a plain scalar, as a block scalar spanning lines, and inside a flow mapping, and only the
+/// document knows which of those a step wrote. It is `None` where the step states no `tool:`
+/// input, which is the whole of what the sub-action spelling can say.
+///
+/// The scope is the job, so a failure among many steps in one file says which job to open.
+pub fn install_action_steps() -> Vec<(&'static str, String, String, Option<String>)> {
+    let mut steps = Vec::new();
     for source in sources() {
-        let mut scopes: Vec<(String, &Value)> = Vec::new();
-        if let Some(jobs) = child(&source.tree, "jobs").and_then(Value::as_mapping) {
-            for (name, job) in jobs {
-                if let Some(name) = name.as_str() {
-                    scopes.push((name.to_owned(), job));
-                }
-            }
-        }
-        if let Some(runs) = child(&source.tree, "runs") {
-            scopes.push((source.path.clone(), runs));
-        }
-        for (scope, body) in scopes {
+        for (scope, body) in scopes_of(source) {
             for step in steps_of(body) {
-                // The input is only a tool list on the action that installs tools; another
-                // action taking an input of the same name owes this nothing.
-                let installs = child(step, "uses")
-                    .and_then(Value::as_str)
-                    .is_some_and(|clause| clause.starts_with(INSTALL_ACTION));
-                let Some(requested) = child(step, "with").and_then(|with| child(with, "tool")) else {
+                let Some(clause) = child(step, "uses").and_then(Value::as_str) else {
                     continue;
                 };
-                if !installs {
+                let action = clause.split_once('@').map_or(clause, |(action, _)| action);
+                // The input is only a tool list on the action that installs tools; another
+                // action taking an input of the same name owes this nothing.
+                if !action
+                    .strip_prefix(INSTALL_ACTION)
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+                {
                     continue;
                 }
-                let requested = requested.as_str().unwrap_or_else(|| {
-                    panic!("{} job {scope} writes a tool list that is not text", source.path)
+                let requested = child(step, "with").and_then(|with| child(with, "tool")).map(|tool| {
+                    tool.as_str()
+                        .unwrap_or_else(|| {
+                            panic!("{} job {scope} writes a tool list that is not text", source.path)
+                        })
+                        .to_owned()
                 });
-                // Both separators, because the block form writes one tool per line.
-                for specification in requested.split([',', '\n']) {
-                    let specification = specification.trim();
-                    if !specification.is_empty() {
-                        requests.push((source.path.as_str(), scope.clone(), specification.to_owned()));
-                    }
-                }
+                steps.push((source.path.as_str(), scope.clone(), clause.to_owned(), requested));
+            }
+        }
+    }
+    steps
+}
+
+/// Every tool an install-action step requests, as `(source, scope, specification)`.
+pub fn tool_requests() -> Vec<(&'static str, String, String)> {
+    let mut requests = Vec::new();
+    for (source, scope, _, requested) in install_action_steps() {
+        let Some(requested) = requested else {
+            continue;
+        };
+        // Both separators, because the block form writes one tool per line.
+        for specification in requested.split([',', '\n']) {
+            let specification = specification.trim();
+            if !specification.is_empty() {
+                requests.push((source, scope.clone(), specification.to_owned()));
             }
         }
     }
@@ -377,11 +390,18 @@ pub fn tool_requests() -> Vec<(&'static str, String, String)> {
 /// dereferenced: `.rust.primary` and `.cargo_tools['cargo-nextest'].version` are the same
 /// kind of claim about the same document.
 pub fn manifest_paths(expression: &str) -> Vec<Vec<String>> {
-    const ANCHOR: &str = "outputs.manifest)";
+    // The call's own closing parenthesis, past whatever spacing the author left before it. An
+    // anchor that demanded one spelling would read a differently spaced call as no read at
+    // all, and a path never parsed is a path never checked.
+    const ANCHOR: &str = "outputs.manifest";
     let mut paths = Vec::new();
     let mut rest = expression;
     while let Some(start) = rest.find(ANCHOR) {
-        rest = &rest[start + ANCHOR.len()..];
+        rest = rest[start + ANCHOR.len()..].trim_start();
+        let Some(after) = rest.strip_prefix(')') else {
+            continue;
+        };
+        rest = after;
         let mut segments = Vec::new();
         loop {
             let mut characters = rest.chars();

@@ -90,11 +90,21 @@ fn every_anchor_is_followed_by(path: &Path, anchor: &str, expected: &str) {
     for line in contents.lines() {
         for (index, _) in line.match_indices(anchor) {
             let tail = &line[index + anchor.len()..];
-            // One request, not the rest of the line: a sibling entry must not answer for this.
-            let request = tail.split(',').next().unwrap_or(tail);
+            // The expression the anchor introduces, not the rest of the line: a sibling
+            // request must not answer for this one, and a literal must not stand in front of
+            // the pin it precedes.
+            let Some((expression, _)) =
+                tail.strip_prefix("${{").and_then(|open| open.split_once("}}"))
+            else {
+                panic!(
+                    "{}: `{}` must read `{expected}` immediately after `{anchor}`",
+                    path.display(),
+                    line.trim(),
+                )
+            };
             assert!(
-                request.contains(expected),
-                "{}: `{}` must read `{expected}` in the request following `{anchor}`",
+                expression.contains(expected),
+                "{}: `{}` must read `{expected}` in the expression following `{anchor}`",
                 path.display(),
                 line.trim(),
             );

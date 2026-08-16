@@ -3,10 +3,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use repo_policy::actions::{
-    job_outputs, manifest_paths, needs_output_references, sources as actions_sources, step_uses,
-    tool_requests,
+    INSTALL_ACTION, install_action_steps, job_outputs, manifest_paths, needs_output_references,
+    sources as actions_sources, step_uses, tool_requests,
 };
-use repo_policy::dev_tools::DevTools;
+use repo_policy::dev_tools::{DevTools, TOOL_SECTION_SUFFIX};
 use repo_policy::{read, repo_root, tracked};
 
 fn toml_value(relative: &str) -> toml::Value {
@@ -330,7 +330,7 @@ impl<'de> serde::Deserialize<'de> for DistinctPins {
                         return Err(serde::de::Error::custom(format!("{name} is stated twice")));
                     }
                     // Every tool section, found by shape rather than listed here.
-                    if !name.ends_with("_tools") {
+                    if !name.ends_with(TOOL_SECTION_SUFFIX) {
                         map.next_value::<serde::de::IgnoredAny>()?;
                         continue;
                     }
@@ -412,23 +412,49 @@ fn every_republished_manifest_comes_from_the_action_that_reads_it() {
 /// `tool:` request, so before this a stale one passed the whole public gate.
 #[test]
 fn no_actions_source_states_a_version_literal() {
-    let version = regex_lite_version;
     let mut scanned = 0_usize;
     for source in actions_sources() {
         for (number, line) in source.text.lines().enumerate() {
-            let code = line.split_once(" #").map_or(line, |(code, _)| code);
-            if let Some(found) = version(code) {
+            if let Some(found) = regex_lite_version(code_of(line)) {
                 panic!(
                     "{}:{} states the version literal {found}; index it out of the manifest \
-                     the read-dev-tools action publishes",
+                     the read-dev-tools action publishes, or -- if this repository pins no \
+                     such version -- give it a home there first",
                     source.path,
                     number + 1,
                 );
             }
-            scanned += 1;
         }
+        scanned += 1;
     }
-    assert!(scanned > 0, "no line was scanned; this would pass vacuously");
+    assert!(scanned > 0, "no Actions source was scanned; this would pass vacuously");
+}
+
+/// The code half of a line, with any trailing comment removed.
+fn code_of(line: &str) -> &str {
+    // A `#` opens a comment where a value is not already open: at the start of the line, or
+    // after whitespace outside quotes. A line that ends inside a quote never opened one --
+    // that was an apostrophe in plain text -- and is read again with quoting ignored.
+    let scan = |respect_quotes: bool| {
+        let mut quote = None;
+        let mut start = None;
+        for (index, character) in line.char_indices() {
+            if let Some(open) = quote {
+                if character == open {
+                    quote = None;
+                }
+            } else if respect_quotes && (character == '\'' || character == '"') {
+                quote = Some(character);
+            } else if character == '#' && (index == 0 || line[..index].ends_with(char::is_whitespace)) {
+                start = Some(index);
+                break;
+            }
+        }
+        (quote.is_none(), start)
+    };
+    let (balanced, start) = scan(true);
+    let start = if balanced { start } else { scan(false).1 };
+    start.map_or(line, |index| &line[..index])
 }
 
 /// The first `<digits>.<digits>.<digits>` in a line, if any.
@@ -441,17 +467,14 @@ fn regex_lite_version(line: &str) -> Option<String> {
             continue;
         }
         let start = index;
-        let mut dots = 0;
         while index < bytes.len() && (bytes[index].is_ascii_digit() || bytes[index] == '.') {
-            if bytes[index] == '.' {
-                dots += 1;
-            }
             index += 1;
         }
         let token: String = bytes[start..index].iter().collect();
-        // A trailing dot ends a sentence rather than a version.
+        // A trailing dot ends a sentence rather than a version, so what it separates is
+        // counted after it is dropped rather than before.
         let token = token.trim_end_matches('.').to_owned();
-        if dots >= 2
+        if token.matches('.').count() >= 2
             && token.split('.').all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
         {
             return Some(token);
@@ -494,6 +517,28 @@ fn every_manifest_path_a_workflow_reads_exists() {
         }
     }
     assert!(read > 0, "no manifest path was read; this would pass vacuously");
+}
+
+/// Every step that installs a tool asks for it by the input that can carry a pin.
+///
+/// The installer answers to a second spelling, `taiki-e/install-action/<tool>@<ref>`, which
+/// names the tool in its own path and states no version anywhere: the step pins a commit, the
+/// literal scan finds nothing to object to, and the job installs whatever that action resolves
+/// on the day it runs. The tool rule cannot see such a step, because it makes no request.
+#[test]
+fn every_tool_is_requested_by_the_input_that_can_carry_a_pin() {
+    let mut steps = 0_usize;
+    for (source, scope, clause, requested) in install_action_steps() {
+        let action = clause.split_once('@').map_or(clause.as_str(), |(action, _)| action);
+        assert_eq!(
+            action, INSTALL_ACTION,
+            "{source} job {scope} uses {clause}, which names its tool in the path and pins no \
+             version; request it through the tool input instead",
+        );
+        assert!(requested.is_some(), "{source} job {scope} uses {clause} and asks for no tool",);
+        steps += 1;
+    }
+    assert!(steps > 0, "no step installs a tool; this would pass vacuously");
 }
 
 /// The analogue of the toolchain rule, for the tools a job installs. A version literal is a

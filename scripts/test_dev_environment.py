@@ -25,6 +25,7 @@ from scripts import dev_environment
 INSTALLED_BY_THE_LANE = {"lane"}
 
 from scripts.dev_environment import (
+    INSTALLED_BY_CI,
     Doctor,
     Palette,
     cargo_install_command,
@@ -44,6 +45,7 @@ from scripts.dev_environment import (
     resolve,
     satisfies_floor,
     setup_commands,
+    tool_sections,
     tools,
 )
 
@@ -450,7 +452,10 @@ class DoctorReportingTests(unittest.TestCase):
             )
         ]
         labels += [f"{rust['msrv']} {item}" for item in rust["msrv_components"]]
-        for group in ("cargo_tools", "node_tools", "system_tools"):
+        # The sections doctor reports on, found by shape. A list here would be a fourth
+        # place a section has to be named, and the one that fails silently: a name too long
+        # for the column would break alignment rather than any check.
+        for group in tool_sections(manifest) - INSTALLED_BY_CI:
             labels += [tool["binary"] for tool in tools(manifest, group)]
         for label in labels:
             with self.subTest(label=label):

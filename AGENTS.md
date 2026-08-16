@@ -56,10 +56,13 @@ Repository-wide policy remains at the root. In particular, `lint-shell` and
   pin added to the manifest is therefore reachable without an output and a
   republish being added to carry it, and every path a workflow indexes is checked
   to exist — an unresolvable one is not an error in Actions, it is the empty
-  string, and a job handed one installs whatever the runner already had. A
-  toolchain SELECTED by a version literal fails, in any file Actions executes and
-  in either YAML spelling; a version named some other way, in a `run:` line or a
-  container image, is not something that scan looks at. `test_dev_environment.py` still binds the literals in `clippy.toml`, the
+  string, and a job handed one installs whatever the runner already had. No file
+  Actions executes states a version literal outside a comment, in either YAML
+  spelling and on any line: not a toolchain selection, not a `tool:` request, not
+  a cache key, not a `run:` line. The manifest is the only home a version has, so
+  one arriving with something it does not yet pin — a container image, a package
+  the operating system installs — needs an entry there before it can be named at
+  all. `test_dev_environment.py` still binds the literals in `clippy.toml`, the
   `Justfile` and `README.md`. Toolchain
   literals matter more than the floor they restate: `rustup run <version>`
   addresses a toolchain by name, so one that outlives a bump either resolves to

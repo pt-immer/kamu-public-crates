@@ -601,7 +601,7 @@ def system_install_hint(tool: dict[str, Any]) -> str:
 
 def check_system_tool(checks: Doctor, tool: dict[str, Any]) -> None:
     """Check one tool the operating system package manager owns."""
-    hint = tool.get("install_hint") or system_install_hint(tool)
+    hint = system_install_hint(tool)
     path = shutil.which(tool["binary"])
     if path is None:
         checks.fail(tool["binary"], "not found", hint)
@@ -664,20 +664,28 @@ def doctor(manifest: dict[str, Any]) -> int:
     )
     check_targets(checks, rust["primary"], rust["primary_targets"])
 
-    # Every tool section the manifest states is found by shape and dispatched here. One this
-    # does not account for stops doctor rather than being skipped: a pinned tool nothing
-    # checks reads exactly like a pinned tool that passed.
-    unknown = tool_sections(manifest) - set(SECTION_CHECKS) - INSTALLED_BY_CI
+    # Every tool section the manifest states is found by shape and dispatched here, and the
+    # two have to agree in both directions. A section nothing checks reads exactly like a
+    # section that passed; a check whose section the manifest no longer states would reach
+    # `tools` and raise `KeyError` over a partial report.
+    stated = tool_sections(manifest)
+    unknown = stated - set(SECTION_CHECKS) - INSTALLED_BY_CI
     if unknown:
         raise SystemExit(
             f"{MANIFEST_PATH} states tool sections nothing checks: {sorted(unknown)}"
         )
+    missing = set(SECTION_CHECKS) - stated
+    if missing:
+        raise SystemExit(
+            f"{MANIFEST_PATH} states no {sorted(missing)}, which doctor checks"
+        )
 
-    for banner in dict.fromkeys(banner for banner, _ in SECTION_CHECKS.values()):
+    grouped: dict[str, list[tuple[str, Any]]] = {}
+    for section, (banner, check) in SECTION_CHECKS.items():
+        grouped.setdefault(banner, []).append((section, check))
+    for banner, members in grouped.items():
         checks.section(banner)
-        for section, (section_banner, check) in SECTION_CHECKS.items():
-            if section_banner != banner:
-                continue
+        for section, check in members:
             for tool in tools(manifest, section):
                 check(checks, tool)
 
