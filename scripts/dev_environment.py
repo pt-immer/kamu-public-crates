@@ -174,12 +174,21 @@ def tools(manifest: dict[str, Any], section: str) -> list[dict[str, Any]]:
     """
     resolved = []
     for name, entry in manifest[section].items():
+        version = entry["version"]
         merged: dict[str, Any] = {
             "name": name,
             "crate": name,
             "package": name,
             "binary": name,
-            "version_args": DEFAULT_VERSION_ARGS,
+            # Copied, not aliased: a caller adding a flag for one tool would otherwise
+            # rewrite the query every other tool took the default with.
+            "version_args": list(DEFAULT_VERSION_ARGS),
+            # A tool setup cannot install has to say which version to install, and saying
+            # it here is what keeps that version out of the entry beside the pin.
+            "install_hint": (
+                f"install {name} {version} with the operating system package manager, "
+                "then rerun setup"
+            ),
         }
         merged.update(entry)
         resolved.append(merged)

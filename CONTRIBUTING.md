@@ -18,7 +18,8 @@ The recursive clone matters: `kamu-iso3166` generates lookup tables from its
 vendored Git submodule. The bootstrap command works before `just` exists,
 installs the versions in `.config/dev-tools.json`, and uses `npm ci`. Exporting
 the local tool directory makes those pinned binaries available in the current
-shell. ShellCheck 0.11.0 remains an operating-system package.
+shell. ShellCheck remains an operating-system package; `just doctor` names the
+version to install when it is missing.
 
 ## Development loop
 

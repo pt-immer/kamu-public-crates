@@ -295,6 +295,41 @@ pub fn remote_uses() -> Vec<Use> {
     uses
 }
 
+/// Every tool an install-action step requests, as `(source, specification)`.
+///
+/// Read from the parsed step rather than from the line: the tool list is accepted as a plain
+/// scalar, as a block scalar spanning lines, and inside a flow mapping, and only the document
+/// knows which of those a step wrote. No tool version literal survives for a byte-level scan
+/// to be the right reader of.
+pub fn tool_requests() -> Vec<(&'static str, String)> {
+    let mut requests = Vec::new();
+    for source in sources() {
+        let mut scopes: Vec<&Value> = Vec::new();
+        if let Some(jobs) = child(&source.tree, "jobs").and_then(Value::as_mapping) {
+            scopes.extend(jobs.iter().map(|(_, job)| job));
+        }
+        if let Some(runs) = child(&source.tree, "runs") {
+            scopes.push(runs);
+        }
+        for scope in scopes {
+            for step in steps_of(scope) {
+                let requested = child(step, "with").and_then(|with| child(with, "tool"));
+                let Some(requested) = requested.and_then(Value::as_str) else {
+                    continue;
+                };
+                // Both separators, because the block form writes one tool per line.
+                for specification in requested.split([',', '\n']) {
+                    let specification = specification.trim();
+                    if !specification.is_empty() {
+                        requests.push((source.path.as_str(), specification.to_owned()));
+                    }
+                }
+            }
+        }
+    }
+    requests
+}
+
 /// Every `steps.<id>.outputs.<name>` an expression reads, as `(id, name)`.
 pub fn step_output_references(expression: &str) -> Vec<(String, String)> {
     let mut references = Vec::new();

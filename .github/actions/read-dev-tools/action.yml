@@ -18,28 +18,28 @@ outputs:
     value: ${{ fromJSON(steps.read.outputs.manifest).rust.lane }}
 
   tool_just:
-    description: The pinned just every job installs.
+    description: The pinned just, which every job runs its recipes through.
     value: ${{ fromJSON(steps.read.outputs.manifest).cargo_tools['just'].version }}
   tool_taplo_cli:
-    description: The pinned taplo-cli every job installs.
+    description: The pinned taplo-cli, which owns TOML formatting.
     value: ${{ fromJSON(steps.read.outputs.manifest).cargo_tools['taplo-cli'].version }}
   tool_typos_cli:
-    description: The pinned typos-cli every job installs.
+    description: The pinned typos-cli, which the spelling check runs.
     value: ${{ fromJSON(steps.read.outputs.manifest).cargo_tools['typos-cli'].version }}
   tool_cargo_llvm_cov:
-    description: The pinned cargo-llvm-cov every job installs.
+    description: The pinned cargo-llvm-cov, which measures the coverage floors.
     value: ${{ fromJSON(steps.read.outputs.manifest).cargo_tools['cargo-llvm-cov'].version }}
   tool_cargo_deny:
-    description: The pinned cargo-deny every job installs.
+    description: The pinned cargo-deny, which audits the dependency graph.
     value: ${{ fromJSON(steps.read.outputs.manifest).cargo_tools['cargo-deny'].version }}
   tool_cargo_nextest:
-    description: The pinned cargo-nextest every job installs.
+    description: The pinned cargo-nextest, the ordinary test runner.
     value: ${{ fromJSON(steps.read.outputs.manifest).cargo_tools['cargo-nextest'].version }}
   tool_shellcheck:
-    description: The pinned shellcheck every job installs.
+    description: The pinned ShellCheck, which the shell lint needs and setup cannot install.
     value: ${{ fromJSON(steps.read.outputs.manifest).system_tools['shellcheck'].version }}
   tool_cargo_pgrx:
-    description: The pinned cargo-pgrx every job installs.
+    description: The pinned cargo-pgrx, which only the excluded extension lane installs.
     value: ${{ fromJSON(steps.read.outputs.manifest).ci_only_tools['cargo-pgrx'].version }}
 
 runs:

@@ -2,7 +2,9 @@
 
 use std::collections::BTreeSet;
 
-use repo_policy::actions::{actions, job_outputs, sources as actions_sources};
+use repo_policy::actions::{
+    actions, job_outputs, needs_output_references, sources as actions_sources, tool_requests,
+};
 use repo_policy::dev_tools::DevTools;
 use repo_policy::{read, repo_root, tracked};
 
@@ -33,6 +35,13 @@ fn same_series(left: &str, left_source: &str, right: &str, right_source: &str) -
     a.resize(width, 0);
     b.resize(width, 0);
     a == b
+}
+
+/// The manifest as written, for asking whether a key exists at all. The typed decoder answers
+/// what the fields it models say; it cannot answer for a key nothing models.
+fn manifest_json() -> serde_json::Value {
+    serde_json::from_str(&read(DevTools::PATH))
+        .unwrap_or_else(|error| panic!("cannot parse {}: {error}", DevTools::PATH))
 }
 
 fn tools() -> DevTools {
@@ -255,6 +264,90 @@ fn the_toolchain_matrix_compiles_at_the_declared_floor() {
     assert!(matrices > 0, "no toolchain matrix found; this would pass vacuously");
 }
 
+/// The tool sections, refusing a key stated twice.
+///
+/// Every reader of this manifest keeps the last of a repeated key and reports nothing:
+/// `serde_json`, Python's `json`, and Actions' `fromJSON` all do. The array shape these
+/// sections replaced showed both entries, so a bad merge was visible; keyed by name, the
+/// discarded pin is not, and the file states a version it does not unambiguously carry.
+///
+/// Read from the TEXT. Handing this a `serde_json::Value` would hand it a document whose
+/// duplicate had already been collapsed by the parse that produced it, and the check could
+/// never fail.
+struct DistinctSections;
+
+struct DistinctKeys;
+
+impl<'de> serde::Deserialize<'de> for DistinctKeys {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Keys;
+
+        impl<'de> serde::de::Visitor<'de> for Keys {
+            type Value = DistinctKeys;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a mapping whose keys are distinct")
+            }
+
+            fn visit_map<M: serde::de::MapAccess<'de>>(self, mut map: M) -> Result<DistinctKeys, M::Error> {
+                let mut seen = BTreeSet::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    map.next_value::<serde::de::IgnoredAny>()?;
+                    if !seen.insert(key.clone()) {
+                        return Err(serde::de::Error::custom(format!("{key} is stated twice")));
+                    }
+                }
+                Ok(DistinctKeys)
+            }
+        }
+
+        deserializer.deserialize_map(Keys)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for DistinctSections {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Top;
+
+        impl<'de> serde::de::Visitor<'de> for Top {
+            type Value = DistinctSections;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("the pinned-version manifest")
+            }
+
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                mut map: M,
+            ) -> Result<DistinctSections, M::Error> {
+                let mut sections = 0_usize;
+                while let Some(name) = map.next_key::<String>()? {
+                    // Every tool section, found by shape rather than listed here.
+                    if name.ends_with("_tools") {
+                        map.next_value::<DistinctKeys>()
+                            .map_err(|error| serde::de::Error::custom(format!("{name}: {error}")))?;
+                        sections += 1;
+                    } else {
+                        map.next_value::<serde::de::IgnoredAny>()?;
+                    }
+                }
+                if sections == 0 {
+                    return Err(serde::de::Error::custom("no tool section was read"));
+                }
+                Ok(DistinctSections)
+            }
+        }
+
+        deserializer.deserialize_map(Top)
+    }
+}
+
+#[test]
+fn no_tool_is_pinned_twice_in_one_section() {
+    serde_json::from_str::<DistinctSections>(&read(DevTools::PATH))
+        .unwrap_or_else(|error| panic!("{}: {error}", DevTools::PATH));
+}
+
 /// A tool is keyed in the manifest by the name Actions installs it under, and an output names
 /// it with underscores because Actions parses a hyphen as subtraction. That translation is only
 /// reversible while no tool name contains an underscore.
@@ -299,6 +392,15 @@ fn each_action_output_reads_the_manifest_key_its_name_states() {
             let reads = value.trim_end().trim_end_matches('}').trim_end();
 
             let expected = if let Some(key) = name.strip_prefix("rust_") {
+                // The tool branch below cannot name a pin the manifest lacks, because the
+                // section is looked up. A channel names its key directly, so the key has to
+                // be asked for: `.rust.stable` reads as valid and resolves to the empty
+                // string, and a job handed one installs whatever the runner already had.
+                assert!(
+                    manifest_json()["rust"][key].is_string(),
+                    "{source} publishes {name}, and {} states no rust.{key}",
+                    DevTools::PATH,
+                );
                 channels += 1;
                 format!(".rust.{key}")
             } else if let Some(slug) = name.strip_prefix("tool_") {
@@ -335,30 +437,26 @@ fn every_tool_a_job_installs_reads_its_own_pin() {
     let published: BTreeSet<&String> =
         actions().iter().flat_map(|(_, action)| action.outputs.keys()).collect();
     let mut requested = 0_usize;
-    for source in actions_sources() {
-        for line in source.text.lines() {
-            let Some(value) = line.trim_start().strip_prefix("tool:").map(str::trim) else {
-                continue;
-            };
-            for specification in value.split(',') {
-                let (name, version) = specification.trim().split_once('@').unwrap_or_else(|| {
-                    panic!("{} requests {specification}, which pins nothing", source.path)
-                });
-                let slug = format!("tool_{}", name.replace('-', "_"));
-                assert!(
-                    published.contains(&slug),
-                    "{} installs {name}, and no action publishes the pin {slug}",
-                    source.path,
-                );
-                assert!(
-                    version.contains(&format!("outputs.{slug}")),
-                    "{} installs {name} from {version} rather than from its own pin {slug}; \
-                     read the manifest through the read-dev-tools action instead",
-                    source.path,
-                );
-                requested += 1;
-            }
-        }
+    for (source, specification) in tool_requests() {
+        let (name, version) = specification
+            .split_once('@')
+            .unwrap_or_else(|| panic!("{source} requests {specification}, which pins nothing"));
+        let slug = format!("tool_{}", name.replace('-', "_"));
+        assert!(
+            published.contains(&slug),
+            "{source} installs {name}, and no action publishes the pin {slug}",
+        );
+        // Compared as a whole name, not as a substring: one tool's slug can be a prefix of
+        // another's, and `contains` would accept `tool_taplo_cli` for a tool named `taplo`.
+        let read: Vec<String> =
+            needs_output_references(version).into_iter().map(|(_, output)| output).collect();
+        assert_eq!(
+            read,
+            vec![slug.clone()],
+            "{source} installs {name} from {version} rather than from its own pin {slug}; \
+             read the manifest through the read-dev-tools action instead",
+        );
+        requested += 1;
     }
     assert!(requested > 0, "no tool was requested; this would pass vacuously");
 }

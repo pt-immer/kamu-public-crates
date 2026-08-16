@@ -77,6 +77,33 @@ fn every_anchored_line_carries(path: &Path, anchor: &str, expected: &str) {
     }
 }
 
+/// Every occurrence of `anchor` is immediately followed by `expected`.
+///
+/// Weaker than this -- asking only that the LINE mention `expected` somewhere -- a request
+/// such as `cargo-pgrx@0.19.1,cargo-nextest@${{ ...tool_cargo_pgrx }}` satisfies both the
+/// anchor and the expectation while installing a stale CLI.
+fn every_anchor_is_followed_by(path: &Path, anchor: &str, expected: &str) {
+    let contents = support::read(path);
+    let mut found = 0_usize;
+    for line in contents.lines() {
+        for (index, _) in line.match_indices(anchor) {
+            let tail = &line[index + anchor.len()..];
+            assert!(
+                tail.starts_with(expected),
+                "{}: `{}` must carry `{expected}` directly after `{anchor}`",
+                path.display(),
+                line.trim(),
+            );
+            found += 1;
+        }
+    }
+    assert!(
+        found > 0,
+        "{} no longer contains `{anchor}` -- this guard would pass vacuously; re-point it",
+        path.display()
+    );
+}
+
 #[test]
 fn every_pgrx_crate_takes_the_pinned_version_exactly() {
     let exact = format!("={}", pinned_version());
@@ -165,9 +192,9 @@ fn every_cargo_pgrx_installation_pins_the_same_version() {
     // `the_tool_manifest_installs_the_pinned_cargo_pgrx`, one claim in one place; asserting
     // the literal here would be a second copy of it that a bump would have to find.
     let workflow = repository.join(".github/workflows/on-pr-synced.yml");
-    let pin = "needs.changes.outputs.tool_cargo_pgrx";
-    every_anchored_line_carries(&workflow, "cargo-pgrx@", pin);
-    every_anchored_line_carries(&workflow, "key: pgrx-", pin);
+    let pin = "${{ needs.changes.outputs.tool_cargo_pgrx }}";
+    every_anchor_is_followed_by(&workflow, "cargo-pgrx@", pin);
+    every_anchor_is_followed_by(&workflow, "key: pgrx-", pin);
 }
 
 /// The lane's Rust toolchain, from the file rustup itself obeys.

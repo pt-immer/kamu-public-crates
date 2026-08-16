@@ -33,16 +33,28 @@ Repository-wide policy remains at the root. In particular, `lint-shell` and
 ## Hard invariants
 
 - The public workspace uses Edition 2024. `.config/dev-tools.json` is the one file
-  CI reads its versions from, and states three: `rust.msrv` is the floor the
-  published manifests declare and CI tests exactly, `rust.primary` is the
+  CI reads its versions from. Three of them are channels: `rust.msrv` is the floor
+  the published manifests declare and CI tests exactly, `rust.primary` is the
   toolchain that pins compile-fail goldens, and `rust.lane` is the excluded
   extension lane's channel. Each is a view of a file some tool honours and the
   manifest cannot — `rust-toolchain.toml` for the two channels, `Cargo.toml` for
-  the floor — and `tools/repo-policy` holds them equal. Workflows reference the
-  manifest through `.github/actions/read-dev-tools`. A toolchain SELECTED by a
-  version literal fails, in any file Actions executes and in either YAML spelling;
-  a version named some other way, in a `run:` line or a container image, is not
-  something that scan looks at. `test_dev_environment.py` still binds the literals in `clippy.toml`, the
+  the floor — and `tools/repo-policy` holds them equal. The rest are tool pins,
+  one per tool CI installs, and every `tool:` request reads the pin belonging to
+  the tool it names rather than restating a version.
+
+  Each tool section is an object keyed by the name `install-action` requests,
+  because an Actions expression can index a value by name but cannot search a
+  list for the entry whose name matches; that key is also what cargo installs and
+  what a recipe runs, so an entry states `crate`, `package`, `binary` or
+  `version_args` only where one differs from it or from the default. A tool name
+  may not contain an underscore: an output name carries `_` where Actions would
+  parse `-` as subtraction, and that translation is reversible only while no name
+  uses both.
+
+  Workflows reference the manifest through `.github/actions/read-dev-tools`. A
+  toolchain SELECTED by a version literal fails, in any file Actions executes and
+  in either YAML spelling; a version named some other way, in a `run:` line or a
+  container image, is not something that scan looks at. `test_dev_environment.py` still binds the literals in `clippy.toml`, the
   `Justfile` and `README.md`. Toolchain
   literals matter more than the floor they restate: `rustup run <version>`
   addresses a toolchain by name, so one that outlives a bump either resolves to

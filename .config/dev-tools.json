@@ -49,8 +49,7 @@
   },
   "system_tools": {
     "shellcheck": {
-      "version": "0.11.0",
-      "install_hint": "Install ShellCheck with the operating system package manager, then rerun setup."
+      "version": "0.11.0"
     }
   },
   "ci_only_tools": {
