@@ -37,6 +37,11 @@ pub const INSTALL_ACTION: &str = "taiki-e/install-action";
 /// cannot import it.
 pub const MANIFEST_OUTPUT: &str = "manifest";
 
+/// The composite action that reads the manifest and publishes it once. Running it is what makes a
+/// workflow a reader of the output above, so the set of readers inside Actions is derived from
+/// this rather than maintained as a list.
+pub const MANIFEST_ACTION: &str = "read-dev-tools";
+
 /// The code half of a line, with any trailing comment removed.
 ///
 /// A `#` opens a comment where a value is not already open: at the start of the line, or after

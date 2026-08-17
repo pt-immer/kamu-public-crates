@@ -6,9 +6,9 @@ use std::sync::OnceLock;
 use regex_lite::Regex;
 
 use repo_policy::actions::{
-    ActionOutput, INSTALL_ACTION, MANIFEST_OUTPUT, action_outputs, code_of, install_action_steps,
-    job_outputs, manifest_paths, needs_output_references, sources as actions_sources, step_scopes, step_uses,
-    tool_requests,
+    ActionOutput, INSTALL_ACTION, MANIFEST_ACTION, MANIFEST_OUTPUT, action_outputs, code_of,
+    install_action_steps, job_outputs, manifest_paths, needs_output_references, sources as actions_sources,
+    step_scopes, step_uses, tool_requests,
 };
 use repo_policy::dev_tools::{DevTools, TOOL_SECTION_SUFFIX};
 use repo_policy::{read, repo_root, tracked};
@@ -375,7 +375,7 @@ fn no_tool_is_pinned_twice() {
 fn every_republished_manifest_comes_from_the_action_that_reads_it() {
     let published: BTreeSet<(&str, String, String)> = job_outputs()
         .into_iter()
-        .filter(|(_, _, name, _)| name == "manifest")
+        .filter(|(_, _, name, _)| name == MANIFEST_OUTPUT)
         .map(|(source, job, _, value)| {
             let read = needs_output_references(&value);
             assert!(read.is_empty(), "{source} job {job} republishes the manifest from another job");
@@ -542,20 +542,30 @@ fn every_manifest_a_job_reads_is_published_by_the_job_it_names() {
 #[test]
 fn every_reader_of_a_manifest_expression_spells_the_same_output_name() {
     let expected = format!("outputs.{MANIFEST_OUTPUT}");
-    for relative in [
-        ".github/actions/read-dev-tools/action.yml",
-        ".github/workflows/on-pr-synced.yml",
-        "scripts/test_workflows.py",
-        "extensions/money-pg/hygiene/tests/pins.rs",
-    ] {
-        // Compared with escapes dropped: one of these readers spells the name inside a regex,
-        // where the separator is written `\.`.
+
+    // The Actions side is derived rather than listed: anything running the action is a reader by
+    // construction, so a workflow added later is covered without anyone remembering to add it.
+    let mut readers: Vec<String> = tracked(&["*.yml"])
+        .into_iter()
+        .filter(|relative| relative.starts_with(".github/"))
+        .filter(|relative| read(relative).contains(MANIFEST_ACTION))
+        .collect();
+
+    // The two readers that parse the expression from outside Actions. Neither can import the
+    // constant, and nothing in their content ties them to the action except this name, so they
+    // are the one part of the set that has to be stated.
+    readers.push("scripts/test_workflows.py".to_owned());
+    readers.push("extensions/money-pg/hygiene/tests/pins.rs".to_owned());
+
+    for relative in &readers {
+        // Escapes dropped, because one reader spells the name inside a regex as `\.`; and read
+        // line by line, because a comment mentioning the old name would otherwise answer for a
+        // file whose parsing no longer names it at all.
         let text = read(relative).replace('\\', "");
-        assert!(
-            text.contains(&expected),
-            "{relative} reads the manifest under some other name than {expected}",
-        );
+        let names = text.lines().any(|line| code_of(line).contains(&expected));
+        assert!(names, "{relative} reads the manifest under some other name than {expected}",);
     }
+    assert!(readers.len() > 2, "no workflow ran the action; this would pass vacuously");
 }
 
 /// A pin is a floor unless the entry says why it must be exact. An exact pin with no reason
