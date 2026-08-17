@@ -319,10 +319,21 @@ their commands.
 
 ## CI structure
 
-`.github/workflows/on-pr-synced.yml` runs for pull requests and pushes to
-`main`. `scripts/ci_paths.py` classifies every changed path and fails when a
-repository surface has no owner. `just test-scripts` proves every tracked
-path remains classified.
+One event, one workflow. `.github/workflows/on-pr-synced.yml` answers pull
+requests only, and refuses any other event rather than diffing against a base it
+was not given. It does not run on pushes to `main`: the ruleset requires a pull
+request to be up to date, permits only squash, and requires linear history, so
+the commit that lands carries the tree its head already certified. Nothing seeds
+the cache that leaves behind, because that pool is keyed per job and filling it
+means running those jobs.
+
+`on-release-published.yml` also proves the extension lane against the
+`kamu-money-core` it just published, which is the one lane input no pull request
+produces.
+
+`scripts/ci_paths.py` classifies every changed path and fails when a repository
+surface has no owner. `just test-scripts` proves every tracked path remains
+classified.
 
 Why working on one crate runs another's jobs is answered by `DERIVED_CLASSES` in
 `scripts/ci_paths.py`, which carries every fan-out edge with its reason. The

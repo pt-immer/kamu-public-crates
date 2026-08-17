@@ -20,6 +20,12 @@ jobs:
     environment: crates-io
     permissions:
       contents: read
+    outputs:
+      # Republished so the job below can ask which crate this release was, without parsing the
+      # tag a second time under a second set of patterns.
+      crate: ${{ steps.parse.outputs.crate }}
+      version: ${{ steps.parse.outputs.version }}
+      publishable: ${{ steps.parse.outputs.publishable }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -148,3 +154,52 @@ jobs:
             echo "$out"
             echo "::warning::could not add github:pt-immer:rust-devs to $CRATE (token may lack the crates.io change-owners scope); add it manually or via the Add Crate Owner workflow"
           fi
+
+  # Publishing kamu-money-core is an input to the extension lane that no pull request and no
+  # push produces. Ordinary lane suites resolve the crate through a path patch, so what they
+  # prove is that the lane builds against THIS TREE. That the lane builds against the crate
+  # actually on the registry was proven only by a release recipe someone had to remember to
+  # run, which is the same as not being proven.
+  prove-lane-against-published-core:
+    name: extension against the published kamu-money-core
+    needs: publish
+    if: ${{ needs.publish.outputs.crate == 'kamu-money-core' && needs.publish.outputs.publishable == 'true' }}
+    runs-on: ubuntu-latest
+    # Deliberately outside the crates-io environment: this proves a published crate, and has
+    # no business holding the token that publishes one.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: true
+      - id: pins
+        uses: ./.github/actions/read-dev-tools
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
+        with:
+          tool: just@${{ fromJSON(steps.pins.outputs.manifest).cargo_tools['just'].version }}
+
+      - name: Wait for the index to carry the released version
+        env:
+          CRATE: ${{ needs.publish.outputs.crate }}
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          set -euo pipefail
+          # The sparse index lags the publish call. Asked once, this would fail on timing
+          # rather than on the thing it exists to check.
+          n=1
+          until python3 scripts/crates_io.py require "$CRATE" "=${VERSION}"; do
+            if [ "$n" -ge 8 ]; then
+              echo "::error::${CRATE} ${VERSION} did not reach the index"
+              exit 1
+            fi
+            echo "::notice::index does not carry ${CRATE} ${VERSION} yet; attempt $n"
+            sleep $((n * 15)); n=$((n + 1))
+          done
+
+      - name: Compile and test the extension against the registry crate
+        env:
+          # The one setting that makes this leg different from every other lane suite: no path
+          # patch, so the plain version requirement must resolve from crates.io.
+          KMONEY_USE_LOCAL_CORE: "0"
+        run: just pg test-pg 18 1
