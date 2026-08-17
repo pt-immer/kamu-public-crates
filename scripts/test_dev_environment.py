@@ -258,6 +258,28 @@ class ToolResolutionTests(unittest.TestCase):
             self.assertEqual(wanted, found)
             self.assertTrue(is_repository_local(found))
 
+    def test_the_repository_copy_is_recognised_through_a_symlinked_checkout(
+        self,
+    ) -> None:
+        """`just` exports whichever spelling the checkout was reached by.
+
+        The constants are resolved, so comparing the two directly reads the copy
+        setup installed as the host's -- and setup then refuses to install
+        beneath a binary it put there itself.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            real = pathlib.Path(root) / "real"
+            (real / "local").mkdir(parents=True)
+            link = pathlib.Path(root) / "link"
+            link.symlink_to(real)
+            executable(real / "local", "taplo")
+            with mock.patch.object(
+                dev_environment, "SEARCH_SUFFIXES", ((real / "local").resolve(),)
+            ), mock.patch.dict(os.environ, {"PATH": str(link / "local")}):
+                found = resolve("taplo")
+                self.assertEqual(found, link / "local" / "taplo")
+                self.assertTrue(is_repository_local(found))
+
     def test_an_absent_tool_resolves_to_nothing(self) -> None:
         with self.workspace():
             self.assertIsNone(resolve("taplo"))
