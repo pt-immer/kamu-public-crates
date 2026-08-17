@@ -318,6 +318,19 @@ def setup(manifest: dict[str, Any]) -> int:
             continue
         run(cargo_install_command(primary, tool))
 
+    run(commands[-1])
+
+    # npm installs the whole tree in one command, so a shadowed Node tool cannot be
+    # skipped the way a Cargo one is. It is reported for the same reason: the install
+    # below `node_modules/.bin` succeeds and no recipe will ever reach it.
+    for tool in tools(manifest, "node_tools"):
+        found = resolve(tool["binary"])
+        if found is None or is_repository_local(found):
+            continue
+        actual = node_package_version(found, tool["package"])
+        if not tool_satisfied(tool, parse_version(actual) if actual else None):
+            shadowed.append((tool, found))
+
     for tool, found in shadowed:
         print(
             f"! {tool['binary']} on this host does not answer its pin, and it comes "
@@ -325,7 +338,6 @@ def setup(manifest: dict[str, Any]) -> int:
             file=sys.stderr,
         )
 
-    run(commands[-1])
     return doctor(manifest)
 
 
@@ -466,6 +478,16 @@ def check_bootstrap(
     )
 
 
+def pin_is_exact(exact: str | None) -> bool:
+    """Whether a pin is exact, decided in one place.
+
+    A pin is exact when the entry states why, and a floor otherwise. Setup and
+    doctor both decide it, and a truthiness test here against an emptiness test
+    there would let one install a version the other rejects.
+    """
+    return exact is not None
+
+
 def check_version(
     checks: Doctor,
     label: str,
@@ -492,7 +514,13 @@ def check_version(
         checks.fail(label, detail, f"no readable version; {hint}")
         return
 
-    if exact is not None:
+    # The host answers before anything setup installs, so a host copy that misses
+    # its pin cannot be fixed by installing another one. Naming setup here would
+    # send the reader to a command that refuses this exact case.
+    if path is not None and not is_repository_local(path):
+        hint = f"upgrade or remove {path}"
+
+    if pin_is_exact(exact):
         satisfied = installed == wanted
         comparison = f"= {pinned}"
         remedy = f"is not the pinned {pinned} ({exact}); {hint}"
@@ -520,7 +548,9 @@ def tool_satisfied(tool: dict[str, Any], installed: tuple[int, ...] | None) -> b
     wanted = parse_version(tool["version"])
     if wanted is None or installed is None:
         return False
-    return installed == wanted if tool["exact"] else satisfies_floor(installed, wanted)
+    if pin_is_exact(tool["exact"]):
+        return installed == wanted
+    return satisfies_floor(installed, wanted)
 
 
 def check_cargo_tool(checks: Doctor, tool: dict[str, Any]) -> None:

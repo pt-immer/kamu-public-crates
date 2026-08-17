@@ -585,6 +585,33 @@ class VersionVerdictTests(unittest.TestCase):
         self.assertIn("below the pinned 0.23.2", output)
         self.assertIn("run just setup", output)
 
+    def test_a_shadowing_host_copy_is_told_to_move_rather_than_to_run_setup(
+        self,
+    ) -> None:
+        """Setup refuses this case, so naming it here would send the reader in a circle."""
+        checks, output = self.judge(
+            (0, 22, 0), "0.23.2", path=pathlib.Path("/opt/somewhere/bin/taplo")
+        )
+        self.assertEqual(["taplo"], checks.failed)
+        self.assertIn("upgrade or remove /opt/somewhere/bin/taplo", output)
+        self.assertNotIn("run just setup", output)
+
+    def test_a_failing_repository_local_copy_is_still_setup_s_to_fix(self) -> None:
+        checks, output = self.judge(
+            (0, 22, 0), "0.23.2", path=dev_environment.TOOLS_BIN / "taplo"
+        )
+        self.assertEqual(["taplo"], checks.failed)
+        self.assertIn("run just setup", output)
+
+    def test_both_halves_read_one_pin_class(self) -> None:
+        """A stated-but-empty reason must not be exact here and a floor in setup."""
+        tool = {"binary": "taplo", "version": "0.23.2", "exact": "", "package": "taplo"}
+        self.assertEqual(
+            dev_environment.pin_is_exact(tool["exact"]),
+            self.judge((0, 24, 0), "0.23.2", exact=tool["exact"])[0].failed != [],
+        )
+        self.assertTrue(dev_environment.tool_satisfied(tool, (0, 24, 0)) is False)
+
     def test_an_unreadable_version_fails_rather_than_passing(self) -> None:
         checks, output = self.judge(None, "0.10.0")
         self.assertEqual(["taplo"], checks.failed)
