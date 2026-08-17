@@ -6,9 +6,9 @@ use std::sync::OnceLock;
 use regex_lite::Regex;
 
 use repo_policy::actions::{
-    ActionOutput, INSTALL_ACTION, MANIFEST_ACTION, MANIFEST_OUTPUT, action_outputs, code_of,
-    install_action_steps, job_outputs, manifest_paths, needs_output_references, sources as actions_sources,
-    step_scopes, step_uses, tool_requests,
+    ActionOutput, INSTALL_ACTION, MANIFEST_ACTION, MANIFEST_OUTPUT, ManifestSource, action_outputs, code_of,
+    install_action_steps, job_outputs, manifest_paths, manifest_source, needs_output_references,
+    sources as actions_sources, step_scopes, step_uses, tool_requests,
 };
 use repo_policy::dev_tools::{DevTools, TOOL_SECTION_SUFFIX};
 use repo_policy::{read, repo_root, tracked};
@@ -377,16 +377,22 @@ fn every_republished_manifest_comes_from_the_action_that_reads_it() {
         .into_iter()
         .filter(|(_, _, name, _)| name == MANIFEST_OUTPUT)
         .map(|(source, job, _, value)| {
-            let read = needs_output_references(&value);
-            assert!(read.is_empty(), "{source} job {job} republishes the manifest from another job");
-            let step = value
-                .split_once("steps.")
-                .and_then(|(_, tail)| tail.split_once(".outputs."))
-                .map(|(id, _)| id.to_owned())
-                .unwrap_or_else(|| {
-                    panic!("{source} job {job} publishes the manifest as {value}, which reads no step")
-                });
-            (source, job.clone(), step)
+            // Read through the shared reader, which requires the output name as well as the
+            // context. Taking the step id and discarding what follows `.outputs.` proved the
+            // step existed and nothing about what it publishes, so a misspelled output name
+            // satisfied it -- and resolves at run time to the empty string, leaving every job
+            // reading a manifest that is not there.
+            let expression = value.trim().trim_start_matches("${{").trim_end_matches("}}").trim();
+            match manifest_source(expression) {
+                Some(ManifestSource::Step(step)) => (source, job.clone(), step),
+                Some(ManifestSource::Job(_)) => {
+                    panic!("{source} job {job} republishes the manifest from another job")
+                }
+                None => panic!(
+                    "{source} job {job} publishes the manifest as {value}, which is not a step \
+                     output named {MANIFEST_OUTPUT}"
+                ),
+            }
         })
         .collect();
     assert!(!published.is_empty(), "no job republishes the manifest; this would pass vacuously");
