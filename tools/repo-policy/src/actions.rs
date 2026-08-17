@@ -51,7 +51,19 @@ pub fn code_of(line: &str) -> &str {
     let scan = |respect_quotes: bool| {
         let mut quote = None;
         let mut start = None;
+        let mut escaped = false;
         for (index, character) in line.char_indices() {
+            // A backslash escapes the next character inside double quotes, and is literal inside
+            // single ones. Reading `\"` as the close puts the rest of the string outside the
+            // quote, where a `#` reads as a comment and takes executable content out of the scan.
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if quote == Some('"') && character == '\\' {
+                escaped = true;
+                continue;
+            }
             if let Some(open) = quote {
                 if character == open {
                     quote = None;
