@@ -96,8 +96,9 @@ RUN ln -s /home/pgrx/.pgrx /work/.pgrx
 
 # --- the lane's own build ---------------------------------------------------------------------
 # Everything above is the reusable builder: a toolchain, cargo-pgrx, one PostgreSQL major with
-# its development headers, and a PGRX_HOME initialised against it. Nothing in it is specific to
-# this repository, which is why it is published on its own.
+# its development headers, and a PGRX_HOME initialised against it. The one thing in it that is
+# ours is the /work/.pgrx link, which exists because this repository's Cargo configuration forces
+# PGRX_HOME there; an extension built elsewhere ignores it. That is why it is published on its own.
 FROM builder AS lane
 
 # Ordinary test builds use the normalized Cargo package supplied as a named

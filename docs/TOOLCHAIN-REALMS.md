@@ -78,20 +78,33 @@ They move once it is published, which cannot happen in the same change.
 
 The reusable half of that image — a toolchain, `cargo-pgrx`, one PostgreSQL
 major with its development headers, and a `PGRX_HOME` initialised against them —
-is its own build stage and is published under a name that says what it is. It
-carries nothing specific to this repository, so anyone building a pgrx extension
-can pull it instead of reproducing the provisioning.
+is its own build stage and is published under a name that says what it is.
+Almost nothing in it is specific to this repository: it creates `/work/.pgrx`,
+because this repository's Cargo configuration forces `PGRX_HOME` there, and an
+extension built elsewhere simply ignores that directory.
 
-**When it is rebuilt is not a schedule.** Its tag is derived from the inputs that
-decide it, so the question does not arise: an unchanged input names a tag that
-already exists and nothing is built, and a changed input names a tag that has
-never existed and it is built. There is no window in which a published image is
-stale, because no tag ever changes meaning.
+**When it is rebuilt is not a schedule.** Its tag is derived from the repository
+inputs that decide it, so the question does not arise: an unchanged input names
+a tag that already exists and nothing is built, and a changed input names a tag
+that has never existed and it is built.
 
-That holds only if every input is visible as a change. The base image is
-therefore pinned by digest as well as by tag: an upstream rebuild for a
-distribution security patch produces different bytes under the same tag, and
-without the digest nothing in this repository would move when it did.
+### The tag is discovery; the digest is identity
+
+A tag closes over this repository's inputs. It does not close over everything
+that decides the bytes:
+
+- the apt indexes resolved while the image builds, and the PostgreSQL patch
+  levels they carry;
+- the signing key fetched over the network at build time;
+- a deliberate `rebuild`, which republishes one tag on purpose.
+
+So **two builds sharing a tag can differ**, and a consumer that needs a fixed
+image pins the **digest**, which is immutable by construction. Each publish
+prints the digest and exposes it as a job output.
+
+The base image here is pinned that way for the same reason: an upstream rebuild
+for a distribution security patch produces different bytes under an unchanged
+tag, and without the digest nothing in this repository would move when it did.
 
 Publishing happens from the default branch, so a change to the image and the
 jobs that consume it cannot land in the same run — the image is published first,

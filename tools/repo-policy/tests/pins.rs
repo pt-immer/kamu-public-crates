@@ -829,6 +829,14 @@ fn every_pushed_image_is_labelled_with_the_repository_that_describes_it() {
             "{relative} pushes an image without labelling its source; the package would be \
              published unlinked from the repository",
         );
+        // The tag closes over repository inputs only, so it is discovery rather than identity.
+        // A consumer needing a fixed image pins the digest, which has to be published to be
+        // pinnable -- and `docs/TOOLCHAIN-REALMS.md` promises it is.
+        assert!(
+            text.contains("containerimage.digest"),
+            "{relative} pushes an image without publishing its digest; nothing immutable is \
+             offered to a consumer that cannot rely on the tag",
+        );
         pushes += 1;
     }
     assert!(pushes > 0, "no workflow pushed an image; this would pass vacuously");

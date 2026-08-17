@@ -5,11 +5,19 @@ name: Publish builder image
 # Published on its own so anyone can pull it and build a pgrx extension without reproducing the
 # provisioning, and so this repository's own jobs stop hand-rolling it.
 #
-# WHEN IT BUILDS is not a schedule. The tag is derived from the inputs that decide the image, so
-# an unchanged input names a tag that already exists and nothing is built, and a changed one
-# names a tag that has never existed and it is built. The base image is pinned by digest in the
-# Dockerfile for the same reason: an upstream security rebuild becomes an edit here rather than
-# silent drift under a tag that stayed the same.
+# WHEN IT BUILDS is not a schedule. The tag is derived from the repository inputs that decide the
+# image, so an unchanged input names a tag that already exists and nothing is built, and a changed
+# one names a tag that has never existed and it is built.
+#
+# THE TAG IS NOT AN IMMUTABLE IDENTITY, and nothing here should be read as claiming it is. It
+# closes over this repository's inputs only. The image also depends on state resolved while it
+# builds -- the apt indexes, the PostgreSQL packages they carry, the signing key fetched at build
+# time -- so two builds of one tag can differ, and `rebuild` republishes a tag deliberately.
+#
+# The DIGEST is the immutable identity, by construction. It is printed and published as an output
+# so a consumer that needs a fixed image can pin it. The base image is pinned that way here for
+# exactly this reason: an upstream rebuild under an unchanged tag becomes an edit rather than
+# silent drift.
 
 on:
   push:
@@ -27,9 +35,8 @@ on:
         type: boolean
         default: false
 
-# A tag names its inputs, so two runs that agree on a tag agree on its content and only one of
-# them need push it. Two runs that disagree are two different tags. Cancelling the first would
-# abandon a tag nothing else will build, so the second waits instead.
+# Two runs pushing one tag would race, and the loser's digest is the one consumers resolve.
+# Cancelling the first would abandon a tag nothing else will build, so the second waits instead.
 concurrency:
   group: publish-builder-image
   cancel-in-progress: false
@@ -108,7 +115,8 @@ jobs:
             echo "published=false" >>"$GITHUB_OUTPUT"
           fi
 
-      - name: Build and publish
+      - id: publish
+        name: Build and publish
         if: ${{ steps.existing.outputs.published == 'false' }}
         working-directory: extensions/money-pg
         env:
@@ -129,7 +137,22 @@ jobs:
             --label "org.opencontainers.image.revision=${REVISION}" \
             --label "org.opencontainers.image.licenses=MIT OR Apache-2.0" \
             --label "org.opencontainers.image.description=pgrx build environment: a pinned Rust toolchain, cargo-pgrx, PostgreSQL ${MAJOR} with development headers, and an initialised PGRX_HOME." \
+            --metadata-file metadata.json \
             -f kamu-money-pg/Dockerfile \
             -t "$REFERENCE" \
             .
+          # The tag closes over this repository's inputs only; the digest closes over the bytes.
+          # A consumer that needs a fixed image pins this.
+          digest="$(jq -er '."containerimage.digest"' metadata.json)"
+          rm -f metadata.json
+          echo "digest=${digest}" >>"$GITHUB_OUTPUT"
           echo "Published $REFERENCE"
+          echo "Immutable reference: ${REFERENCE%%:*}@${digest}"
+          {
+            echo "### Builder image published"
+            echo
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| tag (discovery) | \`${REFERENCE}\` |"
+            echo "| digest (pin this) | \`${REFERENCE%%:*}@${digest}\` |"
+          } >>"$GITHUB_STEP_SUMMARY"
