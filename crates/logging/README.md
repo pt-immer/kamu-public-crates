@@ -319,12 +319,12 @@ your option (`MIT OR Apache-2.0`). Previously MIT-only through 1.1.1.
 
 [badge-crates]: https://img.shields.io/crates/v/kamu-logging?style=flat-square&logo=rust
 [badge-docs]: https://img.shields.io/docsrs/kamu-logging?style=flat-square&logo=docs.rs&label=docs.rs
-[badge-ci]: https://img.shields.io/github/actions/workflow/status/pt-immer/kamu-public-crates/on-pr-synced.yml?branch=main&style=flat-square&label=CI
+[badge-ci]: https://img.shields.io/github/actions/workflow/status/pt-immer/kamu-public-crates/on-main-pushed.yml?branch=main&style=flat-square&label=CI
 [badge-license]: https://img.shields.io/crates/l/kamu-logging?style=flat-square
 [badge-msrv]: https://img.shields.io/crates/msrv/kamu-logging?style=flat-square&logo=rust&label=MSRV
 
 [link-crates]: https://crates.io/crates/kamu-logging
 [link-docs]: https://docs.rs/kamu-logging
-[link-ci]: https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-pr-synced.yml
+[link-ci]: https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-main-pushed.yml
 [link-license]: https://github.com/pt-immer/kamu-public-crates/blob/main/crates/logging
 [link-msrv]: https://github.com/pt-immer/kamu-public-crates/blob/main/Cargo.toml

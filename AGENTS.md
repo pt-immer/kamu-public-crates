@@ -327,9 +327,24 @@ the commit that lands carries the tree its head already certified. Nothing seeds
 the cache that leaves behind, because that pool is keyed per job and filling it
 means running those jobs.
 
-`on-release-published.yml` also proves the extension lane against the
-`kamu-money-core` it just published, which is the one lane input no pull request
-produces.
+That argument covers merges that went through the gate, and not the
+administrative override the ruleset permits or a direct push.
+`on-main-pushed.yml` therefore checks it rather than assuming it: the landing
+tree must be the tree a green `ci-success` already covered, found through the
+pull request the commit came from. A squash rewrites the commit and preserves
+the tree, so the tree is what it compares. It is also the workflow every `CI`
+badge reads, because a `pull_request` run is recorded under the head branch and
+never under `main`.
+
+`on-release-published.yml` also compiles and tests the extension against the
+`kamu-money-core` it just published, across every supported PostgreSQL major.
+It does not reach the YugabyteDB path, which stays with
+`just pg gate-pg-release`. Publishing that crate is the one lane input no pull
+request produces, and every other lane suite resolves it through a path patch,
+so what they prove is that the lane builds against the tree. The proof runs
+after the version is immutable on crates.io, so it diagnoses rather than gates:
+a failure there is answered by yanking and republishing, not by blocking a
+merge.
 
 `scripts/ci_paths.py` classifies every changed path and fails when a repository
 surface has no owner. `just test-scripts` proves every tracked path remains

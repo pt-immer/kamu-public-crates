@@ -25,7 +25,6 @@ jobs:
       # tag a second time under a second set of patterns.
       crate: ${{ steps.parse.outputs.crate }}
       version: ${{ steps.parse.outputs.version }}
-      publishable: ${{ steps.parse.outputs.publishable }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -163,7 +162,7 @@ jobs:
   prove-lane-against-published-core:
     name: extension against the published kamu-money-core
     needs: publish
-    if: ${{ needs.publish.outputs.crate == 'kamu-money-core' && needs.publish.outputs.publishable == 'true' }}
+    if: ${{ needs.publish.outputs.crate == 'kamu-money-core' }}
     runs-on: ubuntu-latest
     # Deliberately outside the crates-io environment: this proves a published crate, and has
     # no business holding the token that publishes one.
@@ -202,4 +201,4 @@ jobs:
           # The one setting that makes this leg different from every other lane suite: no path
           # patch, so the plain version requirement must resolve from crates.io.
           KMONEY_USE_LOCAL_CORE: "0"
-        run: just pg test-pg 18 1
+        run: just pg test-pg

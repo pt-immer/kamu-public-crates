@@ -1,0 +1,80 @@
+name: On Main Pushed
+
+# What the default branch owes, written for merge rather than copied from the gate.
+#
+# `on-pr-synced.yml` certifies a pull request. The ruleset requires that pull request to be up
+# to date, permits only squash, and requires linear history, so the commit that lands normally
+# carries the tree its head already passed -- and re-running every job over it would report
+# nothing new, only a new way to fail.
+#
+# That argument holds for merges that went THROUGH the gate. It does not hold for the
+# administrative override the ruleset permits, nor for a direct push. Those arrive certified by
+# nothing, and a release verifies a tag's ancestry without ever asking whether the commit under
+# it had a verdict.
+#
+# So this asserts the argument rather than assuming it: the landing tree must be the tree a
+# green `ci-success` already covered. A normal merge answers in seconds. Anything else fails
+# here, which is the signal that the default branch is carrying unverified content.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verified:
+    name: main carries a certified tree
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Assert the landing tree was certified
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          # The one check the ruleset requires. A tree is certified when this was green on the
+          # head that carried it.
+          REQUIRED_CHECK: ci-success
+        run: |
+          set -euo pipefail
+
+          landed_tree="$(git rev-parse "${SHA}^{tree}")"
+          echo "landed commit $SHA carries tree $landed_tree"
+
+          # A squash merge writes a new commit, so the sha differs from the head that was tested
+          # while the TREE is identical. The tree is therefore what to compare.
+          pulls="$(gh api "repos/${REPOSITORY}/commits/${SHA}/pulls" --jq '.[] | select(.merged_at != null) | .number' || true)"
+          if [ -z "$pulls" ]; then
+            echo "::error::$SHA is on the default branch with no merged pull request behind it; nothing certified it"
+            exit 1
+          fi
+
+          for number in $pulls; do
+            head_sha="$(gh api "repos/${REPOSITORY}/pulls/${number}" --jq '.head.sha')"
+            # The branch may already be deleted, so fetch the head by sha rather than by name.
+            git fetch --quiet --no-tags origin "$head_sha" 2>/dev/null || true
+            head_tree="$(git rev-parse "${head_sha}^{tree}" 2>/dev/null || echo "")"
+            if [ "$head_tree" != "$landed_tree" ]; then
+              echo "pull request #${number} head $head_sha carries a different tree; not the certificate"
+              continue
+            fi
+            conclusion="$(gh api "repos/${REPOSITORY}/commits/${head_sha}/check-runs" \
+              --jq '.check_runs[] | select(.name == env.REQUIRED_CHECK) | .conclusion' | head -n 1)"
+            if [ "$conclusion" = "success" ]; then
+              echo "pull request #${number} certified this exact tree: ${REQUIRED_CHECK} was ${conclusion}"
+              exit 0
+            fi
+            echo "pull request #${number} carries this tree but ${REQUIRED_CHECK} was '${conclusion:-absent}'"
+          done
+
+          echo "::error::no merged pull request certified tree $landed_tree with a green ${REQUIRED_CHECK}; the default branch is carrying unverified content"
+          exit 1
