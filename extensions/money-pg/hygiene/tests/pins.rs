@@ -77,66 +77,6 @@ fn every_anchored_line_carries(path: &Path, anchor: &str, expected: &str) {
     }
 }
 
-/// Every occurrence of `anchor` is followed, within the same request, by `expected`.
-///
-/// Weaker than this -- asking only that the LINE mention `expected` somewhere -- a request
-/// such as `cargo-pgrx@0.19.1,cargo-nextest@<the pin>` satisfies both the anchor and the
-/// expectation while installing a stale CLI. `expected` is the path indexed out of the
-/// published manifest, not a whole expression: the job publishing that manifest may be
-/// renamed without making this a false failure.
-fn every_anchor_is_followed_by(path: &Path, anchor: &str, expected: &str) {
-    let contents = support::read(path);
-    let mut found = 0_usize;
-    for line in contents.lines() {
-        // A comment is prose about the pin, not a request for it. The public rule exempts one
-        // explicitly, and two readers of one file disagreeing about that is a failure `just
-        // gate` cannot reproduce.
-        if line.trim_start().starts_with('#') {
-            continue;
-        }
-        for (index, _) in line.match_indices(anchor) {
-            let tail = &line[index + anchor.len()..];
-            // The expression the anchor introduces, not the rest of the line: a sibling
-            // request must not answer for this one, and a literal must not stand in front of
-            // the pin it precedes.
-            let Some((expression, _)) = tail.strip_prefix("${{").and_then(|open| open.split_once("}}"))
-            else {
-                panic!(
-                    "{}: `{}` must read `{expected}` immediately after `{anchor}`",
-                    path.display(),
-                    line.trim(),
-                )
-            };
-            // Out of the published manifest, which only two contexts carry. Asking merely for
-            // `outputs.manifest` somewhere in the expression accepts `env.pins_outputs.manifest`
-            // -- a context nothing sets, whose every pin is the empty string.
-            let reads_manifest = expression.split("fromJSON(").skip(1).any(|call| {
-                let argument = call.split(')').next().unwrap_or(call).trim();
-                (argument.starts_with("needs.") || argument.starts_with("steps."))
-                    && argument.ends_with(".outputs.manifest")
-            });
-            assert!(
-                reads_manifest,
-                "{}: `{}` must read `{expected}` out of the published manifest after `{anchor}`",
-                path.display(),
-                line.trim(),
-            );
-            assert!(
-                expression.contains(expected),
-                "{}: `{}` must read `{expected}` in the expression following `{anchor}`",
-                path.display(),
-                line.trim(),
-            );
-            found += 1;
-        }
-    }
-    assert!(
-        found > 0,
-        "{} no longer contains `{anchor}` -- this guard would pass vacuously; re-point it",
-        path.display()
-    );
-}
-
 #[test]
 fn every_pgrx_crate_takes_the_pinned_version_exactly() {
     let exact = format!("={}", pinned_version());
