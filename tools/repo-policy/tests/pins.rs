@@ -796,3 +796,24 @@ fn every_documented_path_export_appends_the_repository_tools() {
     }
     assert!(checked > 0, "no file exported a PATH; this would pass vacuously");
 }
+
+/// A published package that carries no source label stands alone in the registry: it inherits no
+/// permissions from the repository and nothing points back at what describes it. The image is
+/// published so that others can pull it, which is the half a label makes true.
+#[test]
+fn every_pushed_image_is_labelled_with_the_repository_that_describes_it() {
+    let mut pushes = 0_usize;
+    for relative in tracked(&[".github/workflows/*.yml"]) {
+        let text = read(&relative);
+        if !text.contains("docker buildx build --push") {
+            continue;
+        }
+        assert!(
+            text.contains("org.opencontainers.image.source="),
+            "{relative} pushes an image without labelling its source; the package would be \
+             published unlinked from the repository",
+        );
+        pushes += 1;
+    }
+    assert!(pushes > 0, "no workflow pushed an image; this would pass vacuously");
+}

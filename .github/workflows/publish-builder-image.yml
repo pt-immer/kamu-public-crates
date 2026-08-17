@@ -19,6 +19,18 @@ on:
       - extensions/money-pg/rust-toolchain.toml
       - .github/workflows/publish-builder-image.yml
   workflow_dispatch:
+    inputs:
+      rebuild:
+        description: "Build even though the derived tag is already published"
+        type: boolean
+        default: false
+
+# A tag names its inputs, so two runs that agree on a tag agree on its content and only one of
+# them need push it. Two runs that disagree are two different tags. Cancelling the first would
+# abandon a tag nothing else will build, so the second waits instead.
+concurrency:
+  group: publish-builder-image
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -27,6 +39,9 @@ jobs:
   publish:
     name: publish builder image
     runs-on: ubuntu-latest
+    # Installs a PostgreSQL major and compiles cargo-pgrx. Well above that, and short of the
+    # six-hour default, which is long enough for a wedged build to read as a slow one.
+    timeout-minutes: 90
     permissions:
       contents: read
       # The only job in this repository that writes a package.
@@ -71,10 +86,18 @@ jobs:
         name: Ask whether this tag was already published
         env:
           REFERENCE: ${{ steps.image.outputs.name }}:${{ steps.image.outputs.tag }}
+          REBUILD: ${{ inputs.rebuild }}
         run: |
           set -euo pipefail
+          # An image can be broken by something its tag does not name -- a base layer that was
+          # pulled mid-push, a registry that accepted a partial manifest. The tag is then correct
+          # and the image is not, and perturbing an input to move the hash would be a lie about
+          # the file it describes. This is the way back, and it is manual on purpose.
+          if [ "${REBUILD:-false}" = "true" ]; then
+            echo "published=false" >>"$GITHUB_OUTPUT"
+            echo "Rebuild requested; $REFERENCE will be built whether or not it exists."
           # Absent is the ordinary answer, not a failure; anything else is left to the build.
-          if docker buildx imagetools inspect "$REFERENCE" >/dev/null 2>&1; then
+          elif docker buildx imagetools inspect "$REFERENCE" >/dev/null 2>&1; then
             echo "published=true" >>"$GITHUB_OUTPUT"
             echo "$REFERENCE is already published; nothing decides a new image."
           else
@@ -87,11 +110,21 @@ jobs:
         env:
           REFERENCE: ${{ steps.image.outputs.name }}:${{ steps.image.outputs.tag }}
           MAJOR: ${{ steps.image.outputs.major }}
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
+          REVISION: ${{ github.sha }}
         run: |
           set -euo pipefail
+          # The source label is what links the package to this repository. Without it the package
+          # inherits no repository permissions and stands alone in the registry, which is not a
+          # cosmetic difference: an image published so that others can pull it has to be reachable
+          # from the thing that describes it.
           docker buildx build --push \
             --target builder \
             --build-arg "PG_MAJOR=${MAJOR}" \
+            --label "org.opencontainers.image.source=${SOURCE}" \
+            --label "org.opencontainers.image.revision=${REVISION}" \
+            --label "org.opencontainers.image.licenses=MIT OR Apache-2.0" \
+            --label "org.opencontainers.image.description=pgrx build environment: a pinned Rust toolchain, cargo-pgrx, PostgreSQL ${MAJOR} with development headers, and an initialised PGRX_HOME." \
             -f kamu-money-pg/Dockerfile \
             -t "$REFERENCE" \
             .
