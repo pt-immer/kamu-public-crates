@@ -765,3 +765,34 @@ fn every_tool_a_job_installs_reads_its_own_pin() {
     }
     assert!(requested > 0, "no tool was requested; this would pass vacuously");
 }
+
+/// The tool search order has one home: the `Justfile`'s `export PATH`. Both setup blocks hand a
+/// contributor a line for their own shell, and one that prepends inverts the order there while
+/// every recipe keeps the other — a machine whose doctor and whose recipes disagree, reported by
+/// nothing.
+#[test]
+fn every_documented_path_export_appends_the_repository_tools() {
+    let mut checked = 0_usize;
+    for relative in ["Justfile", "README.md", "CONTRIBUTING.md"] {
+        let text = read(relative);
+        for line in text.lines() {
+            if !line.trim_start().starts_with("export PATH") || !line.contains(".tools/bin") {
+                continue;
+            }
+            // A `just` recipe spells the inherited path as a function call; a shell spells it as
+            // a variable. An export naming neither replaces PATH rather than extending it.
+            let inherited = line
+                .find("$PATH")
+                .or_else(|| line.find("env_var(\"PATH\")"))
+                .unwrap_or_else(|| panic!("{relative} exports a PATH that drops the inherited one: {line}"));
+            let local = line.find(".tools/bin").expect("the line was selected for containing it");
+            assert!(
+                inherited < local,
+                "{relative} puts .tools/bin ahead of the inherited PATH, so the repository copy \
+                 shadows the host's: {line}",
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "no file exported a PATH; this would pass vacuously");
+}

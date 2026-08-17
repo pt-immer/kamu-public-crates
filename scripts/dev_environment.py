@@ -125,8 +125,15 @@ def resolve(binary: str) -> pathlib.Path | None:
 
 
 def is_repository_local(path: pathlib.Path) -> bool:
-    """Report whether a resolved tool is the copy setup installs."""
-    return path.parent in SEARCH_SUFFIXES
+    """Report whether a tool is the copy setup installs.
+
+    The directory is resolved and the file is not. `shutil.which` returns
+    whichever spelling `PATH` carried, so a checkout reached through a
+    symlinked parent names the same directory differently from
+    `SEARCH_SUFFIXES`. Resolving the file instead would follow a binary that
+    is a symlink into a store elsewhere, out of the directory that defines it.
+    """
+    return path.parent.resolve() in SEARCH_SUFFIXES
 
 
 def node_package_version(

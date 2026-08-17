@@ -10,16 +10,18 @@ libraries that version and release independently. The PostgreSQL extension under
 git clone --recurse-submodules https://github.com/pt-immer/kamu-public-crates.git
 cd kamu-public-crates
 python3 scripts/dev_environment.py setup
-export PATH="$PWD/.tools/bin:$PATH"
+export PATH="$PATH:$PWD/.tools/bin"
 just doctor
 ```
 
 The recursive clone matters: `kamu-iso3166` generates lookup tables from its
 vendored Git submodule. The bootstrap command works before `just` exists,
-installs the versions in `.config/dev-tools.json`, and uses `npm ci`. Exporting
-the local tool directory makes those pinned binaries available in the current
-shell. ShellCheck is an operating-system package; `just doctor` names the
-version to install when it is missing.
+installs the versions in `.config/dev-tools.json`, and uses `npm ci`. The
+export appends, matching the order the `Justfile` exports to every recipe:
+those pinned binaries answer where the host provides nothing. Prepending
+inverts that for the shell you are in, and nothing reports it. ShellCheck is an
+operating-system package; `just doctor` names the version to install when it is
+missing.
 
 Your machine's own tools answer first, and setup fills only what they do not
 provide. Why a developer machine and a CI runner provision differently, and what
