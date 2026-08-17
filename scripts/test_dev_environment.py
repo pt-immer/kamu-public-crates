@@ -135,6 +135,28 @@ class DevelopmentEnvironmentPolicyTests(unittest.TestCase):
             checked += 1
         self.assertTrue(checked, "the manifest pins no system tool to check")
 
+    def test_a_present_system_tool_names_the_copy_it_judged(self) -> None:
+        """Several may be installed, and the row has to say which one answered."""
+        checked = 0
+        for tool in tools(self.manifest, "system_tools"):
+            checks = Doctor(palette())
+            where = f"/opt/somewhere/bin/{tool['binary']}"
+            with mock.patch.object(
+                dev_environment.shutil, "which", return_value=where
+            ), mock.patch.object(
+                dev_environment,
+                "capture",
+                return_value=(0, f"{tool['binary']} {tool['version']}"),
+            ):
+                _, output = captured(
+                    lambda: dev_environment.check_system_tool(checks, tool)
+                )
+            with self.subTest(tool=tool["name"]):
+                self.assertEqual([], checks.failed)
+                self.assertIn(where, output)
+            checked += 1
+        self.assertTrue(checked, "the manifest pins no system tool to check")
+
     def test_setup_commands_install_every_required_rust_item(self) -> None:
         commands = setup_commands(self.manifest)
         rust = self.manifest["rust"]

@@ -698,10 +698,14 @@ def check_system_tool(checks: Doctor, tool: dict[str, Any]) -> None:
         checks.fail(tool["binary"], "not found", hint)
         return
     status, output = capture([path, *tool["version_args"]])
+    # The path is carried in the detail rather than handed to `check_version`, which reads one
+    # as a copy shadowing the repository's and answers with a remedy setup owns. Nothing in this
+    # section is setup's, so the remedy stays the package manager's -- and the row still says
+    # which of several installed copies was judged.
     check_version(
         checks,
         tool["binary"],
-        first_line(output),
+        f"{first_line(output)} ({path})",
         parse_version(output) if status == 0 else None,
         tool["version"],
         hint,
