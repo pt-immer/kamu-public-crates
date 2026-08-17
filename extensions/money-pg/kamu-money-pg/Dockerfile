@@ -11,22 +11,15 @@
 #
 # Keep cargo-pgrx installation above `ARG PG_MAJOR` so the matrix shares that layer.
 
-# The exact patch version `rust-toolchain.toml` pins, not a `1.96` series tag. A series tag
-# floats to the newest patch, and rustup then honours the pin by downloading a second toolchain
-# inside every container, on every run, without ever producing a wrong answer to notice it by.
-# `hygiene/tests/pins.rs` holds this equal to the toolchain file.
+# The exact patch `rust-toolchain.toml` pins. A series tag floats, and rustup then downloads a
+# second toolchain in every container. `hygiene/tests/pins.rs` holds the two equal.
 ARG RUST_VERSION=1.96.0
-# Pinned by digest as well as by tag. A tag such as `rust:<version>-trixie` is rebuilt upstream
-# whenever the distribution patches, so the same tag names different bytes over time and nothing
-# in this repository changes when it does. The digest makes that drift a diff: a base-image
-# update becomes an edit here, which is what decides the published builder image's own tag.
+# Also by digest: the tag is rebuilt upstream on distribution patches, so it names different
+# bytes over time.
 FROM rust:${RUST_VERSION}-trixie@sha256:58fe97504a0e4cbba5d85599619a589923d3e779472a6fb0840d58d1c4ba99d7 AS builder
 
-# Docker resolves the digest and ignores the tag beside it, so the version in that tag selects
-# nothing and no check outside this build can hold the two together. The image states its own
-# toolchain, which is where they can be compared: a digest updated without the version, or a
-# version bumped without the digest, stops the build instead of silently costing every run a
-# second toolchain download.
+# Docker resolves the digest and ignores the tag, so nothing outside this build can hold the two
+# together.
 ARG RUST_VERSION
 RUN test "$(rustc --version | cut -d' ' -f2)" = "$RUST_VERSION" \
     || { echo "base image is not rustc $RUST_VERSION; its digest names another toolchain" >&2; exit 1; }
@@ -95,10 +88,8 @@ WORKDIR /work
 RUN ln -s /home/pgrx/.pgrx /work/.pgrx
 
 # --- the lane's own build ---------------------------------------------------------------------
-# Everything above is the reusable builder: a toolchain, cargo-pgrx, one PostgreSQL major with
-# its development headers, and a PGRX_HOME initialised against it. The one thing in it that is
-# ours is the /work/.pgrx link, which exists because this repository's Cargo configuration forces
-# PGRX_HOME there; an extension built elsewhere ignores it. That is why it is published on its own.
+# Everything above is the reusable builder, published on its own. The one repository-specific
+# part is the /work/.pgrx link, which an extension built elsewhere ignores.
 FROM builder AS lane
 
 # Ordinary test builds use the normalized Cargo package supplied as a named

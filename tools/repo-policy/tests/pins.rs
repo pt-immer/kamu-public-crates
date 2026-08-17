@@ -377,11 +377,6 @@ fn every_republished_manifest_comes_from_the_action_that_reads_it() {
         .into_iter()
         .filter(|(_, _, name, _)| name == MANIFEST_OUTPUT)
         .map(|(source, job, _, value)| {
-            // Read through the shared reader, which requires the output name as well as the
-            // context. Taking the step id and discarding what follows `.outputs.` proved the
-            // step existed and nothing about what it publishes, so a misspelled output name
-            // satisfied it -- and resolves at run time to the empty string, leaving every job
-            // reading a manifest that is not there.
             let expression = value.trim().trim_start_matches("${{").trim_end_matches("}}").trim();
             match manifest_source(expression) {
                 Some(ManifestSource::Step(step)) => (source, job.clone(), step),
@@ -549,24 +544,17 @@ fn every_manifest_a_job_reads_is_published_by_the_job_it_names() {
 fn every_reader_of_a_manifest_expression_spells_the_same_output_name() {
     let expected = format!("outputs.{MANIFEST_OUTPUT}");
 
-    // The Actions side is derived rather than listed: anything running the action is a reader by
-    // construction, so a workflow added later is covered without anyone remembering to add it.
     let mut readers: Vec<String> = tracked(&["*.yml"])
         .into_iter()
         .filter(|relative| relative.starts_with(".github/"))
         .filter(|relative| read(relative).contains(MANIFEST_ACTION))
         .collect();
 
-    // The reader that parses the expression from outside Actions. It cannot import the constant,
-    // and nothing in its content ties it to the action except this name, so it is the one part of
-    // the set that has to be stated. The lane's hygiene crate was a second such reader until its
-    // checks moved from the workflow's install requests to the image those jobs run in.
+    // The one reader outside Actions; it cannot import the constant.
     readers.push("scripts/test_workflows.py".to_owned());
 
     for relative in &readers {
-        // Escapes dropped, because one reader spells the name inside a regex as `\.`; and read
-        // line by line, because a comment mentioning the old name would otherwise answer for a
-        // file whose parsing no longer names it at all.
+        // Escapes dropped: one reader spells the name inside a regex as `\.`.
         let text = read(relative).replace('\\', "");
         let names = text.lines().any(|line| code_of(line).contains(&expected));
         assert!(names, "{relative} reads the manifest under some other name than {expected}",);
@@ -813,16 +801,12 @@ fn every_documented_path_export_appends_the_repository_tools() {
     assert!(checked > 0, "no file exported a PATH; this would pass vacuously");
 }
 
-/// A published package that carries no source label stands alone in the registry: it inherits no
-/// permissions from the repository and nothing points back at what describes it. The image is
-/// published so that others can pull it, which is the half a label makes true.
+/// Without a source label the package is unlinked from the repository and inherits no permissions.
 #[test]
 fn every_pushed_image_is_labelled_with_the_repository_that_describes_it() {
     let mut pushes = 0_usize;
     for relative in tracked(&[".github/workflows/*.yml"]) {
         let text = read(&relative);
-        // Read as code rather than as text: a comment naming a label satisfies a whole-file
-        // search while the build that actually runs carries neither it nor the digest.
         let code: Vec<&str> = text.lines().map(code_of).collect();
         let names = |needle: &str| code.iter().any(|line| line.contains(needle));
         if !names("docker buildx build --push") {
@@ -833,9 +817,6 @@ fn every_pushed_image_is_labelled_with_the_repository_that_describes_it() {
             "{relative} pushes an image without labelling its source; the package would be \
              published unlinked from the repository",
         );
-        // The tag closes over repository inputs only, so it is discovery rather than identity.
-        // A consumer needing a fixed image pins the digest, which has to be published to be
-        // pinnable -- and `docs/TOOLCHAIN-REALMS.md` promises it is.
         assert!(
             names("containerimage.digest"),
             "{relative} pushes an image without publishing its digest; nothing immutable is \
@@ -846,11 +827,8 @@ fn every_pushed_image_is_labelled_with_the_repository_that_describes_it() {
     assert!(pushes > 0, "no workflow pushed an image; this would pass vacuously");
 }
 
-/// The inputs that decide the builder image are named twice: as the paths that trigger a run, and
-/// as the files whose hash becomes the tag. A file that is hashed but does not trigger changes
-/// the tag a run would produce without ever causing one, so the image goes on being served under
-/// a tag its own inputs no longer describe. The reverse is allowed: the workflow triggers on
-/// itself without being part of what it builds.
+/// A hashed input that does not trigger changes the tag a run would produce without causing one.
+/// The reverse is allowed: the workflow triggers on itself without being part of what it builds.
 #[test]
 fn every_hashed_builder_input_also_triggers_the_build() {
     let relative = ".github/workflows/publish-builder-image.yml";

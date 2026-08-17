@@ -21,8 +21,6 @@ jobs:
     permissions:
       contents: read
     outputs:
-      # Republished so the job below can ask which crate this release was, without parsing the
-      # tag a second time under a second set of patterns.
       crate: ${{ steps.parse.outputs.crate }}
       version: ${{ steps.parse.outputs.version }}
     steps:
@@ -154,18 +152,13 @@ jobs:
             echo "::warning::could not add github:pt-immer:rust-devs to $CRATE (token may lack the crates.io change-owners scope); add it manually or via the Add Crate Owner workflow"
           fi
 
-  # Publishing kamu-money-core is an input to the extension lane that no pull request and no
-  # push produces. Ordinary lane suites resolve the crate through a path patch, so what they
-  # prove is that the lane builds against THIS TREE. That the lane builds against the crate
-  # actually on the registry was proven only by a release recipe someone had to remember to
-  # run, which is the same as not being proven.
+  # Every other lane suite resolves kamu-money-core through a path patch; this one does not.
   prove-lane-against-published-core:
     name: extension against the published kamu-money-core
     needs: publish
     if: ${{ needs.publish.outputs.crate == 'kamu-money-core' }}
     runs-on: ubuntu-latest
-    # Deliberately outside the crates-io environment: this proves a published crate, and has
-    # no business holding the token that publishes one.
+    # Outside the crates-io environment: proves a published crate, holds no publishing token.
     permissions:
       contents: read
     steps:
@@ -184,8 +177,7 @@ jobs:
           VERSION: ${{ needs.publish.outputs.version }}
         run: |
           set -euo pipefail
-          # The sparse index lags the publish call. Asked once, this would fail on timing
-          # rather than on the thing it exists to check.
+          # The sparse index lags the publish call.
           n=1
           until python3 scripts/crates_io.py require "$CRATE" "=${VERSION}"; do
             if [ "$n" -ge 8 ]; then
@@ -198,7 +190,5 @@ jobs:
 
       - name: Compile and test the extension against the registry crate
         env:
-          # The one setting that makes this leg different from every other lane suite: no path
-          # patch, so the plain version requirement must resolve from crates.io.
           KMONEY_USE_LOCAL_CORE: "0"
         run: just pg test-pg
