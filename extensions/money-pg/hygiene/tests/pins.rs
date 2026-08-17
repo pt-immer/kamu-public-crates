@@ -1,5 +1,5 @@
 //! The lane pins two toolchains, and each is ONE fact spelled in many places: pgrx across
-//! manifests, Dockerfiles, the tool manifest and CI, and Rust across `rust-toolchain.toml`,
+//! manifests, Dockerfiles and the tool manifest, and Rust across `rust-toolchain.toml`,
 //! three container images, and the toolchain step of every CI job that enters the lane. That
 //! last one is bound in `scripts/test_workflows.py` rather than here, because which jobs those
 //! are is workflow policy; the version it compares against is read from the same
@@ -215,19 +215,18 @@ fn every_cargo_pgrx_installation_pins_the_same_version() {
         );
     }
 
-    // CI installs a prebuilt CLI and caches PGRX_HOME beside it. The cache key carries the
-    // version because a PGRX_HOME initialised by one cargo-pgrx is not interchangeable
-    // with another's -- reusing it across a bump is a silently wrong toolchain, not a
-    // slow build.
+    // CI installs no CLI at all: the lane's compiler-only jobs run inside the published build
+    // environment, which carries the one this file pins and a PGRX_HOME already initialised
+    // against it. A PGRX_HOME initialised by one cargo-pgrx is not interchangeable with
+    // another's, so the image supplying both together is what makes them agree.
     //
-    // Both read the pin rather than restating it, so what is checked here is that they
-    // reach it. That the pin equals THIS version is held by
-    // `the_tool_manifest_installs_the_pinned_cargo_pgrx`, one claim in one place; asserting
-    // the literal here would be a second copy of it that a bump would have to find.
+    // What is checkable offline is that those jobs take the image from the single published
+    // reference rather than each naming one, and that the reference is a digest. A tag would
+    // close over this repository's inputs without covering the apt state resolved while the
+    // image builds, so two images could answer to it and only one carries this version.
     let workflow = repository.join(".github/workflows/on-pr-synced.yml");
-    let pin = "ci_only_tools['cargo-pgrx'].version";
-    every_anchor_is_followed_by(&workflow, "cargo-pgrx@", pin);
-    every_anchor_is_followed_by(&workflow, "key: pgrx-", pin);
+    every_anchored_line_carries(&workflow, "      image: ", "needs.changes.outputs.builder_image");
+    every_anchored_line_carries(&repository.join(".config/builder-image"), "money-pg-builder", "@sha256:");
 }
 
 /// The lane's Rust toolchain, from the file rustup itself obeys.

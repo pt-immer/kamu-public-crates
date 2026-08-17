@@ -1,0 +1,10 @@
+# The pgrx build environment the lane's compiler-only jobs run inside, published by
+# .github/workflows/publish-builder-image.yml.
+#
+# Pinned by DIGEST, not by tag. The tag closes over this repository's inputs; the image also
+# depends on the apt indexes resolved while it builds, so two builds of one tag can differ. The
+# digest is the identity. See docs/TOOLCHAIN-REALMS.md.
+#
+# Publishing happens from the default branch, so a change to the Dockerfile and the reference
+# below cannot land in the same run: the image is published on merge, and this moves after.
+ghcr.io/pt-immer/kamu-public-crates/money-pg-builder@sha256:92c5b2def1b2c74584de954de30b24371fc0746c59c216b0c3cf8e9cb9318850
