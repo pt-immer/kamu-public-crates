@@ -16,7 +16,9 @@ on:
     branches: [main]
     paths:
       - extensions/money-pg/kamu-money-pg/Dockerfile
+      - extensions/money-pg/kamu-money-pg/ca-certs/**
       - extensions/money-pg/rust-toolchain.toml
+      - extensions/money-pg/.dockerignore
       - .github/workflows/publish-builder-image.yml
   workflow_dispatch:
     inputs:
@@ -52,9 +54,11 @@ jobs:
       - id: image
         name: Derive the tag from what decides the image
         env:
-          # hashFiles covers every instruction and both versions the Dockerfile states, so a
-          # change to any of them yields a tag that has never been pushed.
-          INPUTS_HASH: ${{ hashFiles('extensions/money-pg/kamu-money-pg/Dockerfile', 'extensions/money-pg/rust-toolchain.toml') }}
+          # Every input the builder stage reads, so a change to any of them yields a tag that has
+          # never been pushed. The trust anchors and the ignore file are inputs as much as the
+          # instructions are: a rotated anchor that left the tag alone would be published once
+          # and then never rebuilt, because no other trigger exists.
+          INPUTS_HASH: ${{ hashFiles('extensions/money-pg/kamu-money-pg/Dockerfile', 'extensions/money-pg/kamu-money-pg/ca-certs/**', 'extensions/money-pg/rust-toolchain.toml', 'extensions/money-pg/.dockerignore') }}
           DOCKERFILE: extensions/money-pg/kamu-money-pg/Dockerfile
           OWNER_AND_NAME: ${{ github.repository }}
         run: |

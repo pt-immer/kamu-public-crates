@@ -827,3 +827,42 @@ fn every_pushed_image_is_labelled_with_the_repository_that_describes_it() {
     }
     assert!(pushes > 0, "no workflow pushed an image; this would pass vacuously");
 }
+
+/// The inputs that decide the builder image are named twice: as the paths that trigger a run, and
+/// as the files whose hash becomes the tag. A file that is hashed but does not trigger changes
+/// the tag a run would produce without ever causing one, so the image goes on being served under
+/// a tag its own inputs no longer describe. The reverse is allowed: the workflow triggers on
+/// itself without being part of what it builds.
+#[test]
+fn every_hashed_builder_input_also_triggers_the_build() {
+    let relative = ".github/workflows/publish-builder-image.yml";
+    let text = read(relative);
+
+    let triggers: BTreeSet<String> = text
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("- ").map(str::trim))
+        .filter(|entry| entry.contains('/') && !entry.contains(' '))
+        .map(str::to_owned)
+        .collect();
+    assert!(!triggers.is_empty(), "{relative} lists no trigger path; this would pass vacuously");
+
+    let hashed: BTreeSet<String> = Regex::new(r"hashFiles\(([^)]*)\)")
+        .expect("literal pattern")
+        .captures_iter(&text)
+        .flat_map(|found| {
+            found[1]
+                .split(',')
+                .map(|argument| argument.trim().trim_matches('\'').to_owned())
+                .collect::<Vec<_>>()
+        })
+        .filter(|argument| !argument.is_empty())
+        .collect();
+    assert!(!hashed.is_empty(), "{relative} hashes no input; this would pass vacuously");
+
+    for input in &hashed {
+        assert!(
+            triggers.contains(input),
+            "{relative} hashes {input} into the tag but never builds when it changes",
+        );
+    }
+}
