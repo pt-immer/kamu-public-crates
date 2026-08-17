@@ -48,11 +48,14 @@ The consequence is worth stating plainly, because it is not obvious:
 > A host copy that does **not** answer its pin still comes first, and shadows
 > anything `just setup` installs.
 
-`just setup` therefore refuses to install beneath one. When the host carries a
-tool that misses its pin, setup names the path and asks for that copy to be
-upgraded or removed, rather than installing a binary no recipe would reach.
-Doctor's marker says which copy answered: `•` for the host, `✓` for a
-repository-local one.
+`just setup` therefore refuses to install a Cargo tool beneath one. When the host
+carries a copy that misses its pin, setup names the path and asks for that copy
+to be upgraded or removed, rather than installing a binary no recipe would
+reach. A Node tool is reported rather than skipped, because npm installs the
+whole tree in one command and cannot leave one package out; the install below
+`node_modules/.bin` succeeds and no recipe reaches it either. Doctor's marker
+says which copy answered: `•` for the host, `✓` for a repository-local one, and
+a failing row names the path it judged.
 
 ## What installs what
 
@@ -66,8 +69,10 @@ costs nothing and buys a reproducible run.
 
 PostgreSQL provisioning for the extension lane belongs to the lane's own
 container image, which installs the server and its development headers and
-initialises `PGRX_HOME` against them. A job that provisions PostgreSQL by hand
-is re-implementing that image.
+initialises `PGRX_HOME` against them. Two lane jobs still provision it by hand —
+an apt line, a `pg_config` path, a `PGRX_HOME` initialisation — and each states
+the major a third time. Retiring that is what the builder image below is for.
+They move once it is published, which cannot happen in the same change.
 
 ## The builder image
 

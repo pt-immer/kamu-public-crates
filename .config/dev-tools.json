@@ -32,13 +32,15 @@
     },
     "cargo-llvm-cov": {
       "version": "0.8.7",
+      "exact": "the percentage it reports is compared against a fixed floor, so a different counter moves the verdict",
       "version_args": [
         "llvm-cov",
         "--version"
       ]
     },
     "cargo-deny": {
-      "version": "0.20.2"
+      "version": "0.20.2",
+      "exact": "its findings are the verdict, and its advisory and ban sets move between releases"
     },
     "cargo-nextest": {
       "version": "0.9.140"
