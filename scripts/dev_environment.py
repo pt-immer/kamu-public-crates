@@ -145,12 +145,17 @@ def node_package_version(
     Asking the binary is not an option: markdownlint-cli2 treats every
     argument as a glob, so a version query lints the whole repository.
 
-    The repository's own install is read by path, because `npm ci --no-bin-links`
-    and filesystems without symlinks leave `.bin` entries that lead nowhere. The
-    walk up from the resolved binary is what covers a system install, whose shim
-    symlinks into a package directory elsewhere.
+    The version answered is the one belonging to the binary handed in, because
+    that is the copy a recipe will run. The walk up from the resolved binary is
+    what covers an install whose shim symlinks into a package directory
+    elsewhere.
+
+    The repository's own package is read by path only for a repository-local
+    binary, where `npm ci --no-bin-links` and filesystems without symlinks leave
+    `.bin` entries that lead nowhere. Offering it to a host binary as well would
+    let a host copy be judged by the version the repository pinned, and pass.
     """
-    candidates = [NODE_MODULES / package]
+    candidates = [NODE_MODULES / package] if is_repository_local(binary) else []
     candidates.extend(binary.resolve().parents)
     for directory in candidates:
         manifest = directory / "package.json"

@@ -9,6 +9,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import tempfile
 import unittest
 from collections.abc import Callable
@@ -320,6 +321,53 @@ class NodeVersionTests(unittest.TestCase):
                 node_package_version(binary, "markdownlint-cli2"),
             )
 
+    def test_a_host_binary_is_not_judged_by_the_repository_package(self) -> None:
+        """Both copies installed, deliberately different versions.
+
+        The host answers resolution, so the version judged has to be the host's.
+        Reading the repository's package for it would pass a machine whose
+        recipes run the other one.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            host = self.build(root, "markdownlint-cli2", "0.22.0")
+            repository = dev_environment.NODE_MODULES / "markdownlint-cli2"
+            existed = repository.exists()
+            repository.mkdir(parents=True, exist_ok=True)
+            manifest = repository / "package.json"
+            try:
+                manifest.write_text(
+                    json.dumps({"name": "markdownlint-cli2", "version": "0.23.2"}),
+                    encoding="utf-8",
+                )
+                self.assertFalse(is_repository_local(host))
+                self.assertEqual(
+                    "0.22.0",
+                    node_package_version(host, "markdownlint-cli2"),
+                )
+            finally:
+                if not existed:
+                    shutil.rmtree(repository)
+
+    def test_a_repository_binary_still_falls_back_to_its_package(self) -> None:
+        """`npm ci --no-bin-links` leaves a `.bin` entry that leads nowhere."""
+        repository = dev_environment.NODE_MODULES / "markdownlint-cli2"
+        existed = repository.exists()
+        repository.mkdir(parents=True, exist_ok=True)
+        dead = dev_environment.NODE_BIN / "markdownlint-cli2"
+        try:
+            (repository / "package.json").write_text(
+                json.dumps({"name": "markdownlint-cli2", "version": "0.23.2"}),
+                encoding="utf-8",
+            )
+            self.assertTrue(is_repository_local(dead))
+            self.assertEqual(
+                "0.23.2",
+                node_package_version(dead, "markdownlint-cli2"),
+            )
+        finally:
+            if not existed:
+                shutil.rmtree(repository)
+
     def test_a_bin_symlink_is_followed_to_its_package(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             binary = self.build(root, "markdownlint-cli2", "0.23.2")
@@ -353,7 +401,11 @@ class NodeVersionTests(unittest.TestCase):
             shim = executable(shims, "markdownlint-cli2")
             self.assertFalse(shim.is_symlink())
 
-            with mock.patch.object(dev_environment, "NODE_MODULES", modules):
+            # The shim is the repository's own: that is what licenses reading the
+            # package by path when its parents never reach one.
+            with mock.patch.object(
+                dev_environment, "NODE_MODULES", modules
+            ), mock.patch.object(dev_environment, "SEARCH_SUFFIXES", (shims,)):
                 self.assertEqual(
                     "0.23.2",
                     node_package_version(shim, "markdownlint-cli2"),
