@@ -11,19 +11,25 @@
 #
 # Keep cargo-pgrx installation above `ARG PG_MAJOR` so the matrix shares that layer.
 
-# The EXACT patch version `rust-toolchain.toml` pins, not the `1.96` series tag.
-#
-# The series tag floats to the newest patch — it was serving 1.96.1 — while the lane pins
-# 1.96.0. rustup honours the pin, so the tests always ran on the right compiler; what it did
-# quietly was download a SECOND toolchain, 305 MB of it, inside every container, at run time,
-# on every run. Naming the exact version makes the base image the pinned toolchain, so rustup
-# has nothing to fetch. `hygiene/tests/pins.rs` asserts the two agree.
+# The exact patch version `rust-toolchain.toml` pins, not a `1.96` series tag. A series tag
+# floats to the newest patch, and rustup then honours the pin by downloading a second toolchain
+# inside every container, on every run, without ever producing a wrong answer to notice it by.
+# `hygiene/tests/pins.rs` holds this equal to the toolchain file.
 ARG RUST_VERSION=1.96.0
 # Pinned by digest as well as by tag. A tag such as `rust:<version>-trixie` is rebuilt upstream
-# whenever Debian patches, so the same tag names different bytes over time and nothing in this
-# repository changes when it does. The digest makes that drift a diff: a base-image update
-# becomes an edit here, which is what decides the published builder image's own tag.
+# whenever the distribution patches, so the same tag names different bytes over time and nothing
+# in this repository changes when it does. The digest makes that drift a diff: a base-image
+# update becomes an edit here, which is what decides the published builder image's own tag.
 FROM rust:${RUST_VERSION}-trixie@sha256:58fe97504a0e4cbba5d85599619a589923d3e779472a6fb0840d58d1c4ba99d7 AS builder
+
+# Docker resolves the digest and ignores the tag beside it, so the version in that tag selects
+# nothing and no check outside this build can hold the two together. The image states its own
+# toolchain, which is where they can be compared: a digest updated without the version, or a
+# version bumped without the digest, stops the build instead of silently costing every run a
+# second toolchain download.
+ARG RUST_VERSION
+RUN test "$(rustc --version | cut -d' ' -f2)" = "$RUST_VERSION" \
+    || { echo "base image is not rustc $RUST_VERSION; its digest names another toolchain" >&2; exit 1; }
 
 # Must match the `pgrx` dependency in kamu-money-pg/Cargo.toml exactly. cargo-pgrx refuses to build
 # an extension whose pgrx version differs from its own — a good refusal, since the generated

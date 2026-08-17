@@ -264,6 +264,15 @@ fn every_container_starts_from_the_pinned_rust_toolchain() {
     // does -- which is exactly what the published builder image's derived tag cannot see.
     every_anchored_line_carries(&lane.join("kamu-money-pg/Dockerfile"), "FROM rust:", "@sha256:");
 
+    // Docker resolves that digest and ignores the tag, so the assertion above proves a digest is
+    // present and nothing about which toolchain it names. Held where the answer exists: the build
+    // asks the image. Without this the two lines agree with each other and with nothing else.
+    every_anchored_line_carries(
+        &lane.join("kamu-money-pg/Dockerfile"),
+        "rustc --version",
+        "$RUST_VERSION",
+    );
+
     // The YugabyteDB images have no Rust base to inherit, so they install rustup themselves and
     // name the toolchain on the command line.
     for image in ["kamu-money-pg/yb/Dockerfile", "kamu-money-pg/yb/Dockerfile.pg15"] {
