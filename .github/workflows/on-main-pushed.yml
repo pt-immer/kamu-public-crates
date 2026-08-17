@@ -1,24 +1,13 @@
 name: On Main Pushed
 
-# What the default branch owes, written for merge rather than copied from the gate.
-#
-# `on-pr-synced.yml` certifies a pull request. The ruleset requires that pull request to be up
-# to date, permits only squash, and requires linear history, so the commit that lands normally
-# carries the tree its head already passed -- and re-running every job over it would report
-# nothing new, only a new way to fail.
-#
-# That argument holds for merges that went THROUGH the gate. It does not hold for the
-# administrative override the ruleset permits, nor for a direct push. Those arrive certified by
-# nothing, and a release verifies a tag's ancestry without ever asking whether the commit under
-# it had a verdict.
-#
-# So this asserts the argument rather than assuming it: the landing tree must be the tree a
-# green `ci-success` already covered. A normal merge answers in seconds. Anything else fails
-# here, which is the signal that the default branch is carrying unverified content.
+# A merge normally lands the tree its pull request already certified; the administrative
+# override and a direct push do not. This checks that certificate rather than recompiling, and
+# is the workflow the CI badges read -- a pull_request run is never attributed to this branch.
 
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -41,8 +30,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.sha }}
           REPOSITORY: ${{ github.repository }}
-          # The one check the ruleset requires. A tree is certified when this was green on the
-          # head that carried it.
           REQUIRED_CHECK: ci-success
         run: |
           set -euo pipefail
@@ -50,8 +37,7 @@ jobs:
           landed_tree="$(git rev-parse "${SHA}^{tree}")"
           echo "landed commit $SHA carries tree $landed_tree"
 
-          # A squash merge writes a new commit, so the sha differs from the head that was tested
-          # while the TREE is identical. The tree is therefore what to compare.
+          # A squash rewrites the commit and preserves the tree, so the tree is the comparison.
           pulls="$(gh api "repos/${REPOSITORY}/commits/${SHA}/pulls" --jq '.[] | select(.merged_at != null) | .number' || true)"
           if [ -z "$pulls" ]; then
             echo "::error::$SHA is on the default branch with no merged pull request behind it; nothing certified it"
@@ -60,7 +46,6 @@ jobs:
 
           for number in $pulls; do
             head_sha="$(gh api "repos/${REPOSITORY}/pulls/${number}" --jq '.head.sha')"
-            # The branch may already be deleted, so fetch the head by sha rather than by name.
             git fetch --quiet --no-tags origin "$head_sha" 2>/dev/null || true
             head_tree="$(git rev-parse "${head_sha}^{tree}" 2>/dev/null || echo "")"
             if [ "$head_tree" != "$landed_tree" ]; then

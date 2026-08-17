@@ -1,17 +1,12 @@
 name: On PR Synced
 
-# One event. Merging used to re-run every job below on a tree this workflow had already
-# certified: the branch ruleset requires a pull request to be up to date before it merges,
-# permits only squash, and requires linear history, so the commit landing on the default
-# branch carries the same tree as the head that just passed. The second run could therefore
-# report nothing new -- only a new way to fail, which is what a registry stall reddening the
-# default branch on an already-green tree turned out to be.
-#
-# Nothing seeds the shared cache in its place. The pool it left behind was keyed per job, so
-# populating it means running those jobs, which is the duplicate this removes.
+# No push trigger: the ruleset requires an up-to-date branch, squash-only merges and linear
+# history, so a merge lands the tree this run already certified. Nothing seeds the cache that
+# leaves behind either -- that pool is keyed per job, so filling it means running those jobs.
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  workflow_dispatch:
 
 
 
@@ -53,16 +48,24 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          DISPATCH_HEAD: ${{ github.sha }}
         run: |
-          # This workflow classifies the diff of one pull request. An event carrying no base
-          # to compare would leave both ends empty, and every class would come back false --
-          # a full green with nothing checked. Refuse instead.
-          if [[ "$EVENT_NAME" != "pull_request" ]]; then
-            echo "::error::classify: $EVENT_NAME names no base to diff; this workflow answers pull_request"
-            exit 1
-          fi
-          base="$PR_BASE"
-          head="$PR_HEAD"
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request)
+              base="$PR_BASE"
+              head="$PR_HEAD"
+              ;;
+            workflow_dispatch)
+              # No base: check everything. The empty tree makes every tracked file read as added.
+              base="$(git hash-object -t tree /dev/null)"
+              head="$DISPATCH_HEAD"
+              ;;
+            *)
+              echo "::error::classify: $EVENT_NAME names no base to diff"
+              exit 1
+              ;;
+          esac
           python3 scripts/ci_paths.py emit --base "$base" --head "$head"
 
   fmt:
