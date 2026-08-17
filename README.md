@@ -8,7 +8,7 @@
 [![Rust 1.94+](https://img.shields.io/badge/Rust-1.94%2B-000000?style=for-the-badge&logo=rust)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue?style=for-the-badge)](#license)
 
-Nine independently versioned public crates. One deliberately excluded PostgreSQL extension lane.
+Independently versioned public crates. One deliberately excluded PostgreSQL extension lane.
 
 [Choose a crate](#choose-a-crate) ·
 [See the architecture](#architecture) ·
@@ -78,10 +78,10 @@ source manifests can lead them while a release is being prepared.
 ### The excluded PostgreSQL lane
 
 [`extensions/money-pg`](extensions/money-pg) is a nested Cargo workspace for the
-`kmoney` pgrx extension and its YugabyteDB harness. It is not a tenth public
-crate and cannot be built by the root `--workspace` commands. The separation
-keeps pgrx patches, profiles, lockfiles, and Docker-heavy validation out of the
-nine publishable crates.
+`kmoney` pgrx extension and its YugabyteDB harness. It is not a public crate
+and cannot be built by the root `--workspace` commands. The separation keeps
+pgrx patches, profiles, lockfiles, and Docker-heavy validation out of the
+publishable crates.
 
 Use `just pg <recipe>` to enter that lane. Its
 [`DESIGN.md`](extensions/money-pg/DESIGN.md) defines the boundary; the
@@ -97,7 +97,7 @@ build time:
 git clone --recurse-submodules https://github.com/pt-immer/kamu-public-crates.git
 cd kamu-public-crates
 python3 scripts/dev_environment.py setup
-export PATH="$PWD/.tools/bin:$PATH"
+export PATH="$PATH:$PWD/.tools/bin"
 just doctor
 ```
 
@@ -105,7 +105,7 @@ The normal loop is short:
 
 ```sh
 just check-all  # fast: format, Clippy, tests
-just gate       # complete barrier for the nine public crates
+just gate       # complete barrier for the public crates
 just ci         # gate plus package dry-runs
 ```
 

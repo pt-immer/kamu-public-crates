@@ -21,11 +21,11 @@ TOOLS_BIN = ROOT / ".tools" / "bin"
 NODE_MODULES = ROOT / "node_modules"
 NODE_BIN = NODE_MODULES / ".bin"
 
-# The Justfile exports this prefix order ahead of PATH, so a recipe runs the
-# repository-local copy where setup installed one and the system copy where it
-# did not. Doctor searches the same order, or it reports on a binary no recipe
-# would ever run.
-SEARCH_PREFIXES = (TOOLS_BIN, NODE_BIN)
+# The Justfile appends these AFTER PATH, so a recipe runs the host's own copy
+# where the host provides one and the repository-local copy where it does not.
+# Doctor searches the same order, or it reports on a binary no recipe would ever
+# run. See docs/TOOLCHAIN-REALMS.md.
+SEARCH_SUFFIXES = (TOOLS_BIN, NODE_BIN)
 SETUP_HINT = "run just setup"
 
 
@@ -113,20 +113,27 @@ def search_path() -> str:
     directory, so an unset PATH would otherwise let a file sitting in the
     repository root answer for a pinned tool — and doctor runs what it finds.
     """
-    entries = [str(prefix) for prefix in SEARCH_PREFIXES]
-    entries.extend(os.environ.get("PATH", "").split(os.pathsep))
+    entries = os.environ.get("PATH", "").split(os.pathsep)
+    entries.extend(str(suffix) for suffix in SEARCH_SUFFIXES)
     return os.pathsep.join(entry for entry in entries if entry)
 
 
 def resolve(binary: str) -> pathlib.Path | None:
-    """Find one tool the way a recipe does: repository-local, then PATH."""
+    """Find one tool the way a recipe does: the host's PATH, then repository-local."""
     found = shutil.which(binary, path=search_path())
     return pathlib.Path(found) if found else None
 
 
 def is_repository_local(path: pathlib.Path) -> bool:
-    """Report whether a resolved tool is the copy setup installs."""
-    return path.parent in SEARCH_PREFIXES
+    """Report whether a tool is the copy setup installs.
+
+    The directory is resolved and the file is not. `shutil.which` returns
+    whichever spelling `PATH` carried, so a checkout reached through a
+    symlinked parent names the same directory differently from
+    `SEARCH_SUFFIXES`. Resolving the file instead would follow a binary that
+    is a symlink into a store elsewhere, out of the directory that defines it.
+    """
+    return path.parent.resolve() in SEARCH_SUFFIXES
 
 
 def node_package_version(
@@ -138,12 +145,17 @@ def node_package_version(
     Asking the binary is not an option: markdownlint-cli2 treats every
     argument as a glob, so a version query lints the whole repository.
 
-    The repository's own install is read by path, because `npm ci --no-bin-links`
-    and filesystems without symlinks leave `.bin` entries that lead nowhere. The
-    walk up from the resolved binary is what covers a system install, whose shim
-    symlinks into a package directory elsewhere.
+    The version answered is the one belonging to the binary handed in, because
+    that is the copy a recipe will run. The walk up from the resolved binary is
+    what covers an install whose shim symlinks into a package directory
+    elsewhere.
+
+    The repository's own package is read by path only for a repository-local
+    binary, where `npm ci --no-bin-links` and filesystems without symlinks leave
+    `.bin` entries that lead nowhere. Offering it to a host binary as well would
+    let a host copy be judged by the version the repository pinned, and pass.
     """
-    candidates = [NODE_MODULES / package]
+    candidates = [NODE_MODULES / package] if is_repository_local(binary) else []
     candidates.extend(binary.resolve().parents)
     for directory in candidates:
         manifest = directory / "package.json"
@@ -161,13 +173,58 @@ def node_package_version(
     return None
 
 
-def local_tool_is_exact(tool: dict[str, Any]) -> bool:
-    """Check one repository-local Cargo binary against its manifest version."""
-    binary = TOOLS_BIN / tool["binary"]
-    if not binary.is_file():
-        return False
-    status, output = capture([str(binary), *tool["version_args"]])
-    return status == 0 and contains_version(output, tool["version"])
+# A tuple, so a caller that reaches the module constant and mutates it fails at the
+# mistake rather than silently rewriting the version query of every tool below.
+DEFAULT_VERSION_ARGS = ("--version",)
+
+
+TOOL_SECTION_SUFFIX = "_tools"
+
+# Sections CI installs from and setup does not; doctor reports on what a developer runs.
+# Found by prefix rather than listed, so a second CI-only section is a recognised kind rather
+# than one that stops doctor.
+CI_SECTION_PREFIX = "ci_"
+
+
+def tool_sections(manifest: dict[str, Any]) -> set[str]:
+    """Every tool section the manifest states, found by shape rather than listed."""
+    return {key for key in manifest if key.endswith(TOOL_SECTION_SUFFIX)}
+
+
+def tools(manifest: dict[str, Any], section: str) -> list[dict[str, Any]]:
+    """Every tool in a section, with the defaults an entry may omit.
+
+    The key is the name the tool is requested and installed by, so an entry states
+    `crate`, `package` or `binary` only where one differs from it, and
+    `version_args` only where asking for a version is not `--version`. Restating a
+    default is how the same string comes to be maintained in two places.
+    """
+    resolved = []
+    for name, entry in manifest[section].items():
+        merged: dict[str, Any] = {
+            "name": name,
+            "crate": name,
+            "package": name,
+            "binary": name,
+            "version_args": DEFAULT_VERSION_ARGS,
+            # Why this tool must be the exact version rather than at least it. Absent is a
+            # floor: on a developer machine any version at or above the pin satisfies it.
+            "exact": None,
+        }
+        # Every field is optional, so a key this does not know is a default silently kept:
+        # `binry` leaves the binary named after the key, and doctor reports a tool missing
+        # that is installed.
+        unknown = set(entry) - set(merged) - {"version"}
+        if unknown:
+            raise SystemExit(
+                f"{MANIFEST_PATH}: {section}.{name} states {sorted(unknown)}, which nothing reads"
+            )
+        merged.update(entry)
+        # The entry's own list belongs to the loaded manifest; handing it out would let one
+        # caller's edit reach every later reader of the same document.
+        merged["version_args"] = list(merged["version_args"])
+        resolved.append(merged)
+    return resolved
 
 
 def setup_commands(manifest: dict[str, Any]) -> list[list[str]]:
@@ -247,16 +304,45 @@ def setup(manifest: dict[str, Any]) -> int:
 
     TOOLS_BIN.parent.mkdir(parents=True, exist_ok=True)
     primary = manifest["rust"]["primary"]
-    for tool in manifest["cargo_tools"]:
-        if local_tool_is_exact(tool):
-            print(
-                f"= {tool['binary']} {tool['version']} already installed",
-                flush=True,
-            )
+    shadowed = []
+    for tool in tools(manifest, "cargo_tools"):
+        found = resolve(tool["binary"])
+        installed = None
+        if found is not None:
+            status, output = capture([str(found), *tool["version_args"]])
+            installed = parse_version(output) if status == 0 else None
+        if tool_satisfied(tool, installed):
+            where = "repository-local" if is_repository_local(found) else "on this host"
+            print(f"= {tool['binary']} already {where}", flush=True)
+            continue
+        # The host answers before the repository-local copy, so installing beneath an
+        # unsatisfying host copy leaves a binary no recipe will ever run. Say so rather
+        # than reporting an install that changes nothing.
+        if found is not None and not is_repository_local(found):
+            shadowed.append((tool, found))
             continue
         run(cargo_install_command(primary, tool))
 
     run(commands[-1])
+
+    # npm installs the whole tree in one command, so a shadowed Node tool cannot be
+    # skipped the way a Cargo one is. It is reported for the same reason: the install
+    # below `node_modules/.bin` succeeds and no recipe will ever reach it.
+    for tool in tools(manifest, "node_tools"):
+        found = resolve(tool["binary"])
+        if found is None or is_repository_local(found):
+            continue
+        actual = node_package_version(found, tool["package"])
+        if not tool_satisfied(tool, parse_version(actual) if actual else None):
+            shadowed.append((tool, found))
+
+    for tool, found in shadowed:
+        print(
+            f"! {tool['binary']} on this host does not answer its pin, and it comes "
+            f"before the repository-local copy; upgrade or remove {found}",
+            file=sys.stderr,
+        )
+
     return doctor(manifest)
 
 
@@ -397,36 +483,79 @@ def check_bootstrap(
     )
 
 
-def check_floor(
+def pin_is_exact(exact: str | None) -> bool:
+    """Whether a pin is exact, decided in one place.
+
+    A pin is exact when the entry states why, and a floor otherwise. Setup and
+    doctor both decide it, and a truthiness test here against an emptiness test
+    there would let one install a version the other rejects.
+    """
+    return exact is not None
+
+
+def check_version(
     checks: Doctor,
     label: str,
     detail: str,
     installed: tuple[int, ...] | None,
     pinned: str,
     hint: str,
+    exact: str | None = None,
     path: pathlib.Path | None = None,
 ) -> None:
-    """Judge one tool against its pinned floor and record the verdict.
+    """Judge one tool against its pin and record the verdict.
+
+    A pin is a floor unless the entry states why it must be exact, and the row
+    prints the comparison it made so the two classes never read the same.
 
     A version that cannot be read is reported as unreadable, never as
     satisfied: a check that cannot see its input has not passed it.
     """
-    floor = parse_version(pinned)
-    if floor is None:
+    wanted = parse_version(pinned)
+    if wanted is None:
         checks.fail(label, detail, f"unreadable pin {pinned} in the manifest")
-    elif installed is None:
+        return
+    if installed is None:
         checks.fail(label, detail, f"no readable version; {hint}")
-    elif not satisfies_floor(installed, floor):
-        checks.fail(label, detail, f"below the pinned {pinned}; {hint}")
+        return
+
+    # The host answers before anything setup installs, so a host copy that misses
+    # its pin cannot be fixed by installing another one. Naming setup here would
+    # send the reader to a command that refuses this exact case.
+    if path is not None and not is_repository_local(path):
+        hint = f"upgrade or remove {path}"
+
+    if pin_is_exact(exact):
+        satisfied = installed == wanted
+        comparison = f"= {pinned}"
+        remedy = f"is not the pinned {pinned} ({exact}); {hint}"
     else:
-        # ShellCheck names itself on line one and versions itself on line two,
-        # so the banner alone does not always show what was compared.
-        found = ".".join(str(part) for part in installed)
-        shown = detail if found in detail else f"{detail} {found}"
-        if path is None or is_repository_local(path):
-            checks.ok(label, f"{shown}  ≥ {pinned}")
-        else:
-            checks.ok_system(label, f"{shown}  ≥ {pinned}", path)
+        satisfied = satisfies_floor(installed, wanted)
+        comparison = f"≥ {pinned}"
+        remedy = f"below the pinned {pinned}; {hint}"
+
+    if not satisfied:
+        checks.fail(label, detail, remedy)
+        return
+
+    # ShellCheck names itself on line one and versions itself on line two,
+    # so the banner alone does not always show what was compared.
+    found = ".".join(str(part) for part in installed)
+    shown = detail if found in detail else f"{detail} {found}"
+    if path is None or is_repository_local(path):
+        checks.ok(label, f"{shown}  {comparison}")
+    else:
+        checks.ok_system(label, f"{shown}  {comparison}", path)
+
+
+def tool_satisfied(tool: dict[str, Any], installed: tuple[int, ...] | None) -> bool:
+    """Whether a read version answers this tool's pin, by its own class."""
+    wanted = parse_version(tool["version"])
+    if wanted is None or installed is None:
+        return False
+    if pin_is_exact(tool["exact"]):
+        return installed == wanted
+    return satisfies_floor(installed, wanted)
 
 
 def check_cargo_tool(checks: Doctor, tool: dict[str, Any]) -> None:
@@ -437,13 +566,14 @@ def check_cargo_tool(checks: Doctor, tool: dict[str, Any]) -> None:
         checks.fail(binary, "not found", SETUP_HINT)
         return
     status, output = capture([str(path), *tool["version_args"]])
-    check_floor(
+    check_version(
         checks,
         binary,
         first_line(output),
         parse_version(output) if status == 0 else None,
         tool["version"],
         SETUP_HINT,
+        tool["exact"],
         path,
     )
 
@@ -463,13 +593,14 @@ def check_node_tool(checks: Doctor, tool: dict[str, Any]) -> None:
             f"no {tool['package']} package.json beside it; {SETUP_HINT}",
         )
         return
-    check_floor(
+    check_version(
         checks,
         binary,
         f"{binary} {actual}",
         parse_version(actual),
         tool["version"],
         SETUP_HINT,
+        tool["exact"],
         path,
     )
 
@@ -546,21 +677,49 @@ def check_targets(
         )
 
 
+def system_install_hint(tool: dict[str, Any]) -> str:
+    """What to do about a tool `just setup` cannot install.
+
+    It names the version because setup will not supply one, and it is built from the entry
+    so that version is not also written beside the pin. The package is what a package manager
+    is asked for, which an entry states where it differs from the name the tool is run by.
+    """
+    return (
+        f"install {tool['package']} {tool['version']} with the operating system "
+        "package manager, then rerun setup"
+    )
+
+
 def check_system_tool(checks: Doctor, tool: dict[str, Any]) -> None:
     """Check one tool the operating system package manager owns."""
+    hint = system_install_hint(tool)
     path = shutil.which(tool["binary"])
     if path is None:
-        checks.fail(tool["binary"], "not found", tool["install_hint"])
+        checks.fail(tool["binary"], "not found", hint)
         return
     status, output = capture([path, *tool["version_args"]])
-    check_floor(
+    # The path is carried in the detail rather than handed to `check_version`, which reads one
+    # as a copy shadowing the repository's and answers with a remedy setup owns. Nothing in this
+    # section is setup's, so the remedy stays the package manager's -- and the row still says
+    # which of several installed copies was judged.
+    check_version(
         checks,
         tool["binary"],
-        first_line(output),
+        f"{first_line(output)} ({path})",
         parse_version(output) if status == 0 else None,
         tool["version"],
-        tool["install_hint"],
+        hint,
+        tool["exact"],
     )
+
+
+# Which checker owns each tool section, and the banner it reports under. A section absent
+# here stops doctor; see the dispatch in `doctor`.
+SECTION_CHECKS = {
+    "cargo_tools": ("Repository tools", check_cargo_tool),
+    "node_tools": ("Repository tools", check_node_tool),
+    "system_tools": ("System tools", check_system_tool),
+}
 
 
 def doctor(manifest: dict[str, Any]) -> int:
@@ -568,6 +727,27 @@ def doctor(manifest: dict[str, Any]) -> int:
     style = palette()
     checks = Doctor(style)
     rust = manifest["rust"]
+
+    # Every tool section the manifest states is found by shape and dispatched here, and the
+    # two have to agree in both directions. A section nothing checks reads exactly like a
+    # section that passed; a check whose section the manifest no longer states would reach
+    # `tools` and raise `KeyError`. Both are settled before the first row is printed, so a
+    # manifest doctor cannot report on stops instead of half-reporting.
+    stated = tool_sections(manifest)
+    unknown = {
+        section
+        for section in stated - set(SECTION_CHECKS)
+        if not section.startswith(CI_SECTION_PREFIX)
+    }
+    if unknown:
+        raise SystemExit(
+            f"{MANIFEST_PATH} states tool sections nothing checks: {sorted(unknown)}"
+        )
+    missing = set(SECTION_CHECKS) - stated
+    if missing:
+        raise SystemExit(
+            f"{MANIFEST_PATH} states no {sorted(missing)}, which doctor checks"
+        )
 
     print(
         f"\n{style('kamu · doctor', 'bold', 'cyan')}  "
@@ -601,15 +781,14 @@ def doctor(manifest: dict[str, Any]) -> int:
     )
     check_targets(checks, rust["primary"], rust["primary_targets"])
 
-    checks.section("Repository tools")
-    for tool in manifest["cargo_tools"]:
-        check_cargo_tool(checks, tool)
-    for tool in manifest["node_tools"]:
-        check_node_tool(checks, tool)
-
-    checks.section("System tools")
-    for tool in manifest["system_tools"]:
-        check_system_tool(checks, tool)
+    grouped: dict[str, list[tuple[str, Any]]] = {}
+    for section, (banner, check) in SECTION_CHECKS.items():
+        grouped.setdefault(banner, []).append((section, check))
+    for banner, members in grouped.items():
+        checks.section(banner)
+        for section, check in members:
+            for tool in tools(manifest, section):
+                check(checks, tool)
 
     checks.section("Vendored data")
     submodule_file = (

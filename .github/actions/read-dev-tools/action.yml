@@ -4,18 +4,13 @@ description: >-
   restating them. Requires the repository to be checked out.
 
 outputs:
-  rust_primary:
-    description: The toolchain CI installs, which also pins the compile-fail goldens.
-    value: ${{ fromJSON(steps.read.outputs.manifest).rust.primary }}
-  rust_msrv:
-    description: The floor the published manifests declare and CI tests exactly.
-    value: ${{ fromJSON(steps.read.outputs.manifest).rust.msrv }}
-  rust_lane:
+  manifest:
     description: >-
-      The excluded extension lane's channel, which pgrx requires. A lane job that installs
-      rust_primary instead still compiles correctly, because the lane's rust-toolchain.toml wins
-      -- after rustup has downloaded the wrong toolchain, in every job, on every run.
-    value: ${{ fromJSON(steps.read.outputs.manifest).rust.lane }}
+      The pinned-version manifest, normalised only in its trailing newline. A job indexes
+      the pin it needs out of this rather than reading an output named after it, so a pin
+      added to the manifest is reachable without an output and a republish being added to
+      carry it.
+    value: ${{ steps.read.outputs.manifest }}
 
 runs:
   using: composite
@@ -42,6 +37,8 @@ runs:
         fi
         {
           echo "manifest<<$delimiter"
-          cat "$MANIFEST"
+          # Normalised, not cat: a manifest saved without a trailing newline would run
+          # into the delimiter line and leave the heredoc unterminated.
+          printf '%s\n' "$(cat "$MANIFEST")"
           echo "$delimiter"
         } >>"$GITHUB_OUTPUT"

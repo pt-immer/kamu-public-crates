@@ -2833,6 +2833,7 @@ name = "repo-policy"
 version = "0.0.0"
 dependencies = [
  "github-actions-models",
+ "regex-lite",
  "serde",
  "serde_json",
  "toml",

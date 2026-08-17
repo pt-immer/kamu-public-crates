@@ -16,4 +16,5 @@ serde_json = { workspace = true }
 yaml_serde = "0.10.6"
 
 [dev-dependencies]
+regex-lite = "0.1.9"
 toml = { workspace = true }

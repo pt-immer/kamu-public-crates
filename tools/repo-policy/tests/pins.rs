@@ -1,9 +1,16 @@
 //! Every pinned version has one home, and the copies a tool insists on are held equal to it.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::OnceLock;
 
-use repo_policy::actions::{actions, job_outputs, sources as actions_sources};
-use repo_policy::dev_tools::DevTools;
+use regex_lite::Regex;
+
+use repo_policy::actions::{
+    ActionOutput, INSTALL_ACTION, MANIFEST_ACTION, MANIFEST_OUTPUT, ManifestSource, action_outputs, code_of,
+    install_action_steps, job_outputs, manifest_paths, manifest_source, needs_output_references,
+    sources as actions_sources, step_scopes, step_uses, tool_requests,
+};
+use repo_policy::dev_tools::{DevTools, TOOL_SECTION_SUFFIX};
 use repo_policy::{read, repo_root, tracked};
 
 fn toml_value(relative: &str) -> toml::Value {
@@ -33,6 +40,13 @@ fn same_series(left: &str, left_source: &str, right: &str, right_source: &str) -
     a.resize(width, 0);
     b.resize(width, 0);
     a == b
+}
+
+/// The manifest as written, for asking whether a key exists at all. The typed decoder answers
+/// what the fields it models say; it cannot answer for a key nothing models.
+fn manifest_json() -> serde_json::Value {
+    serde_json::from_str(&read(DevTools::PATH))
+        .unwrap_or_else(|error| panic!("cannot parse {}: {error}", DevTools::PATH))
 }
 
 fn tools() -> DevTools {
@@ -210,7 +224,8 @@ fn every_selected_toolchain_is_a_reference_or_a_named_channel() {
     let mut referenced = 0_usize;
     for (source, value) in selected_toolchains() {
         let value = unquoted(&value);
-        let reads_pin = value.contains("outputs.rust_");
+        let reads_pin =
+            manifest_paths(value).iter().any(|path| path.first().is_some_and(|key| key == "rust"));
         if reads_pin {
             referenced += 1;
         }
@@ -244,7 +259,8 @@ fn the_toolchain_matrix_compiles_at_the_declared_floor() {
                 continue;
             };
             matrices += 1;
-            let reads_msrv = list.split(',').filter(|entry| entry.contains("rust_msrv")).count();
+            let msrv = vec!["rust".to_owned(), "msrv".to_owned()];
+            let reads_msrv = list.split(',').filter(|entry| manifest_paths(entry).contains(&msrv)).count();
             assert_eq!(
                 1, reads_msrv,
                 "{source} declares the toolchain matrix {value}, which reads the msrv pin \
@@ -255,58 +271,616 @@ fn the_toolchain_matrix_compiles_at_the_declared_floor() {
     assert!(matrices > 0, "no toolchain matrix found; this would pass vacuously");
 }
 
-/// An output's name states which manifest key it carries: the last underscore separates the
-/// section from the key within it, so `rust_primary` promises `rust.primary`. Nothing else
-/// checks the expression under it. Every action is read, not the one this branch added, and
-/// which step publishes the manifest is not asked here -- an id that resolves to nothing is
-/// what `every_step_output_read_names_a_step_that_exists` refuses.
-#[test]
-fn each_action_output_reads_the_manifest_key_its_name_states() {
-    let mut bound = 0_usize;
-    for (source, action) in actions() {
-        for (name, output) in &action.outputs {
-            // A composite action's output carries a value; the other kinds do not.
-            let Some(value) = &output.value else {
-                continue;
-            };
-            let Some((section, key)) = name.rsplit_once('_') else {
-                panic!("{source} declares the output {name}, which states no manifest section")
-            };
-            assert!(
-                value.contains("fromJSON(steps."),
-                "{source} publishes {name} from {value}, which reads no published manifest",
-            );
-            let reads = value.trim_end().trim_end_matches('}').trim_end();
-            assert!(
-                reads.ends_with(&format!(".{section}.{key}")),
-                "{source} publishes {name}, which states {section}.{key}, from {value}",
-            );
-            bound += 1;
+/// The tool sections, refusing a pin stated twice.
+///
+/// Three ways one can be. A key repeated inside a section, a section repeated at the top
+/// level, and one tool defined by two different sections. Every reader keeps the last of a
+/// repeated key and reports nothing -- `serde_json`, Python's `json`, and Actions' `fromJSON`
+/// alike -- so the file states a version it does not unambiguously carry, and the pin that
+/// reaches CI is whichever section a reader looked at first.
+///
+/// Read from the TEXT. Handing this a `serde_json::Value` would hand it a document whose
+/// duplicate had already been collapsed by the parse that produced it, and the check could
+/// never fail.
+struct DistinctPins;
+
+/// The keys one section states, refusing a repeat within it.
+struct SectionKeys(Vec<String>);
+
+impl<'de> serde::Deserialize<'de> for SectionKeys {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Keys;
+
+        impl<'de> serde::de::Visitor<'de> for Keys {
+            type Value = SectionKeys;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a tool section")
+            }
+
+            fn visit_map<M: serde::de::MapAccess<'de>>(self, mut map: M) -> Result<SectionKeys, M::Error> {
+                let mut names = Vec::new();
+                while let Some(name) = map.next_key::<String>()? {
+                    map.next_value::<serde::de::IgnoredAny>()?;
+                    if names.contains(&name) {
+                        return Err(serde::de::Error::custom(format!("{name} is stated twice")));
+                    }
+                    names.push(name);
+                }
+                Ok(SectionKeys(names))
+            }
         }
+
+        deserializer.deserialize_map(Keys)
     }
-    assert!(bound > 0, "no action output was bound; this would pass vacuously");
 }
 
-/// A job republishes the action's outputs so other jobs can reach them. A pin renamed on the
-/// way through would be read under a name that no longer describes it. The names to watch are
-/// taken from what the actions publish, so a pin added there is covered without being listed
-/// here; every workflow is scanned, not the one that republishes them today.
-#[test]
-fn every_republished_pin_keeps_its_own_name() {
-    let pins: BTreeSet<&String> = actions().iter().flat_map(|(_, action)| action.outputs.keys()).collect();
-    assert!(!pins.is_empty(), "no action publishes a pin; this would pass vacuously");
+impl<'de> serde::Deserialize<'de> for DistinctPins {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Top;
 
-    let mut republished = 0_usize;
-    for (source, job, name, value) in job_outputs() {
-        if !pins.contains(&name) {
+        impl<'de> serde::de::Visitor<'de> for Top {
+            type Value = DistinctPins;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("the pinned-version manifest")
+            }
+
+            fn visit_map<M: serde::de::MapAccess<'de>>(self, mut map: M) -> Result<DistinctPins, M::Error> {
+                let mut sections = BTreeSet::new();
+                let mut tools: BTreeMap<String, String> = BTreeMap::new();
+                while let Some(name) = map.next_key::<String>()? {
+                    if !sections.insert(name.clone()) {
+                        return Err(serde::de::Error::custom(format!("{name} is stated twice")));
+                    }
+                    // Every tool section, found by shape rather than listed here.
+                    if !name.ends_with(TOOL_SECTION_SUFFIX) {
+                        map.next_value::<serde::de::IgnoredAny>()?;
+                        continue;
+                    }
+                    let SectionKeys(entries) = map
+                        .next_value::<SectionKeys>()
+                        .map_err(|error| serde::de::Error::custom(format!("{name}: {error}")))?;
+                    for tool in entries {
+                        if let Some(first) = tools.insert(tool.clone(), name.clone()) {
+                            return Err(serde::de::Error::custom(format!(
+                                "{tool} is pinned by both {first} and {name}"
+                            )));
+                        }
+                    }
+                }
+                if tools.is_empty() {
+                    return Err(serde::de::Error::custom("no tool section was read"));
+                }
+                Ok(DistinctPins)
+            }
+        }
+
+        deserializer.deserialize_map(Top)
+    }
+}
+
+#[test]
+fn no_tool_is_pinned_twice() {
+    serde_json::from_str::<DistinctPins>(&read(DevTools::PATH))
+        .unwrap_or_else(|error| panic!("{}: {error}", DevTools::PATH));
+}
+
+/// A job that republishes the manifest has to republish the one the read-dev-tools action
+/// produced. Nothing downstream can tell: every consumer indexes a path, and the paths are
+/// checked against the file rather than against what the job actually carried. Pointed at a
+/// step that publishes no such output, the expression yields the empty string, `fromJSON`
+/// receives it, and the pins every job reads are gone while the gate reports green.
+#[test]
+fn every_republished_manifest_comes_from_the_action_that_reads_it() {
+    let published: BTreeSet<(&str, String, String)> = job_outputs()
+        .into_iter()
+        .filter(|(_, _, name, _)| name == MANIFEST_OUTPUT)
+        .map(|(source, job, _, value)| {
+            // Read through the shared reader, which requires the output name as well as the
+            // context. Taking the step id and discarding what follows `.outputs.` proved the
+            // step existed and nothing about what it publishes, so a misspelled output name
+            // satisfied it -- and resolves at run time to the empty string, leaving every job
+            // reading a manifest that is not there.
+            let expression = value.trim().trim_start_matches("${{").trim_end_matches("}}").trim();
+            match manifest_source(expression) {
+                Some(ManifestSource::Step(step)) => (source, job.clone(), step),
+                Some(ManifestSource::Job(_)) => {
+                    panic!("{source} job {job} republishes the manifest from another job")
+                }
+                None => panic!(
+                    "{source} job {job} publishes the manifest as {value}, which is not a step \
+                     output named {MANIFEST_OUTPUT}"
+                ),
+            }
+        })
+        .collect();
+    assert!(!published.is_empty(), "no job republishes the manifest; this would pass vacuously");
+
+    let reading: BTreeSet<(&str, String, String)> = step_uses()
+        .into_iter()
+        .filter(|(_, _, _, clause)| clause.contains("read-dev-tools"))
+        .map(|(source, scope, id, _)| (source, scope, id))
+        .collect();
+
+    for entry in &published {
+        let (source, job, step) = entry;
+        assert!(
+            reading.contains(entry),
+            "{source} job {job} republishes the manifest from step {step}, which does not run \
+             the read-dev-tools action",
+        );
+    }
+}
+
+/// No Actions source states a version literal outside a comment. Every version this repository
+/// pins is indexed out of the manifest, so a literal is a copy -- and a stale copy reads as
+/// correct. The comment beside an action's commit pin is the one place a version belongs,
+/// because it names what that commit is and no expression can.
+///
+/// This covers what the tool rule cannot see: a cache key carrying a version reaches no
+/// `tool:` request, so before this a stale one passed the whole public gate.
+#[test]
+fn no_actions_source_states_a_version_literal() {
+    let mut scanned = 0_usize;
+    for source in actions_sources() {
+        for (number, line) in source.text.lines().enumerate() {
+            if let Some(found) = version_literal(code_of(line)) {
+                panic!(
+                    "{}:{} states the version literal {found}; index it out of the manifest \
+                     the read-dev-tools action publishes, or -- if this repository pins no \
+                     such version -- give it a home there first",
+                    source.path,
+                    number + 1,
+                );
+            }
+        }
+        scanned += 1;
+    }
+    assert!(scanned > 0, "no Actions source was scanned; this would pass vacuously");
+}
+
+/// The first version literal in a line, if any.
+///
+/// Exactly three components, which is what every version this repository pins is, and what a
+/// dotted address is not: `127.0.0.1` and `0.0.0.0` are four, and a `run:` line is entitled to
+/// carry one. Fewer than three reads the same as an ordinary decimal. A trailing dot ends a
+/// sentence rather than a version and is outside the match by construction.
+fn version_literal(line: &str) -> Option<String> {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN
+        .get_or_init(|| {
+            Regex::new(r"(?:^|[^0-9.])([0-9]+\.[0-9]+\.[0-9]+)(?:[^0-9.]|$)").expect("the pattern compiles")
+        })
+        .captures(line)
+        .map(|found| found[1].to_owned())
+}
+
+/// Every manifest path a workflow indexes has to exist. A path Actions cannot resolve is not
+/// an error there: it yields the empty string, so the job installs whatever the runner already
+/// had and the gate stays green.
+///
+/// This is what replaced a rule about output names. Nothing is published per pin any more, so
+/// there is no name left to keep honest -- only reads, and whether the document answers them.
+#[test]
+fn every_manifest_path_a_workflow_reads_exists() {
+    let document = manifest_json();
+    let mut read = 0_usize;
+    for source in actions_sources() {
+        // Per line and past the comment, as the literal scan reads them. Whole-file text would
+        // check a path written in a comment as though Actions resolved it.
+        for (number, line) in source.text.lines().enumerate() {
+            let code = code_of(line);
+            let paths = manifest_paths(code);
+            // Every call accounted for. A read the parser cannot read yields no path, and a check
+            // that only counts what it parsed cannot tell that from a line with no read on it.
+            assert_eq!(
+                paths.len(),
+                code.matches("fromJSON(").count(),
+                "{}:{} writes a manifest read this cannot parse; it would be checked by nothing",
+                source.path,
+                number + 1,
+            );
+            for path in paths {
+                let mut value = &document;
+                for segment in &path {
+                    value = value.get(segment).unwrap_or_else(|| {
+                        panic!(
+                            "{} indexes {}, and {} states no {segment} there",
+                            source.path,
+                            path.join("."),
+                            DevTools::PATH,
+                        )
+                    });
+                }
+                assert!(
+                    value.is_string(),
+                    "{} indexes {}, which is not a version in {}",
+                    source.path,
+                    path.join("."),
+                    DevTools::PATH,
+                );
+                read += 1;
+            }
+        }
+    }
+    assert!(read > 0, "no manifest path was read; this would pass vacuously");
+}
+
+/// A job reading `needs.<job>.outputs.manifest` names a job that publishes it.
+///
+/// Depending on a job is not the same as that job answering: the branch bound a step output to
+/// the step that writes it, and an action output to its own step, and left the rung between
+/// them open. A read of an output no job declares is the empty string, and every pin indexed
+/// out of it is gone while the gate stays green.
+#[test]
+fn every_manifest_a_job_reads_is_published_by_the_job_it_names() {
+    let published: BTreeSet<(&str, String)> = job_outputs()
+        .into_iter()
+        .filter(|(_, _, name, _)| name == MANIFEST_OUTPUT)
+        .map(|(source, job, _, _)| (source, job))
+        .collect();
+    assert!(!published.is_empty(), "no job publishes the manifest; this would pass vacuously");
+
+    let mut checked = 0_usize;
+    for scope in step_scopes() {
+        for expression in &scope.expressions {
+            for (job, name) in needs_output_references(expression) {
+                if name != MANIFEST_OUTPUT {
+                    continue;
+                }
+                assert!(
+                    published.contains(&(scope.source, job.clone())),
+                    "{} job {} reads needs.{job}.outputs.{name}, and {job} publishes no {name}",
+                    scope.source,
+                    scope.name,
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 0, "no job read the manifest; this would pass vacuously");
+}
+
+/// The name the manifest is published under is spelled by every reader of an expression, and
+/// only one of them can import it. Renaming the action's output leaves the readers that cannot
+/// recognising no reads and reporting nothing.
+#[test]
+fn every_reader_of_a_manifest_expression_spells_the_same_output_name() {
+    let expected = format!("outputs.{MANIFEST_OUTPUT}");
+
+    // The Actions side is derived rather than listed: anything running the action is a reader by
+    // construction, so a workflow added later is covered without anyone remembering to add it.
+    let mut readers: Vec<String> = tracked(&["*.yml"])
+        .into_iter()
+        .filter(|relative| relative.starts_with(".github/"))
+        .filter(|relative| read(relative).contains(MANIFEST_ACTION))
+        .collect();
+
+    // The two readers that parse the expression from outside Actions. Neither can import the
+    // constant, and nothing in their content ties them to the action except this name, so they
+    // are the one part of the set that has to be stated.
+    readers.push("scripts/test_workflows.py".to_owned());
+    readers.push("extensions/money-pg/hygiene/tests/pins.rs".to_owned());
+
+    for relative in &readers {
+        // Escapes dropped, because one reader spells the name inside a regex as `\.`; and read
+        // line by line, because a comment mentioning the old name would otherwise answer for a
+        // file whose parsing no longer names it at all.
+        let text = read(relative).replace('\\', "");
+        let names = text.lines().any(|line| code_of(line).contains(&expected));
+        assert!(names, "{relative} reads the manifest under some other name than {expected}",);
+    }
+    assert!(readers.len() > 2, "no workflow ran the action; this would pass vacuously");
+}
+
+/// A pin is a floor unless the entry says why it must be exact. An exact pin with no reason
+/// is an exception nobody can weigh, and the reason belongs at the pin rather than in the
+/// document that explains the mechanism.
+#[test]
+fn every_exact_pin_states_why_it_is_exact() {
+    let manifest = tools();
+    let mut exact = 0_usize;
+    let mut floors = 0_usize;
+    for (section, entries) in &manifest.tools {
+        for (name, tool) in entries {
+            match tool.exact.as_deref() {
+                None => floors += 1,
+                Some(reason) => {
+                    assert!(
+                        reason.split_whitespace().count() >= 3,
+                        "{}: {section}.{name} is exact and states no reason worth reading",
+                        DevTools::PATH,
+                    );
+                    exact += 1;
+                }
+            }
+        }
+    }
+    assert!(exact > 0, "no pin is exact; this would pass vacuously");
+    assert!(floors > 0, "every pin is exact; the floor class would be untested");
+}
+
+/// What identifies a tool section is stated in both languages that read the manifest. Two
+/// readers of one document disagreeing quietly is what this branch keeps finding.
+#[test]
+fn both_readers_of_the_manifest_agree_what_a_tool_section_is() {
+    let python = read("scripts/dev_environment.py");
+    let stated = python
+        .lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix("TOOL_SECTION_SUFFIX = ")?
+                .trim()
+                .strip_prefix('"')?
+                .strip_suffix('"')
+                .map(str::to_owned)
+        })
+        .expect("scripts/dev_environment.py states TOOL_SECTION_SUFFIX");
+    assert_eq!(
+        stated, TOOL_SECTION_SUFFIX,
+        "scripts/dev_environment.py and repo-policy disagree on what names a tool section",
+    );
+}
+
+/// The guide states which root workspace members are published. A count went stale by being a
+/// count; an invariant nothing reads goes stale the same way, one member later.
+#[test]
+fn the_guide_names_every_unpublished_workspace_member() {
+    let output = std::process::Command::new("cargo")
+        .args(["metadata", "--no-deps", "--format-version", "1"])
+        .current_dir(repo_root())
+        .output()
+        .expect("cargo metadata runs");
+    assert!(output.status.success(), "cargo metadata failed");
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("cargo metadata emits JSON");
+    let packages = metadata["packages"].as_array().expect("metadata lists packages");
+    assert!(!packages.is_empty(), "the workspace has no member; this would pass vacuously");
+
+    // `publish = false` is an empty registry list; anything else may be published. The
+    // directory is what the guide names, because that is what a reader opens.
+    let root = repo_root();
+    let unpublished: BTreeSet<String> = packages
+        .iter()
+        .filter(|package| package["publish"].as_array().is_some_and(Vec::is_empty))
+        .map(|package| {
+            let manifest = package["manifest_path"].as_str().expect("a package has a manifest");
+            let directory = std::path::Path::new(manifest).parent().expect("a manifest has a directory");
+            directory
+                .strip_prefix(&root)
+                .expect("a member lives under the repository root")
+                .display()
+                .to_string()
+        })
+        .collect();
+    assert!(
+        packages.len() > unpublished.len(),
+        "no member is publishable; the guide's exception would be the rule",
+    );
+
+    // Whitespace-normalised, so the sentence may be rewrapped without becoming a false
+    // failure. Naming the crate anywhere would not do: the repository map names it too, and a
+    // check the map satisfies cannot fail when the exception itself is deleted.
+    let guide: String = read("AGENTS.md").split_whitespace().collect::<Vec<_>>().join(" ");
+    let stated: BTreeSet<String> = unpublished
+        .iter()
+        .filter(|directory| guide.contains(&format!("published except `{directory}`")))
+        .cloned()
+        .collect();
+    assert_eq!(
+        stated, unpublished,
+        "AGENTS.md must state every unpublished member as an exception to what is published",
+    );
+    assert_eq!(
+        guide.matches("published except `").count(),
+        unpublished.len(),
+        "AGENTS.md states more exceptions than the workspace has",
+    );
+}
+
+/// Every output a composite action publishes is written by the step it names.
+///
+/// An action's `value:` is reached by no job output, so the republish rule cannot see it. Left
+/// unbound, repointing it at a step output nothing writes still parses, still names a step that
+/// exists, and still passes every path check -- and every job in every workflow then receives
+/// the empty string.
+#[test]
+fn every_action_output_is_written_by_the_step_it_names() {
+    let mut checked = 0_usize;
+    for output in action_outputs() {
+        let ActionOutput { source, name, value, steps } = &output;
+        let (id, key) = value
+            .split_once("steps.")
+            .and_then(|(_, tail)| tail.split_once(".outputs."))
+            .map(|(id, tail)| (id, tail.trim_end_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_')))
+            .unwrap_or_else(|| panic!("{source} publishes {name} as {value}, which reads no step output"));
+        let (_, body) = steps
+            .iter()
+            .find(|(step, _)| step == id)
+            .unwrap_or_else(|| panic!("{source} publishes {name} from step {id}, which it has no"));
+        let body = body.as_deref().unwrap_or_else(|| {
+            panic!(
+                "{source} publishes {name} from step {id}, which runs an action rather than a \
+                 script; what that step writes is beyond this check"
+            )
+        });
+        // A step writes an output by naming it to $GITHUB_OUTPUT, as an assignment or as the
+        // opening of a heredoc. A line merely beginning `<key>=` is a shell variable of that
+        // name, which is what this step sets its own delimiter up with. A naming line that
+        // redirects somewhere else writes that file instead, whatever the rest of the body
+        // mentions; one that redirects nowhere is inside a group, and the group's own redirect
+        // is what the body has to carry.
+        let writes = body.contains("GITHUB_OUTPUT")
+            && body.lines().map(str::trim).any(|line| {
+                let names = !line.starts_with(&format!("{key}="))
+                    && (line.contains(&format!("{key}<<")) || line.contains(&format!("{key}=")));
+                names && (!line.contains('>') || line.contains("GITHUB_OUTPUT"))
+            });
+        assert!(writes, "{source} publishes {name} from {id}.outputs.{key}, which that step never writes",);
+        checked += 1;
+    }
+    assert!(checked > 0, "no action publishes an output; this would pass vacuously");
+}
+
+/// Every step that installs a tool asks for it by the input that can carry a pin.
+///
+/// The installer answers to a second spelling, `taiki-e/install-action/<tool>@<ref>`, which
+/// names the tool in its own path and states no version anywhere: the step pins a commit, the
+/// literal scan finds nothing to object to, and the job installs whatever that action resolves
+/// on the day it runs. The tool rule cannot see such a step, because it makes no request.
+#[test]
+fn every_tool_is_requested_by_the_input_that_can_carry_a_pin() {
+    let mut steps = 0_usize;
+    for (source, scope, clause, requested) in install_action_steps() {
+        let action = clause.split_once('@').map_or(clause.as_str(), |(action, _)| action);
+        assert_eq!(
+            action, INSTALL_ACTION,
+            "{source} job {scope} uses {clause}, which names its tool in the path and pins no \
+             version; request it through the tool input instead",
+        );
+        // An empty list is not a request: `tool_requests` drops it, so the pin rule never sees
+        // the step and the job installs whatever the runner already had.
+        assert!(
+            requested.is_some_and(|list| !list.trim().is_empty()),
+            "{source} job {scope} uses {clause} and asks for no tool",
+        );
+        steps += 1;
+    }
+    assert!(steps > 0, "no step installs a tool; this would pass vacuously");
+}
+
+/// The analogue of the toolchain rule, for the tools a job installs. A version literal is a
+/// copy of a pin, and the copies are what a bump has to reach. Indexing SOME entry is not
+/// enough either: a request reading another tool's entry installs the wrong version under the
+/// right name, and the run succeeds.
+#[test]
+fn every_tool_a_job_installs_reads_its_own_pin() {
+    let manifest = tools();
+    let mut requested = 0_usize;
+    for (source, scope, specification) in tool_requests() {
+        let (name, version) = specification
+            .split_once('@')
+            .unwrap_or_else(|| panic!("{source} job {scope} requests {specification}, which pins nothing"));
+        // Two sections defining one tool is refused by `no_tool_is_pinned_twice`, so the
+        // reachable failure here is that the manifest pins the tool nowhere.
+        let Some((section, _)) = manifest.tool(name).into_iter().next() else {
+            panic!(
+                "{source} job {scope} installs {name}, which {} pins nowhere; add an entry for it",
+                DevTools::PATH,
+            )
+        };
+        let expected = vec![section.to_owned(), name.to_owned(), "version".to_owned()];
+        assert_eq!(
+            manifest_paths(version),
+            vec![expected],
+            "{source} job {scope} installs {name} from {version} rather than from its own pin; \
+             index it out of the manifest the read-dev-tools action publishes",
+        );
+        requested += 1;
+    }
+    assert!(requested > 0, "no tool was requested; this would pass vacuously");
+}
+
+/// The tool search order has one home: the `Justfile`'s `export PATH`. Both setup blocks hand a
+/// contributor a line for their own shell, and one that prepends inverts the order there while
+/// every recipe keeps the other — a machine whose doctor and whose recipes disagree, reported by
+/// nothing.
+#[test]
+fn every_documented_path_export_appends_the_repository_tools() {
+    let mut checked = 0_usize;
+    for relative in ["Justfile", "README.md", "CONTRIBUTING.md"] {
+        let text = read(relative);
+        for line in text.lines() {
+            if !line.trim_start().starts_with("export PATH") || !line.contains(".tools/bin") {
+                continue;
+            }
+            // A `just` recipe spells the inherited path as a function call; a shell spells it as
+            // a variable. An export naming neither replaces PATH rather than extending it.
+            let inherited = line
+                .find("$PATH")
+                .or_else(|| line.find("env_var(\"PATH\")"))
+                .unwrap_or_else(|| panic!("{relative} exports a PATH that drops the inherited one: {line}"));
+            let local = line.find(".tools/bin").expect("the line was selected for containing it");
+            assert!(
+                inherited < local,
+                "{relative} puts .tools/bin ahead of the inherited PATH, so the repository copy \
+                 shadows the host's: {line}",
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "no file exported a PATH; this would pass vacuously");
+}
+
+/// A published package that carries no source label stands alone in the registry: it inherits no
+/// permissions from the repository and nothing points back at what describes it. The image is
+/// published so that others can pull it, which is the half a label makes true.
+#[test]
+fn every_pushed_image_is_labelled_with_the_repository_that_describes_it() {
+    let mut pushes = 0_usize;
+    for relative in tracked(&[".github/workflows/*.yml"]) {
+        let text = read(&relative);
+        // Read as code rather than as text: a comment naming a label satisfies a whole-file
+        // search while the build that actually runs carries neither it nor the digest.
+        let code: Vec<&str> = text.lines().map(code_of).collect();
+        let names = |needle: &str| code.iter().any(|line| line.contains(needle));
+        if !names("docker buildx build --push") {
             continue;
         }
-        let Some((_, read_name)) = value.rsplit_once(".outputs.") else {
-            panic!("{source} job {job} publishes {name} as {value}, which reads no output");
-        };
-        let read_name = read_name.trim_end_matches([' ', '}']);
-        assert_eq!(name, read_name, "{source} job {job} publishes {name} from {value}");
-        republished += 1;
+        assert!(
+            names("org.opencontainers.image.source="),
+            "{relative} pushes an image without labelling its source; the package would be \
+             published unlinked from the repository",
+        );
+        // The tag closes over repository inputs only, so it is discovery rather than identity.
+        // A consumer needing a fixed image pins the digest, which has to be published to be
+        // pinnable -- and `docs/TOOLCHAIN-REALMS.md` promises it is.
+        assert!(
+            names("containerimage.digest"),
+            "{relative} pushes an image without publishing its digest; nothing immutable is \
+             offered to a consumer that cannot rely on the tag",
+        );
+        pushes += 1;
     }
-    assert!(republished > 0, "no pin was republished; this would pass vacuously");
+    assert!(pushes > 0, "no workflow pushed an image; this would pass vacuously");
+}
+
+/// The inputs that decide the builder image are named twice: as the paths that trigger a run, and
+/// as the files whose hash becomes the tag. A file that is hashed but does not trigger changes
+/// the tag a run would produce without ever causing one, so the image goes on being served under
+/// a tag its own inputs no longer describe. The reverse is allowed: the workflow triggers on
+/// itself without being part of what it builds.
+#[test]
+fn every_hashed_builder_input_also_triggers_the_build() {
+    let relative = ".github/workflows/publish-builder-image.yml";
+    let text = read(relative);
+
+    let triggers: BTreeSet<String> = text
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("- ").map(str::trim))
+        .filter(|entry| entry.contains('/') && !entry.contains(' '))
+        .map(str::to_owned)
+        .collect();
+    assert!(!triggers.is_empty(), "{relative} lists no trigger path; this would pass vacuously");
+
+    let hashed: BTreeSet<String> = Regex::new(r"hashFiles\(([^)]*)\)")
+        .expect("literal pattern")
+        .captures_iter(&text)
+        .flat_map(|found| {
+            found[1]
+                .split(',')
+                .map(|argument| argument.trim().trim_matches('\'').to_owned())
+                .collect::<Vec<_>>()
+        })
+        .filter(|argument| !argument.is_empty())
+        .collect();
+    assert!(!hashed.is_empty(), "{relative} hashes no input; this would pass vacuously");
+
+    for input in &hashed {
+        assert!(
+            triggers.contains(input),
+            "{relative} hashes {input} into the tag but never builds when it changes",
+        );
+    }
 }

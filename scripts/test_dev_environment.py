@@ -9,6 +9,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import tempfile
 import unittest
 from collections.abc import Callable
@@ -25,12 +26,13 @@ from scripts import dev_environment
 INSTALLED_BY_THE_LANE = {"lane"}
 
 from scripts.dev_environment import (
+    CI_SECTION_PREFIX,
     Doctor,
     Palette,
     cargo_install_command,
     capture,
     check_bootstrap,
-    check_floor,
+    check_version,
     check_targets,
     check_toolchain,
     contains_version,
@@ -44,6 +46,8 @@ from scripts.dev_environment import (
     resolve,
     satisfies_floor,
     setup_commands,
+    tool_sections,
+    tools,
 )
 
 
@@ -111,6 +115,48 @@ class DevelopmentEnvironmentPolicyTests(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertEqual(rust["msrv"], label)
 
+    def test_a_missing_system_tool_is_reported_with_the_version_to_install(self) -> None:
+        """AGENTS.md states this as a guarantee: setup cannot install these, so the
+        row a developer reads has to name the version to install.
+
+        Asserted through the rendered row rather than the hint string. The hint is
+        built from the entry, so comparing it against that entry would be true by
+        construction and could not fail.
+        """
+        checked = 0
+        for tool in tools(self.manifest, "system_tools"):
+            checks = Doctor(palette())
+            with mock.patch.object(dev_environment.shutil, "which", return_value=None):
+                buffer = io.StringIO()
+                with contextlib.redirect_stdout(buffer):
+                    dev_environment.check_system_tool(checks, tool)
+            with self.subTest(tool=tool["name"]):
+                self.assertIn(tool["version"], buffer.getvalue())
+            checked += 1
+        self.assertTrue(checked, "the manifest pins no system tool to check")
+
+    def test_a_present_system_tool_names_the_copy_it_judged(self) -> None:
+        """Several may be installed, and the row has to say which one answered."""
+        checked = 0
+        for tool in tools(self.manifest, "system_tools"):
+            checks = Doctor(palette())
+            where = f"/opt/somewhere/bin/{tool['binary']}"
+            with mock.patch.object(
+                dev_environment.shutil, "which", return_value=where
+            ), mock.patch.object(
+                dev_environment,
+                "capture",
+                return_value=(0, f"{tool['binary']} {tool['version']}"),
+            ):
+                _, output = captured(
+                    lambda: dev_environment.check_system_tool(checks, tool)
+                )
+            with self.subTest(tool=tool["name"]):
+                self.assertEqual([], checks.failed)
+                self.assertIn(where, output)
+            checked += 1
+        self.assertTrue(checked, "the manifest pins no system tool to check")
+
     def test_setup_commands_install_every_required_rust_item(self) -> None:
         commands = setup_commands(self.manifest)
         rust = self.manifest["rust"]
@@ -174,7 +220,7 @@ class DevelopmentEnvironmentPolicyTests(unittest.TestCase):
 
     def test_every_cargo_tool_install_is_locked_and_exact(self) -> None:
         primary = self.manifest["rust"]["primary"]
-        for tool in self.manifest["cargo_tools"]:
+        for tool in tools(self.manifest, "cargo_tools"):
             with self.subTest(tool=tool["crate"]):
                 command = cargo_install_command(primary, tool)
                 self.assertIn("--locked", command)
@@ -189,7 +235,7 @@ class DevelopmentEnvironmentPolicyTests(unittest.TestCase):
         lock = json.loads(
             (ROOT / "package-lock.json").read_text(encoding="utf-8")
         )
-        for tool in self.manifest["node_tools"]:
+        for tool in tools(self.manifest, "node_tools"):
             with self.subTest(package=tool["package"]):
                 self.assertEqual(
                     tool["version"],
@@ -213,26 +259,49 @@ class ToolResolutionTests(unittest.TestCase):
             local.mkdir()
             system.mkdir()
             with mock.patch.object(
-                dev_environment, "SEARCH_PREFIXES", (local,)
+                dev_environment, "SEARCH_SUFFIXES", (local,)
             ), mock.patch.dict(os.environ, {"PATH": str(system)}):
                 yield local, system
 
-    def test_the_repository_local_copy_wins_over_the_system_copy(
+    def test_the_system_copy_wins_over_the_repository_local_copy(
         self,
     ) -> None:
+        """The host answers first; setup fills gaps rather than shadowing a machine."""
         with self.workspace() as (local, system):
+            wanted = executable(system, "taplo")
+            executable(local, "taplo")
+            found = resolve("taplo")
+            self.assertEqual(wanted, found)
+            self.assertFalse(is_repository_local(found))
+
+    def test_resolution_falls_back_to_the_repository_local_copy(self) -> None:
+        with self.workspace() as (local, _):
             wanted = executable(local, "taplo")
-            executable(system, "taplo")
             found = resolve("taplo")
             self.assertEqual(wanted, found)
             self.assertTrue(is_repository_local(found))
 
-    def test_resolution_falls_back_to_the_wider_path(self) -> None:
-        with self.workspace() as (_, system):
-            wanted = executable(system, "taplo")
-            found = resolve("taplo")
-            self.assertEqual(wanted, found)
-            self.assertFalse(is_repository_local(found))
+    def test_the_repository_copy_is_recognised_through_a_symlinked_checkout(
+        self,
+    ) -> None:
+        """`just` exports whichever spelling the checkout was reached by.
+
+        The constants are resolved, so comparing the two directly reads the copy
+        setup installed as the host's -- and setup then refuses to install
+        beneath a binary it put there itself.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            real = pathlib.Path(root) / "real"
+            (real / "local").mkdir(parents=True)
+            link = pathlib.Path(root) / "link"
+            link.symlink_to(real)
+            executable(real / "local", "taplo")
+            with mock.patch.object(
+                dev_environment, "SEARCH_SUFFIXES", ((real / "local").resolve(),)
+            ), mock.patch.dict(os.environ, {"PATH": str(link / "local")}):
+                found = resolve("taplo")
+                self.assertEqual(found, link / "local" / "taplo")
+                self.assertTrue(is_repository_local(found))
 
     def test_an_absent_tool_resolves_to_nothing(self) -> None:
         with self.workspace():
@@ -274,6 +343,53 @@ class NodeVersionTests(unittest.TestCase):
                 node_package_version(binary, "markdownlint-cli2"),
             )
 
+    def test_a_host_binary_is_not_judged_by_the_repository_package(self) -> None:
+        """Both copies installed, deliberately different versions.
+
+        The host answers resolution, so the version judged has to be the host's.
+        Reading the repository's package for it would pass a machine whose
+        recipes run the other one.
+        """
+        with tempfile.TemporaryDirectory() as root:
+            host = self.build(root, "markdownlint-cli2", "0.22.0")
+            repository = dev_environment.NODE_MODULES / "markdownlint-cli2"
+            existed = repository.exists()
+            repository.mkdir(parents=True, exist_ok=True)
+            manifest = repository / "package.json"
+            try:
+                manifest.write_text(
+                    json.dumps({"name": "markdownlint-cli2", "version": "0.23.2"}),
+                    encoding="utf-8",
+                )
+                self.assertFalse(is_repository_local(host))
+                self.assertEqual(
+                    "0.22.0",
+                    node_package_version(host, "markdownlint-cli2"),
+                )
+            finally:
+                if not existed:
+                    shutil.rmtree(repository)
+
+    def test_a_repository_binary_still_falls_back_to_its_package(self) -> None:
+        """`npm ci --no-bin-links` leaves a `.bin` entry that leads nowhere."""
+        repository = dev_environment.NODE_MODULES / "markdownlint-cli2"
+        existed = repository.exists()
+        repository.mkdir(parents=True, exist_ok=True)
+        dead = dev_environment.NODE_BIN / "markdownlint-cli2"
+        try:
+            (repository / "package.json").write_text(
+                json.dumps({"name": "markdownlint-cli2", "version": "0.23.2"}),
+                encoding="utf-8",
+            )
+            self.assertTrue(is_repository_local(dead))
+            self.assertEqual(
+                "0.23.2",
+                node_package_version(dead, "markdownlint-cli2"),
+            )
+        finally:
+            if not existed:
+                shutil.rmtree(repository)
+
     def test_a_bin_symlink_is_followed_to_its_package(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             binary = self.build(root, "markdownlint-cli2", "0.23.2")
@@ -307,7 +423,11 @@ class NodeVersionTests(unittest.TestCase):
             shim = executable(shims, "markdownlint-cli2")
             self.assertFalse(shim.is_symlink())
 
-            with mock.patch.object(dev_environment, "NODE_MODULES", modules):
+            # The shim is the repository's own: that is what licenses reading the
+            # package by path when its parents never reach one.
+            with mock.patch.object(
+                dev_environment, "NODE_MODULES", modules
+            ), mock.patch.object(dev_environment, "SEARCH_SUFFIXES", (shims,)):
                 self.assertEqual(
                     "0.23.2",
                     node_package_version(shim, "markdownlint-cli2"),
@@ -428,8 +548,13 @@ class DoctorReportingTests(unittest.TestCase):
             )
         ]
         labels += [f"{rust['msrv']} {item}" for item in rust["msrv_components"]]
-        for group in ("cargo_tools", "node_tools", "system_tools"):
-            labels += [tool["binary"] for tool in manifest[group]]
+        # The sections doctor reports on, found by shape. A list here would be a fourth
+        # place a section has to be named, and the one that fails silently: a name too long
+        # for the column would break alignment rather than any check.
+        for group in tool_sections(manifest):
+            if group.startswith(CI_SECTION_PREFIX):
+                continue
+            labels += [tool["binary"] for tool in tools(manifest, group)]
         for label in labels:
             with self.subTest(label=label):
                 self.assertLessEqual(len(label), Doctor.LABEL_WIDTH)
@@ -500,23 +625,24 @@ class VersionFloorTests(unittest.TestCase):
         self.assertTrue(satisfies_floor((2,), (1, 99, 99)))
 
 
-class FloorVerdictTests(unittest.TestCase):
-    """check_floor turns a parsed version into a recorded verdict."""
+class VersionVerdictTests(unittest.TestCase):
+    """check_version turns a parsed version into a recorded verdict."""
 
     def doctor(self) -> Doctor:
         return Doctor(Palette(enabled=False))
 
-    def judge(self, installed, pinned, path=None):
-        """Run one floor verdict and return the doctor beside its output."""
+    def judge(self, installed, pinned, path=None, exact=None):
+        """Run one version verdict and return the doctor beside its output."""
         checks = self.doctor()
         _, output = captured(
-            lambda: check_floor(
+            lambda: check_version(
                 checks,
                 "taplo",
                 "taplo banner",
                 installed,
                 pinned,
                 "run just setup",
+                exact,
                 path,
             )
         )
@@ -533,6 +659,33 @@ class FloorVerdictTests(unittest.TestCase):
         self.assertIn("below the pinned 0.23.2", output)
         self.assertIn("run just setup", output)
 
+    def test_a_shadowing_host_copy_is_told_to_move_rather_than_to_run_setup(
+        self,
+    ) -> None:
+        """Setup refuses this case, so naming it here would send the reader in a circle."""
+        checks, output = self.judge(
+            (0, 22, 0), "0.23.2", path=pathlib.Path("/opt/somewhere/bin/taplo")
+        )
+        self.assertEqual(["taplo"], checks.failed)
+        self.assertIn("upgrade or remove /opt/somewhere/bin/taplo", output)
+        self.assertNotIn("run just setup", output)
+
+    def test_a_failing_repository_local_copy_is_still_setup_s_to_fix(self) -> None:
+        checks, output = self.judge(
+            (0, 22, 0), "0.23.2", path=dev_environment.TOOLS_BIN / "taplo"
+        )
+        self.assertEqual(["taplo"], checks.failed)
+        self.assertIn("run just setup", output)
+
+    def test_both_halves_read_one_pin_class(self) -> None:
+        """A stated-but-empty reason must not be exact here and a floor in setup."""
+        tool = {"binary": "taplo", "version": "0.23.2", "exact": "", "package": "taplo"}
+        self.assertEqual(
+            dev_environment.pin_is_exact(tool["exact"]),
+            self.judge((0, 24, 0), "0.23.2", exact=tool["exact"])[0].failed != [],
+        )
+        self.assertTrue(dev_environment.tool_satisfied(tool, (0, 24, 0)) is False)
+
     def test_an_unreadable_version_fails_rather_than_passing(self) -> None:
         checks, output = self.judge(None, "0.10.0")
         self.assertEqual(["taplo"], checks.failed)
@@ -548,7 +701,7 @@ class FloorVerdictTests(unittest.TestCase):
         # what was actually compared.
         checks = self.doctor()
         _, output = captured(
-            lambda: check_floor(
+            lambda: check_version(
                 checks,
                 "shellcheck",
                 "ShellCheck - shell script analysis tool",
@@ -559,6 +712,23 @@ class FloorVerdictTests(unittest.TestCase):
         )
         self.assertEqual([], checks.failed)
         self.assertIn("0.11.0  ≥ 0.11.0", output)
+
+    def test_an_exact_pin_refuses_a_newer_copy(self) -> None:
+        """A floor would pass this. The entry says why it must not."""
+        checks, output = self.judge(
+            (0, 11, 0), "0.10.0", exact="its formatting is the verdict"
+        )
+        self.assertEqual(["taplo"], checks.failed)
+        self.assertIn("is not the pinned 0.10.0", output)
+        self.assertIn("its formatting is the verdict", output)
+
+    def test_an_exact_pin_shows_equality_rather_than_a_floor(self) -> None:
+        checks, output = self.judge(
+            (0, 10, 0), "0.10.0", exact="its formatting is the verdict"
+        )
+        self.assertEqual([], checks.failed)
+        self.assertIn("= 0.10.0", output)
+        self.assertNotIn("≥", output)
 
     def test_a_system_copy_above_the_floor_still_counts_as_system(self) -> None:
         checks, output = self.judge(

@@ -1,0 +1,158 @@
+name: Publish builder image
+
+# The pgrx build environment the extension lane compiles in: a toolchain, cargo-pgrx, one
+# PostgreSQL major with its development headers, and a PGRX_HOME initialised against them.
+# Published on its own so anyone can pull it and build a pgrx extension without reproducing the
+# provisioning, and so this repository's own jobs stop hand-rolling it.
+#
+# WHEN IT BUILDS is not a schedule. The tag is derived from the repository inputs that decide the
+# image, so an unchanged input names a tag that already exists and nothing is built, and a changed
+# one names a tag that has never existed and it is built.
+#
+# THE TAG IS NOT AN IMMUTABLE IDENTITY, and nothing here should be read as claiming it is. It
+# closes over this repository's inputs only. The image also depends on state resolved while it
+# builds -- the apt indexes, the PostgreSQL packages they carry, the signing key fetched at build
+# time -- so two builds of one tag can differ, and `rebuild` republishes a tag deliberately.
+#
+# The DIGEST is the immutable identity, by construction. It is printed and published as an output
+# so a consumer that needs a fixed image can pin it. The base image is pinned that way here for
+# exactly this reason: an upstream rebuild under an unchanged tag becomes an edit rather than
+# silent drift.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - extensions/money-pg/kamu-money-pg/Dockerfile
+      - extensions/money-pg/kamu-money-pg/ca-certs/**
+      - extensions/money-pg/rust-toolchain.toml
+      - extensions/money-pg/.dockerignore
+      - .github/workflows/publish-builder-image.yml
+  workflow_dispatch:
+    inputs:
+      rebuild:
+        description: "Build even though the derived tag is already published"
+        type: boolean
+        default: false
+
+# Two runs pushing one tag would race, and the loser's digest is the one consumers resolve.
+# Cancelling the first would abandon a tag nothing else will build, so the second waits instead.
+concurrency:
+  group: publish-builder-image
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: publish builder image
+    runs-on: ubuntu-latest
+    # Installs a PostgreSQL major and compiles cargo-pgrx. Well above that, and short of the
+    # six-hour default, which is long enough for a wedged build to read as a slow one.
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      # The only job in this repository that writes a package.
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - id: image
+        name: Derive the tag from what decides the image
+        env:
+          # Every input the builder stage reads, so a change to any of them yields a tag that has
+          # never been pushed. The trust anchors and the ignore file are inputs as much as the
+          # instructions are: a rotated anchor that left the tag alone would be published once
+          # and then never rebuilt, because no other trigger exists.
+          INPUTS_HASH: ${{ hashFiles('extensions/money-pg/kamu-money-pg/Dockerfile', 'extensions/money-pg/kamu-money-pg/ca-certs/**', 'extensions/money-pg/rust-toolchain.toml', 'extensions/money-pg/.dockerignore') }}
+          DOCKERFILE: extensions/money-pg/kamu-money-pg/Dockerfile
+          OWNER_AND_NAME: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -z "$INPUTS_HASH" ]; then
+            echo "::error::hashFiles matched none of the inputs; the tag would not be derived"
+            exit 1
+          fi
+          # The major has one home: the Dockerfile's own default. Reading it here keeps this
+          # workflow from becoming a second place that states it.
+          major="$(sed -n 's/^ARG PG_MAJOR=\([0-9][0-9]*\)$/\1/p' "$DOCKERFILE" | head -n 1)"
+          if [ -z "$major" ]; then
+            echo "::error::$DOCKERFILE states no ARG PG_MAJOR default to build"
+            exit 1
+          fi
+          {
+            echo "name=ghcr.io/${OWNER_AND_NAME,,}/money-pg-builder"
+            echo "tag=pg${major}-${INPUTS_HASH:0:16}"
+            echo "major=${major}"
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Sign in to the registry
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+        run: printf '%s\n' "$REGISTRY_TOKEN" | docker login ghcr.io -u "$REGISTRY_USER" --password-stdin
+
+      - id: existing
+        name: Ask whether this tag was already published
+        env:
+          REFERENCE: ${{ steps.image.outputs.name }}:${{ steps.image.outputs.tag }}
+          REBUILD: ${{ inputs.rebuild }}
+        run: |
+          set -euo pipefail
+          # An image can be broken by something its tag does not name -- a base layer that was
+          # pulled mid-push, a registry that accepted a partial manifest. The tag is then correct
+          # and the image is not, and perturbing an input to move the hash would be a lie about
+          # the file it describes. This is the way back, and it is manual on purpose.
+          if [ "${REBUILD:-false}" = "true" ]; then
+            echo "published=false" >>"$GITHUB_OUTPUT"
+            echo "Rebuild requested; $REFERENCE will be built whether or not it exists."
+          # Absent is the ordinary answer, not a failure; anything else is left to the build.
+          elif docker buildx imagetools inspect "$REFERENCE" >/dev/null 2>&1; then
+            echo "published=true" >>"$GITHUB_OUTPUT"
+            echo "$REFERENCE is already published; nothing decides a new image."
+          else
+            echo "published=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      - id: publish
+        name: Build and publish
+        if: ${{ steps.existing.outputs.published == 'false' }}
+        working-directory: extensions/money-pg
+        env:
+          REFERENCE: ${{ steps.image.outputs.name }}:${{ steps.image.outputs.tag }}
+          MAJOR: ${{ steps.image.outputs.major }}
+          SOURCE: ${{ github.server_url }}/${{ github.repository }}
+          REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # The source label is what links the package to this repository. Without it the package
+          # inherits no repository permissions and stands alone in the registry, which is not a
+          # cosmetic difference: an image published so that others can pull it has to be reachable
+          # from the thing that describes it.
+          docker buildx build --push \
+            --target builder \
+            --build-arg "PG_MAJOR=${MAJOR}" \
+            --label "org.opencontainers.image.source=${SOURCE}" \
+            --label "org.opencontainers.image.revision=${REVISION}" \
+            --label "org.opencontainers.image.licenses=MIT OR Apache-2.0" \
+            --label "org.opencontainers.image.description=pgrx build environment: a pinned Rust toolchain, cargo-pgrx, PostgreSQL ${MAJOR} with development headers, and an initialised PGRX_HOME." \
+            --metadata-file metadata.json \
+            -f kamu-money-pg/Dockerfile \
+            -t "$REFERENCE" \
+            .
+          # The tag closes over this repository's inputs only; the digest closes over the bytes.
+          # A consumer that needs a fixed image pins this.
+          digest="$(jq -er '."containerimage.digest"' metadata.json)"
+          rm -f metadata.json
+          echo "digest=${digest}" >>"$GITHUB_OUTPUT"
+          echo "Published $REFERENCE"
+          echo "Immutable reference: ${REFERENCE%%:*}@${digest}"
+          {
+            echo "### Builder image published"
+            echo
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| tag (discovery) | \`${REFERENCE}\` |"
+            echo "| digest (pin this) | \`${REFERENCE%%:*}@${digest}\` |"
+          } >>"$GITHUB_STEP_SUMMARY"

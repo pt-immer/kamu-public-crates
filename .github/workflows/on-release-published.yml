@@ -29,7 +29,7 @@ jobs:
         uses: ./.github/actions/read-dev-tools
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch, 2026-07-16
         with:
-          toolchain: ${{ steps.pins.outputs.rust_primary }}
+          toolchain: ${{ fromJSON(steps.pins.outputs.manifest).rust.primary }}
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Parse release tag -> crate + version

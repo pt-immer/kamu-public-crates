@@ -1,9 +1,9 @@
 # Agent guide — kamu-public-crates
 
-This repository contains nine independently versioned public Rust libraries, an
-unpublished repository-policy crate, and one excluded PostgreSQL extension lane. `CLAUDE.md` and
-`.github/copilot-instructions.md` are symlinks to this file; keep this as the
-single automation guide. Human-facing orientation belongs in
+This repository contains independently versioned public Rust libraries, an
+unpublished repository-policy crate, and one excluded PostgreSQL extension lane.
+`CLAUDE.md` and `.github/copilot-instructions.md` are symlinks to this file; keep
+this as the single automation guide. Human-facing orientation belongs in
 [`README.md`](README.md) and [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Repository map
@@ -13,41 +13,74 @@ single automation guide. Human-facing orientation belongs in
 | `crates/iso3166` | `no_std`, zero-allocation ISO 3166 primitives | Root workspace |
 | `crates/logging` | `tracing` setup for native, systemd, wasm, Actix, and OTLP | Root workspace |
 | `crates/money-core` | Exact ISO 4217 money, rates, allocation, wire, and driver adapters | Root workspace |
-| `crates/snap-*` | Two SNAP BI domain crates plus four Actix/axum adapters | Root workspace |
+| `crates/snap-*` | SNAP BI domain crates plus their Actix/axum adapters | Root workspace |
 | `extensions/money-pg` | `kmoney` pgrx extension and YugabyteDB harness | Excluded nested workspace |
 | `tools/repo-policy` | Decoders for the repository's own artifacts, and the checks that read them | Root workspace, `publish = false` |
 
-The root workspace contains exactly nine publishable crates. Versions and
-releases are per crate; each crate's `Cargo.toml` and `CHANGELOG.md` are
-authoritative.
+Every root workspace member is published except `tools/repo-policy`, which is
+`publish = false`. Versions and releases are per crate; each crate's
+`Cargo.toml` and `CHANGELOG.md` are authoritative.
 
 The extension lane is structurally excluded from the root `Cargo.toml`. It owns
-its Rust 1.96 toolchain, `[patch.crates-io]`, profiles, `Cargo.lock`,
-`deny.toml`, and Docker-backed gate. It is `publish = false`, not a tenth public
+its own Rust toolchain, `[patch.crates-io]`, profiles, `Cargo.lock`,
+`deny.toml`, and Docker-backed gate. It is `publish = false`, not another public
 crate. Do not replace structural exclusion with repeated `--exclude` flags.
 Reach the lane through `just pg <recipe>`.
 
-Repository-wide policy remains at the root. In particular, `lint-shell` and
+Repository-wide policy lives at the root. In particular, `lint-shell` and
 `scrub` cover the extension lane as well as the public workspace.
 
 ## Hard invariants
 
 - The public workspace uses Edition 2024. `.config/dev-tools.json` is the one file
-  CI reads its versions from, and states three: `rust.msrv` is the floor the
-  published manifests declare and CI tests exactly, `rust.primary` is the
-  toolchain that pins compile-fail goldens, and `rust.lane` is the excluded
+  CI reads its versions from. It states three Rust versions: `rust.msrv` is the
+  floor the published manifests declare and CI tests exactly, `rust.primary` is
+  the toolchain that pins compile-fail goldens, and `rust.lane` is the excluded
   extension lane's channel. Each is a view of a file some tool honours and the
   manifest cannot — `rust-toolchain.toml` for the two channels, `Cargo.toml` for
-  the floor — and `tools/repo-policy` holds them equal. Workflows reference the
-  manifest through `.github/actions/read-dev-tools`. A toolchain SELECTED by a
-  version literal fails, in any file Actions executes and in either YAML spelling;
-  a version named some other way, in a `run:` line or a container image, is not
-  something that scan looks at. `test_dev_environment.py` still binds the literals in `clippy.toml`, the
-  `Justfile` and `README.md`. Toolchain
-  literals matter more than the floor they restate: `rustup run <version>`
-  addresses a toolchain by name, so one that outlives a bump either resolves to
-  a stale install or does not resolve at all. The extension lane pins its own
-  toolchain because pgrx 0.19.2 requires it, and binds it in its hygiene crate.
+  the floor — and `tools/repo-policy` holds them equal. The rest are tool pins,
+  and every `tool:` request indexes the entry for the tool it names rather than
+  restating a version.
+
+  Each tool section is an object keyed by the name that tool is requested and
+  installed by — `install-action`'s spelling for the ones CI installs, the npm
+  package name for `node_tools`, which npm installs and no workflow requests.
+  Keying is what makes a pin reachable at all: an Actions expression can index a
+  value by name but cannot search a list for the entry whose name matches. That
+  key is also what cargo installs and what a recipe runs, so an entry states
+  `crate`, `package`, `binary` or `version_args` only where one differs from it
+  or from the default.
+
+  `.github/actions/read-dev-tools` publishes the manifest itself, once, and a job
+  republishes that one output; each site indexes the pin it needs out of it. A
+  pin added to the manifest is therefore reachable without an output and a
+  republish being added to carry it, and every path a workflow indexes is checked
+  to exist — an unresolvable one is not an error in Actions, it is the empty
+  string, and a job handed one installs whatever the runner already had. No file
+  Actions executes states a three-component version literal outside a comment, in
+  either YAML spelling and on any line: not a toolchain selection, not a `tool:`
+  request, not a cache key, not a `run:` line. Three is what every version this
+  repository pins has, and what a dotted address is not. A version written with
+  any other number of components — a PostgreSQL major, an image series, the
+  four-component YugabyteDB image tag — reads the same as an ordinary number or
+  an address, so that scan does not claim it, and each is bound by whatever else
+  names it or by nothing.
+
+  Toolchain components and targets named in a job sit outside the one-home rule.
+  `rust.primary_components` and `rust.primary_targets` state what `just setup`
+  installs on a developer machine, held equal to `rust-toolchain.toml`; a
+  `components:` or `targets:` line in a job states what that job needs, which is
+  a different claim even where the two name the same string. Collapsing them
+  would make the manifest the home for a requirement each job owns, and would
+  leave the ones no developer machine installs — `llvm-tools-preview`, `miri` —
+  with nowhere to live.
+
+  `test_dev_environment.py` binds the literals in `clippy.toml`, the
+  `Justfile` and `README.md`. Toolchain literals matter more than the floor they
+  restate: `rustup run <version>` addresses a toolchain by name, so one that
+  outlives a bump either resolves to a stale install or does not resolve at all.
+  The extension lane pins its own toolchain because the pgrx it is patched to
+  requires that one, and binds it in its hygiene crate.
   Its CI jobs install `rust.lane` rather than `rust.primary`, and
   `test_workflows.py` tells the two apart by whether a job invokes a root recipe
   that cds into the lane, a set it derives from the `Justfile` rather than lists
@@ -87,8 +120,7 @@ Repository-wide policy remains at the root. In particular, `lint-shell` and
 - The extension lane's `Cargo.lock` must record `kamu-money-core` at the version
   `crates/money-core` carries. A `[patch.crates-io]` entry offering any other
   version is ignored rather than refused, so the container suites go on
-  compiling the published crate while reporting nothing; that is how the lane
-  spent a release cycle testing 0.1.1 against a 0.1.2 tree. Re-lock with
+  compiling the published crate while reporting nothing. Re-lock with
   `just pg core-relock` — a bare `cargo update` in the lane re-locks it to the
   registry. The entry's form is not fixed: Cargo records whichever resolution it
   last performed, so a patched run writes a path and an unpatched one writes a
@@ -145,25 +177,29 @@ default-root lock.
 
 Missing tools or targets fail rather than skip. Tool versions live in
 `.config/dev-tools.json`; `just setup` installs the repository-local tools and
-cross targets, then runs `just doctor`. ShellCheck remains an operating-system
+cross targets, then runs `just doctor`. ShellCheck is an operating-system
 package; setup prints the required version when it is absent.
 `VERBOSE=1` exposes full output behind compact aggregate recipes.
 
-The Justfile exports `.tools/bin` and `node_modules/.bin` ahead of `PATH`, so a
-recipe runs the repository-local tool where setup installed one and the system
-copy where it did not. `just doctor` resolves in that same order. Under
-**Repository tools**, where setup is what installs them, the marker names the
-copy it found: `✓` repository-local, `•` system. Elsewhere `✓` means satisfied,
-because nothing in those sections is setup's to install. `✗` is always absent,
-unreadable, or below its pin.
+The Justfile exports `.tools/bin` and `node_modules/.bin` after `PATH`, so a
+recipe runs the host's own tool where the host provides one and the
+repository-local copy where it does not. `just doctor` resolves in that same
+order. Under **Repository tools**, where setup is what installs them, the marker
+names the copy it found: `✓` repository-local, `•` host. Elsewhere `✓` means
+satisfied, because nothing in those sections is setup's to install. `✗` is
+always absent, unreadable, or not answering its pin.
 
-Pinned tool versions are floors, not equalities. Any tool at or above its
-`.config/dev-tools.json` version passes, and the row prints the comparison.
-`just setup` still installs the exact pin and every workflow still installs it,
-so a tool above the floor is running something CI is not: for `taplo`, `typos`,
-`markdownlint-cli2` and `shellcheck`, whose output is itself a gate verdict, that
-can pass locally and fail in CI. Rust toolchains stay exact, because
-`rustup run <version>` addresses one by name — an identity, not a floor.
+A pinned tool version is a floor unless its entry states why it must be exact,
+and the row prints the comparison it made. A tool whose output is itself a gate
+verdict is pinned exactly, because a copy above the floor passes locally and
+fails in CI. Rust toolchains stay exact, because `rustup run <version>`
+addresses one by name — an identity, not a floor.
+
+A developer machine and a CI runner provision differently on purpose, and
+[`docs/TOOLCHAIN-REALMS.md`](docs/TOOLCHAIN-REALMS.md) is the one place that
+describes both. It also carries the consequence of the search order: the host's
+copy answers before the repository-local one, so a host tool that misses its pin
+shadows anything setup installs, and setup refuses to install beneath it.
 
 `just pg doctor` follows the same rendering contract, with one marker of its
 own: `!` is an advisory warning, which never affects its exit code. It is a
@@ -180,17 +216,19 @@ beneath it. `KMONEY_BUILD_CACHE_DIR` makes `test-matrix.sh` and the `yb-build`
 recipe export and restore those layers through `docker buildx`; locally it stays
 unset because the daemon already holds the layers.
 
-CI sets it for the YugabyteDB job only. Each cached target costs about 1.6 GiB
-per manifest state against a 10 GB repository cache, and a branch plus a pull
-request touching a manifest are two live states, so caching all five exceeds the
-limit; saves are then refused and each run rebuilds the layer whose stale
-near-miss it just paid to download, which is worse than not caching. One target
-fits, and YugabyteDB is the one worth it: the PostgreSQL jobs run in parallel, so
-an uncached major sets their pace whether or not its siblings are cached, while
-the YugabyteDB job is both the longest and alone. The PostgreSQL images still
-build their dependencies in a layer; only the export is dropped. Exporting needs
-the
-docker-container buildx driver, which the selected builder is not by default;
+CI sets it for the YugabyteDB job only, because the PostgreSQL jobs run in
+parallel: an uncached major sets their pace whether or not its siblings are
+cached, while the YugabyteDB job is both the longest and alone. Whether a size
+cap also binds this choice is UNKNOWN — the arithmetic once recorded here
+assumed a 10 GB repository cache, and active caches exceed that. The cap is the
+half that is missing: `actions/cache/usage` reports consumption only, and the
+limit comes from the organization's cache usage policy or the repository's
+Actions settings. Re-derive both before relying on a size reason. A target that
+is cached and then evicted is
+worse than one never cached: each run pays to download a stale near-miss and
+rebuilds the layer anyway. The PostgreSQL images build their dependencies in a
+layer; only the export is dropped. Exporting needs the docker-container buildx
+driver, which the selected builder is not by default;
 `scripts/require-cache-exporter.sh` refuses rather than letting the build abort
 part-way. The YugabyteDB export names the `deps` build target: `mode=max` over
 the whole graph would also export the package step's `target/`, which nothing
@@ -213,10 +251,11 @@ nothing and say so nowhere, which is why `hygiene/tests/packaging.rs` asserts
 the reference rather than the declaration.
 
 Both container images must start from the exact toolchain
-`extensions/money-pg/rust-toolchain.toml` names. A series tag such as
-`rust:1.96` floats to a newer patch; rustup then honours the pin by downloading
-a second toolchain inside every container, on every run, without ever producing
-a wrong answer. `hygiene/tests/pins.rs` holds that agreement, and the pgrx one.
+`extensions/money-pg/rust-toolchain.toml` names. A base image named by series
+rather than by patch floats to a newer patch; rustup then honours the pin by
+downloading a second toolchain inside every container, on every run, without
+ever producing a wrong answer. `hygiene/tests/pins.rs` holds that agreement, and
+the pgrx one.
 
 Granular root checks:
 
@@ -250,7 +289,7 @@ their commands.
 ## Test policy
 
 - `cargo-nextest` is the ordinary test runner in recipes, coverage, and CI.
-  `.config/nextest.toml` is its single configuration. Retries remain disabled.
+  `.config/nextest.toml` is its single configuration. Retries are disabled.
 - Nextest does not run doctests. Complete ordinary-test aggregates must own an
   explicit `cargo test --doc`; coverage measurements intentionally exclude
   doctests.
@@ -259,8 +298,8 @@ their commands.
 - The root gate stays Docker-free. Docker-dependent coverage belongs to CI or
   the extension gate and must be named as non-coverage when omitted.
 - Each line-coverage floor lives in its `cov-*` recipe and nowhere else, beside
-  the reason it sits where it does. Five crates have one; the four thin
-  framework adapters are behavior/compile-tested without a percentage floor.
+  the reason it sits where it does. The thin framework adapters carry no
+  percentage floor; they are behavior- and compile-tested instead.
 - A floor is set only after measurement. New behavior lands with tests.
 - Markdown fences need languages, tables must lint, and Taplo owns TOML
   formatting.
@@ -291,19 +330,25 @@ jobs change. A recipe added only to a local aggregate is not CI coverage—verif
 that some CI job reaches it.
 
 Third-party actions use full commit IDs with a readable release label in a
-comment. Workflow outputs and environment variables use underscores, never
-hyphens; GitHub expressions parse a hyphen as subtraction.
+comment. Workflow outputs and environment variables use underscores. An
+environment name becomes a shell variable, where a hyphen cannot appear in one;
+outputs take the same spelling so a reference never changes form between them.
 
 Workflows that receive the crates.io token target the `crates-io` environment,
 which scopes the token. It carries **no reviewer rule**: publishing is gated by
 creating the GitHub Release, not by a second approval.
 
-Pull requests into `main` are gated and reviewed. The repository owner's
-`--admin` merge is the only sanctioned bypass — do not relax the rule because
-merges routinely use it.
+Pull requests into `main` are gated and reviewed. Branch protection permits an
+administrative override; exercising it does not relax the rule, and a merge that
+used one is not precedent for the next.
 
 `default_workflow_permissions` is `read`. Every workflow declares the
-permissions it needs.
+permissions it needs. `publish-builder-image.yml` is the one that writes a
+package, and it publishes the lane's reusable pgrx build environment from the
+default branch. Its tag is derived from the inputs that decide the image, so it
+builds when one of them changes and at no other time; the base image is pinned
+by digest so an upstream rebuild is one of those changes.
+[`docs/TOOLCHAIN-REALMS.md`](docs/TOOLCHAIN-REALMS.md) carries the model.
 
 Ordinary extension container tests receive Cargo's normalized
 `kamu-money-core` package through a named Docker context. Release proof sets
@@ -322,7 +367,7 @@ paragraph:
 ```text
 chore(deps): refresh workspace dependencies
 
-Update requirements within the Rust 1.94 compatibility range.
+Update requirements within the declared compatibility range.
 
 tdkc-1
 ```
@@ -350,7 +395,7 @@ SNAP crates publish in dependency order:
 
 1. `kamu-snap-crypto`
 2. `kamu-snap-response`
-3. the four `kamu-snap-{crypto,response}-{actix,axum}` adapters
+3. the `kamu-snap-{crypto,response}-{actix,axum}` adapters
 
 Wait for the crates.io index between tiers.
 

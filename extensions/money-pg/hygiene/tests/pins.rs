@@ -77,6 +77,66 @@ fn every_anchored_line_carries(path: &Path, anchor: &str, expected: &str) {
     }
 }
 
+/// Every occurrence of `anchor` is followed, within the same request, by `expected`.
+///
+/// Weaker than this -- asking only that the LINE mention `expected` somewhere -- a request
+/// such as `cargo-pgrx@0.19.1,cargo-nextest@<the pin>` satisfies both the anchor and the
+/// expectation while installing a stale CLI. `expected` is the path indexed out of the
+/// published manifest, not a whole expression: the job publishing that manifest may be
+/// renamed without making this a false failure.
+fn every_anchor_is_followed_by(path: &Path, anchor: &str, expected: &str) {
+    let contents = support::read(path);
+    let mut found = 0_usize;
+    for line in contents.lines() {
+        // A comment is prose about the pin, not a request for it. The public rule exempts one
+        // explicitly, and two readers of one file disagreeing about that is a failure `just
+        // gate` cannot reproduce.
+        if line.trim_start().starts_with('#') {
+            continue;
+        }
+        for (index, _) in line.match_indices(anchor) {
+            let tail = &line[index + anchor.len()..];
+            // The expression the anchor introduces, not the rest of the line: a sibling
+            // request must not answer for this one, and a literal must not stand in front of
+            // the pin it precedes.
+            let Some((expression, _)) = tail.strip_prefix("${{").and_then(|open| open.split_once("}}"))
+            else {
+                panic!(
+                    "{}: `{}` must read `{expected}` immediately after `{anchor}`",
+                    path.display(),
+                    line.trim(),
+                )
+            };
+            // Out of the published manifest, which only two contexts carry. Asking merely for
+            // `outputs.manifest` somewhere in the expression accepts `env.pins_outputs.manifest`
+            // -- a context nothing sets, whose every pin is the empty string.
+            let reads_manifest = expression.split("fromJSON(").skip(1).any(|call| {
+                let argument = call.split(')').next().unwrap_or(call).trim();
+                (argument.starts_with("needs.") || argument.starts_with("steps."))
+                    && argument.ends_with(".outputs.manifest")
+            });
+            assert!(
+                reads_manifest,
+                "{}: `{}` must read `{expected}` out of the published manifest after `{anchor}`",
+                path.display(),
+                line.trim(),
+            );
+            assert!(
+                expression.contains(expected),
+                "{}: `{}` must read `{expected}` in the expression following `{anchor}`",
+                path.display(),
+                line.trim(),
+            );
+            found += 1;
+        }
+    }
+    assert!(
+        found > 0,
+        "{} no longer contains `{anchor}` -- this guard would pass vacuously; re-point it",
+        path.display()
+    );
+}
+
 #[test]
 fn every_pgrx_crate_takes_the_pinned_version_exactly() {
     let exact = format!("={}", pinned_version());
@@ -159,9 +219,15 @@ fn every_cargo_pgrx_installation_pins_the_same_version() {
     // version because a PGRX_HOME initialised by one cargo-pgrx is not interchangeable
     // with another's -- reusing it across a bump is a silently wrong toolchain, not a
     // slow build.
+    //
+    // Both read the pin rather than restating it, so what is checked here is that they
+    // reach it. That the pin equals THIS version is held by
+    // `the_tool_manifest_installs_the_pinned_cargo_pgrx`, one claim in one place; asserting
+    // the literal here would be a second copy of it that a bump would have to find.
     let workflow = repository.join(".github/workflows/on-pr-synced.yml");
-    every_anchored_line_carries(&workflow, "cargo-pgrx@", &format!("cargo-pgrx@{version}"));
-    every_anchored_line_carries(&workflow, "key: pgrx-", &format!("key: pgrx-{version}-"));
+    let pin = "ci_only_tools['cargo-pgrx'].version";
+    every_anchor_is_followed_by(&workflow, "cargo-pgrx@", pin);
+    every_anchor_is_followed_by(&workflow, "key: pgrx-", pin);
 }
 
 /// The lane's Rust toolchain, from the file rustup itself obeys.
@@ -192,6 +258,16 @@ fn every_container_starts_from_the_pinned_rust_toolchain() {
         "ARG RUST_VERSION=",
         &format!("ARG RUST_VERSION={channel}"),
     );
+
+    // And by digest as well as by tag. The tag is rebuilt upstream whenever the distribution
+    // patches, so the same tag names different bytes over time and nothing here moves when it
+    // does -- which is exactly what the published builder image's derived tag cannot see.
+    every_anchored_line_carries(&lane.join("kamu-money-pg/Dockerfile"), "FROM rust:", "@sha256:");
+
+    // Docker resolves that digest and ignores the tag, so the assertion above proves a digest is
+    // present and nothing about which toolchain it names. Held where the answer exists: the build
+    // asks the image. Without this the two lines agree with each other and with nothing else.
+    every_anchored_line_carries(&lane.join("kamu-money-pg/Dockerfile"), "rustc --version", "$RUST_VERSION");
 
     // The YugabyteDB images have no Rust base to inherit, so they install rustup themselves and
     // name the toolchain on the command line.
@@ -319,6 +395,7 @@ fn the_tool_manifest_installs_the_pinned_cargo_pgrx() {
     let declared = manifest
         .get("ci_only_tools")
         .and_then(|tools| tools.get("cargo-pgrx"))
+        .and_then(|tool| tool.get("version"))
         .and_then(serde_json::Value::as_str)
         .unwrap_or_else(|| panic!("{} must declare cargo-pgrx", path.display()));
     assert_eq!(

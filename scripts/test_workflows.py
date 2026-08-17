@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import json
 import pathlib
 import re
 import unittest
@@ -14,9 +13,6 @@ from scripts.ci_paths import DERIVED_CLASSES, classify_paths, tracked_paths
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
 JUSTFILE = ROOT / "Justfile"
-TOOL_MANIFEST = json.loads(
-    (ROOT / ".config" / "dev-tools.json").read_text(encoding="utf-8")
-)
 
 
 WORKFLOW_PREFIX = ".github/workflows/"
@@ -53,17 +49,19 @@ def action_files() -> list[pathlib.Path]:
     )
 
 
-def selected_pin(line: str) -> str:
-    """The pin a `toolchain:` line reads, as the output name it names.
+def selected_channel(line: str) -> str:
+    """The channel a `toolchain:` line reads, as the manifest path it indexes.
 
     The channels themselves live in `.config/dev-tools.json` and are held equal to the
     `rust-toolchain.toml` each one governs by `tools/repo-policy/tests/pins.rs`. What a job
     chooses is which of them to read, which is what this file checks.
     """
     value = line.split(":", 1)[1].strip()
-    reference = re.search(r"outputs\.([a-z0-9_]+)\s*}}", value)
-    if reference:
-        return reference.group(1)
+    # The pins are indexed out of the published manifest rather than read from an output
+    # named after each one, so what identifies the channel is the path, not an output name.
+    indexed = re.search(r"outputs\.manifest\s*\)\.rust\.([a-z0-9_]+)", value)
+    if indexed:
+        return f"rust.{indexed.group(1)}"
     if "matrix.toolchain" in value:
         return "matrix"
     return value
@@ -230,27 +228,6 @@ class WorkflowPolicyTests(unittest.TestCase):
 
         self.assertEqual(set(DERIVED_CLASSES) | pins, declared)
 
-    def test_install_action_tools_are_exactly_pinned(self) -> None:
-        versions = {
-            tool["workflow_name"]: tool["version"]
-            for group in ("cargo_tools", "system_tools")
-            for tool in TOOL_MANIFEST[group]
-        }
-        versions.update(TOOL_MANIFEST["ci_only_tools"])
-
-        for workflow in workflow_files():
-            text = workflow.read_text(encoding="utf-8")
-            for value in re.findall(r"(?m)^\s+tool:\s+(.+)$", text):
-                for specification in value.split(","):
-                    with self.subTest(
-                        workflow=workflow.name,
-                        specification=specification,
-                    ):
-                        name, separator, version = specification.partition("@")
-                        self.assertEqual("@", separator)
-                        self.assertIn(name, versions)
-                        self.assertEqual(versions[name], version)
-
     def test_no_action_installs_a_rust_toolchain(self) -> None:
         """The lane/public split is a property of the JOB, not of the step.
 
@@ -294,13 +271,13 @@ class WorkflowPolicyTests(unittest.TestCase):
             text = workflow.read_text(encoding="utf-8")
             for job, body in workflow_job_bodies(text).items():
                 if enters_lane.search(body):
-                    expected, where = "rust_lane", "extension lane"
+                    expected, where = "rust.lane", "extension lane"
                     # The lane builds with one toolchain. Miri is the exception it
                     # actually has; a matrix is not, and would install the public
                     # workspace's MSRV into a lane job.
                     allowed = {expected, "nightly"}
                 else:
-                    expected, where = "rust_primary", "public workspace"
+                    expected, where = "rust.primary", "public workspace"
                     allowed = {expected, "nightly", "matrix"}
                 steps = re.findall(
                     r"(?ms)^      - uses: dtolnay/rust-toolchain@[0-9a-f]{40}"
@@ -309,7 +286,7 @@ class WorkflowPolicyTests(unittest.TestCase):
                 )
                 for step in steps:
                     selected = {
-                        selected_pin(line)
+                        selected_channel(line)
                         for line in step.splitlines()
                         if line.strip().startswith("toolchain:")
                     }

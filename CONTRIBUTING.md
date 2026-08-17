@@ -1,6 +1,6 @@
 # Contributing to kamu-public-crates
 
-Thank you for contributing. The root Cargo workspace contains nine public
+Thank you for contributing. The root Cargo workspace contains public
 libraries that version and release independently. The PostgreSQL extension under
 `extensions/money-pg` is a separate, excluded workspace.
 
@@ -10,21 +10,29 @@ libraries that version and release independently. The PostgreSQL extension under
 git clone --recurse-submodules https://github.com/pt-immer/kamu-public-crates.git
 cd kamu-public-crates
 python3 scripts/dev_environment.py setup
-export PATH="$PWD/.tools/bin:$PATH"
+export PATH="$PATH:$PWD/.tools/bin"
 just doctor
 ```
 
 The recursive clone matters: `kamu-iso3166` generates lookup tables from its
 vendored Git submodule. The bootstrap command works before `just` exists,
-installs the versions in `.config/dev-tools.json`, and uses `npm ci`. Exporting
-the local tool directory makes those pinned binaries available in the current
-shell. ShellCheck 0.11.0 remains an operating-system package.
+installs the versions in `.config/dev-tools.json`, and uses `npm ci`. The
+export appends, matching the order the `Justfile` exports to every recipe:
+those pinned binaries answer where the host provides nothing. Prepending
+inverts that for the shell you are in, and nothing reports it. ShellCheck is an
+operating-system package; `just doctor` names the version to install when it is
+missing.
+
+Your machine's own tools answer first, and setup fills only what they do not
+provide. Why a developer machine and a CI runner provision differently, and what
+a pin means in each, is in
+[`docs/TOOLCHAIN-REALMS.md`](docs/TOOLCHAIN-REALMS.md).
 
 ## Development loop
 
 ```sh
 just check-all  # fast format, Clippy, and test signal
-just gate       # complete barrier for the nine public crates
+just gate       # complete barrier for the public crates
 just ci         # gate plus publish dry-runs
 ```
 
@@ -68,11 +76,11 @@ Do not use workspace-wide `--all-features`. `kamu-logging` has mutually
 exclusive native and wasm features, and pgrx features select one PostgreSQL
 major. The Justfiles hold the supported matrices.
 
-Five crates carry a line-coverage floor, one `cov-*` recipe each, gathered by
-`just cov-all`. Each floor lives in its recipe and nowhere else, beside the
-reason it sits where it does; `just cov-all` prints the measurement against it.
-A floor is set from a measurement, never from a target. The four thin
-Actix/axum adapters are behavior- and compile-tested without one.
+Each crate that carries a line-coverage floor states it in its own `cov-*`
+recipe and nowhere else, beside the reason it sits where it does; `just cov-all`
+gathers them and prints each measurement against its floor. A floor is set from
+a measurement, never from a target. The thin Actix/axum adapters carry none;
+they are behavior- and compile-tested instead.
 
 ## Commits
 
@@ -91,7 +99,7 @@ a standalone paragraph before any trailer block:
 ```text
 chore(deps): refresh workspace dependencies
 
-Update requirements within the Rust 1.94 compatibility range.
+Update requirements within the declared compatibility range.
 
 tdkc-1
 ```
