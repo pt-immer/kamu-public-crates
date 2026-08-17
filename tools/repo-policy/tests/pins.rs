@@ -557,11 +557,11 @@ fn every_reader_of_a_manifest_expression_spells_the_same_output_name() {
         .filter(|relative| read(relative).contains(MANIFEST_ACTION))
         .collect();
 
-    // The two readers that parse the expression from outside Actions. Neither can import the
-    // constant, and nothing in their content ties them to the action except this name, so they
-    // are the one part of the set that has to be stated.
+    // The reader that parses the expression from outside Actions. It cannot import the constant,
+    // and nothing in its content ties it to the action except this name, so it is the one part of
+    // the set that has to be stated. The lane's hygiene crate was a second such reader until its
+    // checks moved from the workflow's install requests to the image those jobs run in.
     readers.push("scripts/test_workflows.py".to_owned());
-    readers.push("extensions/money-pg/hygiene/tests/pins.rs".to_owned());
 
     for relative in &readers {
         // Escapes dropped, because one reader spells the name inside a regex as `\.`; and read

@@ -1,5 +1,5 @@
 //! The lane pins two toolchains, and each is ONE fact spelled in many places: pgrx across
-//! manifests, Dockerfiles, the tool manifest and CI, and Rust across `rust-toolchain.toml`,
+//! manifests, Dockerfiles and the tool manifest, and Rust across `rust-toolchain.toml`,
 //! three container images, and the toolchain step of every CI job that enters the lane. That
 //! last one is bound in `scripts/test_workflows.py` rather than here, because which jobs those
 //! are is workflow policy; the version it compares against is read from the same
@@ -75,66 +75,6 @@ fn every_anchored_line_carries(path: &Path, anchor: &str, expected: &str) {
     for line in anchored {
         assert!(line.contains(expected), "{}: `{}` must carry `{expected}`", path.display(), line.trim());
     }
-}
-
-/// Every occurrence of `anchor` is followed, within the same request, by `expected`.
-///
-/// Weaker than this -- asking only that the LINE mention `expected` somewhere -- a request
-/// such as `cargo-pgrx@0.19.1,cargo-nextest@<the pin>` satisfies both the anchor and the
-/// expectation while installing a stale CLI. `expected` is the path indexed out of the
-/// published manifest, not a whole expression: the job publishing that manifest may be
-/// renamed without making this a false failure.
-fn every_anchor_is_followed_by(path: &Path, anchor: &str, expected: &str) {
-    let contents = support::read(path);
-    let mut found = 0_usize;
-    for line in contents.lines() {
-        // A comment is prose about the pin, not a request for it. The public rule exempts one
-        // explicitly, and two readers of one file disagreeing about that is a failure `just
-        // gate` cannot reproduce.
-        if line.trim_start().starts_with('#') {
-            continue;
-        }
-        for (index, _) in line.match_indices(anchor) {
-            let tail = &line[index + anchor.len()..];
-            // The expression the anchor introduces, not the rest of the line: a sibling
-            // request must not answer for this one, and a literal must not stand in front of
-            // the pin it precedes.
-            let Some((expression, _)) = tail.strip_prefix("${{").and_then(|open| open.split_once("}}"))
-            else {
-                panic!(
-                    "{}: `{}` must read `{expected}` immediately after `{anchor}`",
-                    path.display(),
-                    line.trim(),
-                )
-            };
-            // Out of the published manifest, which only two contexts carry. Asking merely for
-            // `outputs.manifest` somewhere in the expression accepts `env.pins_outputs.manifest`
-            // -- a context nothing sets, whose every pin is the empty string.
-            let reads_manifest = expression.split("fromJSON(").skip(1).any(|call| {
-                let argument = call.split(')').next().unwrap_or(call).trim();
-                (argument.starts_with("needs.") || argument.starts_with("steps."))
-                    && argument.ends_with(".outputs.manifest")
-            });
-            assert!(
-                reads_manifest,
-                "{}: `{}` must read `{expected}` out of the published manifest after `{anchor}`",
-                path.display(),
-                line.trim(),
-            );
-            assert!(
-                expression.contains(expected),
-                "{}: `{}` must read `{expected}` in the expression following `{anchor}`",
-                path.display(),
-                line.trim(),
-            );
-            found += 1;
-        }
-    }
-    assert!(
-        found > 0,
-        "{} no longer contains `{anchor}` -- this guard would pass vacuously; re-point it",
-        path.display()
-    );
 }
 
 #[test]
@@ -215,19 +155,18 @@ fn every_cargo_pgrx_installation_pins_the_same_version() {
         );
     }
 
-    // CI installs a prebuilt CLI and caches PGRX_HOME beside it. The cache key carries the
-    // version because a PGRX_HOME initialised by one cargo-pgrx is not interchangeable
-    // with another's -- reusing it across a bump is a silently wrong toolchain, not a
-    // slow build.
+    // CI installs no CLI at all: the lane's compiler-only jobs run inside the published build
+    // environment, which carries the one this file pins and a PGRX_HOME already initialised
+    // against it. A PGRX_HOME initialised by one cargo-pgrx is not interchangeable with
+    // another's, so the image supplying both together is what makes them agree.
     //
-    // Both read the pin rather than restating it, so what is checked here is that they
-    // reach it. That the pin equals THIS version is held by
-    // `the_tool_manifest_installs_the_pinned_cargo_pgrx`, one claim in one place; asserting
-    // the literal here would be a second copy of it that a bump would have to find.
+    // What is checkable offline is that those jobs take the image from the single published
+    // reference rather than each naming one, and that the reference is a digest. A tag would
+    // close over this repository's inputs without covering the apt state resolved while the
+    // image builds, so two images could answer to it and only one carries this version.
     let workflow = repository.join(".github/workflows/on-pr-synced.yml");
-    let pin = "ci_only_tools['cargo-pgrx'].version";
-    every_anchor_is_followed_by(&workflow, "cargo-pgrx@", pin);
-    every_anchor_is_followed_by(&workflow, "key: pgrx-", pin);
+    every_anchored_line_carries(&workflow, "      image: ", "needs.changes.outputs.builder_image");
+    every_anchored_line_carries(&repository.join(".config/builder-image"), "money-pg-builder", "@sha256:");
 }
 
 /// The lane's Rust toolchain, from the file rustup itself obeys.

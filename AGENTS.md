@@ -132,6 +132,19 @@ Repository-wide policy lives at the root. In particular, `lint-shell` and
   records the narrow rationale: SNAP BI signs and verifies; it does not decrypt
   attacker-controlled ciphertext. Remove the ignore when a compatible
   constant-time release exists.
+- The lane patches `pgrx` to a fork for every target, not only YugabyteDB, and
+  nothing here can verify that fork stays equivalent to upstream. A workspace has
+  one `[patch.crates-io]` table and one lockfile, and `kamu-money-pg` declares
+  `yb-pg15 = ["pgrx/yb-pg15"]`, which Cargo validates at resolution whether or
+  not the feature is enabled — so a stock `pgrx` fails to resolve everywhere. The
+  PostgreSQL 15–18 matrix therefore builds the fork with the feature off and
+  relies on it compiling to upstream. Measured at `v0.19.2-yb.1`: five files
+  differ, no upstream line is removed or modified, every addition is behind
+  `#[cfg(feature = "yb-pg15")]`. A revision that changed an upstream line instead
+  would be silent, because the fork keeps its version compatible with
+  `cargo-pgrx` and no version check can see content. Re-measure before accepting
+  a new tag, and delete this entry once the fork's own CI proves it
+  (`pt-immer/pgrx-yugabytedb#1`).
 
 ## Generated data
 
