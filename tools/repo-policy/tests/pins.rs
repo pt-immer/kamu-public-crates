@@ -821,11 +821,15 @@ fn every_pushed_image_is_labelled_with_the_repository_that_describes_it() {
     let mut pushes = 0_usize;
     for relative in tracked(&[".github/workflows/*.yml"]) {
         let text = read(&relative);
-        if !text.contains("docker buildx build --push") {
+        // Read as code rather than as text: a comment naming a label satisfies a whole-file
+        // search while the build that actually runs carries neither it nor the digest.
+        let code: Vec<&str> = text.lines().map(code_of).collect();
+        let names = |needle: &str| code.iter().any(|line| line.contains(needle));
+        if !names("docker buildx build --push") {
             continue;
         }
         assert!(
-            text.contains("org.opencontainers.image.source="),
+            names("org.opencontainers.image.source="),
             "{relative} pushes an image without labelling its source; the package would be \
              published unlinked from the repository",
         );
@@ -833,7 +837,7 @@ fn every_pushed_image_is_labelled_with_the_repository_that_describes_it() {
         // A consumer needing a fixed image pins the digest, which has to be published to be
         // pinnable -- and `docs/TOOLCHAIN-REALMS.md` promises it is.
         assert!(
-            text.contains("containerimage.digest"),
+            names("containerimage.digest"),
             "{relative} pushes an image without publishing its digest; nothing immutable is \
              offered to a consumer that cannot rely on the tag",
         );
