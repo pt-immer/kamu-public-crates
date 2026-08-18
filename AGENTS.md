@@ -319,7 +319,10 @@ their commands.
 
 ## CI structure
 
-One event, one workflow. `.github/workflows/on-pr-synced.yml` answers pull
+One gate per event, and a workflow named for the event it answers.
+`publish-builder-image.yml` shares the push trigger and gates nothing; it
+publishes an artifact when the inputs that decide it change.
+`.github/workflows/on-pr-synced.yml` answers pull
 requests, and `workflow_dispatch` for a run against a branch on demand, which
 diffs the empty tree so every job runs. It has no push trigger: the ruleset
 requires an up-to-date branch, squash-only merges and linear history, so a merge

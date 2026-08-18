@@ -122,8 +122,9 @@ environment approves publishing exactly one crate. A lockfile-only refresh does
 not require a version bump; a crate source or manifest change does.
 
 Releasing `kamu-money-core` runs one more job afterwards: the extension lane is
-compiled and tested against the version that was just published, rather than
-against this tree. It waits for the sparse index first, and it holds no
+compiled from this tree and tested against the published `kamu-money-core`
+rather than this tree's copy of it, and only when the released version satisfies
+the requirement the lane declares. It waits for the sparse index first, and it holds no
 registry token. Because it runs after the version is immutable, it reports
 rather than prevents — if it fails, the published version is wrong for the lane
 and the answer is to yank it and release a fixed one, not to retry the job.

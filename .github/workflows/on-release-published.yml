@@ -108,10 +108,14 @@ jobs:
             | python3 -c "import json,sys,os; m=json.load(sys.stdin); p=next(x for x in m['packages'] if x['name']==os.environ['CRATE']); print('\n'.join(f'{d[\"name\"]}\t{d[\"req\"]}' for d in sorted(p['dependencies'], key=lambda d: d['name']) if d['name'].startswith('kamu-snap-')))")"
           if [ -z "$deps" ]; then echo "no in-workspace kamu-snap-* deps."; exit 0; fi
           while IFS=$'\t' read -r dependency requirement; do
-            if ! python3 scripts/crates_io.py require "$dependency" "$requirement"; then
+            python3 scripts/crates_io.py require "$dependency" "$requirement" && continue
+            status=$?
+            if [ "$status" -eq 2 ]; then
+              echo "::error::could not read the crates.io index; whether '${dependency}' satisfies '${requirement}' is unknown"
+            else
               echo "::error::dependency '${dependency}' has no published version satisfying '${requirement}' — publish it before ${CRATE}. Order: kamu-snap-crypto -> kamu-snap-response -> adapters."
-              exit 1
             fi
+            exit "$status"
           done <<< "$deps"
 
       - name: Publish (dry-run, then for real)
@@ -171,24 +175,58 @@ jobs:
         with:
           tool: just@${{ fromJSON(steps.pins.outputs.manifest).cargo_tools['just'].version }}
 
+      # The lane depends on a requirement, not on whichever version was published last. A release
+      # outside that requirement is one this lane does not consume, and compiling against the
+      # version it does still resolve would report a different crate as proven.
+      - name: Determine whether the lane consumes this release
+        id: consumes
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          set -euo pipefail
+          requirement="$(cargo metadata --no-deps --format-version 1 \
+            --manifest-path extensions/money-pg/Cargo.toml \
+            | jq -r 'first(.packages[] | select(.name == "kamu-money-pg") | .dependencies[]
+                     | select(.name == "kamu-money-core") | .req)')"
+          if [ -z "$requirement" ]; then
+            echo "::error::kamu-money-pg declares no kamu-money-core dependency to read"
+            exit 1
+          fi
+          echo "lane requires kamu-money-core '${requirement}'"
+          verdict="$(python3 scripts/crates_io.py matches "$requirement" "$VERSION")"
+          echo "$verdict"
+          case "$verdict" in
+            *=true)
+              echo "consumes=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "consumes=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::kamu-money-core ${VERSION} lies outside the lane's requirement '${requirement}'; this release is not one it consumes"
+              ;;
+          esac
+
       - name: Wait for the index to carry the released version
+        if: ${{ steps.consumes.outputs.consumes == 'true' }}
         env:
           CRATE: ${{ needs.publish.outputs.crate }}
           VERSION: ${{ needs.publish.outputs.version }}
         run: |
-          set -euo pipefail
-          # The sparse index lags the publish call.
-          n=1
-          until python3 scripts/crates_io.py require "$CRATE" "=${VERSION}"; do
-            if [ "$n" -ge 8 ]; then
-              echo "::error::${CRATE} ${VERSION} did not reach the index"
-              exit 1
-            fi
-            echo "::notice::index does not carry ${CRATE} ${VERSION} yet; attempt $n"
-            sleep $((n * 15)); n=$((n + 1))
-          done
+          set -uo pipefail
+          python3 scripts/crates_io.py require "$CRATE" "=${VERSION}" --wait-seconds 300
+          status=$?
+          case "$status" in
+            0) ;;
+            2) echo "::error::could not read the crates.io index; whether ${CRATE} ${VERSION} reached it is unknown" ;;
+            *) echo "::error::${CRATE} ${VERSION} did not reach the index" ;;
+          esac
+          exit "$status"
 
+      # The majors run in parallel. Sequentially they are four uncached pgrx builds in one job, and
+      # a job killed at the runner's ceiling reports a failure indistinguishable from a real one --
+      # after the version is already immutable.
       - name: Compile and test the extension against the registry crate
+        if: ${{ steps.consumes.outputs.consumes == 'true' }}
+        timeout-minutes: 300
         env:
           KMONEY_USE_LOCAL_CORE: "0"
-        run: just pg test-pg
+        run: just pg test-pg-matrix

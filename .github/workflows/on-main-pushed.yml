@@ -16,50 +16,76 @@ jobs:
   verified:
     name: main carries a certified tree
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       checks: read
       pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
 
       - name: Assert the landing tree was certified
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
           REPOSITORY: ${{ github.repository }}
           REQUIRED_CHECK: ci-success
         run: |
           set -euo pipefail
 
-          landed_tree="$(git rev-parse "${SHA}^{tree}")"
-          echo "landed commit $SHA carries tree $landed_tree"
-
-          # A squash rewrites the commit and preserves the tree, so the tree is the comparison.
-          pulls="$(gh api "repos/${REPOSITORY}/commits/${SHA}/pulls" --jq '.[] | select(.merged_at != null) | .number' || true)"
-          if [ -z "$pulls" ]; then
-            echo "::error::$SHA is on the default branch with no merged pull request behind it; nothing certified it"
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::this workflow asserts what main carries; $REF is not main"
             exit 1
           fi
 
+          landed_tree="$(git rev-parse "${SHA}^{tree}")"
+          echo "landed commit $SHA carries tree $landed_tree"
+
+          # Three outcomes, not two. A query that could not be answered is neither a certificate
+          # nor its absence, and reporting it as absence accuses main on someone else's outage.
+          if ! response="$(gh api "repos/${REPOSITORY}/commits/${SHA}/pulls")"; then
+            echo "::error::could not read the pull requests behind $SHA; this run proved nothing"
+            exit 1
+          fi
+          pulls="$(printf '%s' "$response" | jq -r '.[] | select(.merged_at != null) | .number')"
+          if [ -z "$pulls" ]; then
+            echo "::error::$SHA is on main with no merged pull request behind it; nothing certified it"
+            exit 1
+          fi
+
+          # A squash rewrites the commit and preserves the tree, so the tree is the comparison.
           for number in $pulls; do
-            head_sha="$(gh api "repos/${REPOSITORY}/pulls/${number}" --jq '.head.sha')"
-            git fetch --quiet --no-tags origin "$head_sha" 2>/dev/null || true
-            head_tree="$(git rev-parse "${head_sha}^{tree}" 2>/dev/null || echo "")"
+            if ! head_sha="$(gh api "repos/${REPOSITORY}/pulls/${number}" --jq '.head.sha')"; then
+              echo "::error::could not read pull request #${number}; this run proved nothing"
+              exit 1
+            fi
+            if ! git fetch --quiet --no-tags --depth 1 origin "$head_sha"; then
+              echo "::error::could not fetch #${number} head $head_sha; its tree was never read"
+              exit 1
+            fi
+            head_tree="$(git rev-parse "${head_sha}^{tree}")"
             if [ "$head_tree" != "$landed_tree" ]; then
               echo "pull request #${number} head $head_sha carries a different tree; not the certificate"
               continue
             fi
-            conclusion="$(gh api "repos/${REPOSITORY}/commits/${head_sha}/check-runs" \
-              --jq '.check_runs[] | select(.name == env.REQUIRED_CHECK) | .conclusion' | head -n 1)"
+
+            # Filtered server-side. One unfiltered page carries 30 of this repository's 42 check
+            # runs, which leaves the API's ordering to decide what a client sees; a re-run makes
+            # the name ambiguous as well, and the latest attempt is the standing verdict.
+            if ! runs="$(gh api \
+              "repos/${REPOSITORY}/commits/${head_sha}/check-runs?check_name=${REQUIRED_CHECK}")"; then
+              echo "::error::could not read ${REQUIRED_CHECK} on $head_sha; this run proved nothing"
+              exit 1
+            fi
+            conclusion="$(printf '%s' "$runs" \
+              | jq -r '[.check_runs[]] | sort_by(.started_at) | (last // {}) | .conclusion // "absent"')"
             if [ "$conclusion" = "success" ]; then
               echo "pull request #${number} certified this exact tree: ${REQUIRED_CHECK} was ${conclusion}"
               exit 0
             fi
-            echo "pull request #${number} carries this tree but ${REQUIRED_CHECK} was '${conclusion:-absent}'"
+            echo "pull request #${number} carries this tree but ${REQUIRED_CHECK} was '${conclusion}'"
           done
 
-          echo "::error::no merged pull request certified tree $landed_tree with a green ${REQUIRED_CHECK}; the default branch is carrying unverified content"
+          echo "::error::no merged pull request certified tree $landed_tree with a green ${REQUIRED_CHECK}; main is carrying unverified content"
           exit 1

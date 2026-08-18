@@ -18,6 +18,11 @@ from typing import Any
 INDEX_ROOT = "https://index.crates.io"
 USER_AGENT = "kamu-public-crates-ci (https://github.com/pt-immer/kamu-public-crates)"
 
+EXIT_ANSWERED_NO = 1
+EXIT_UNREADABLE = 2
+
+POLL_SECONDS = 15
+
 
 @total_ordering
 @dataclass(frozen=True)
@@ -250,15 +255,42 @@ def probe(crate: str, requirement: str, github_output: str | None) -> int:
     return 0
 
 
-def require(crate: str, requirement: str) -> int:
-    """Fail unless a non-yanked registry version satisfies the requirement."""
-    if latest_satisfying(crate, requirement) is not None:
-        return 0
+def require(crate: str, requirement: str, wait_seconds: float = 0.0) -> int:
+    """Fail unless a non-yanked registry version satisfies the requirement.
+
+    The sparse index lags a publish, so `wait_seconds` polls until that deadline
+    before an absent version is a final answer. Exhausting the wait on an index
+    that never answered re-raises, so the caller reports an unreadable registry
+    rather than a missing crate.
+    """
+    deadline = time.monotonic() + wait_seconds
+    unreadable: RuntimeError | None = None
+
+    while True:
+        try:
+            if latest_satisfying(crate, requirement) is not None:
+                return 0
+            unreadable = None
+        except RuntimeError as error:
+            unreadable = error
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        print(
+            f"crates.io: {crate} does not yet satisfy {requirement!r}; "
+            f"{remaining:.0f}s of wait left",
+            file=sys.stderr,
+        )
+        time.sleep(min(POLL_SECONDS, remaining))
+
+    if unreadable is not None:
+        raise unreadable
     print(
         f"crates.io: {crate} has no version satisfying {requirement!r}",
         file=sys.stderr,
     )
-    return 1
+    return EXIT_ANSWERED_NO
 
 
 def ensure_absent(crate: str, raw_version: str) -> int:
@@ -306,6 +338,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     require_parser.add_argument("crate")
     require_parser.add_argument("requirement")
+    require_parser.add_argument(
+        "--wait-seconds",
+        type=float,
+        default=0.0,
+        help="poll until this deadline before reporting the version absent",
+    )
 
     match_parser = subparsers.add_parser(
         "matches",
@@ -325,7 +363,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "ensure-absent":
             return ensure_absent(args.crate, args.version)
         if args.command == "require":
-            return require(args.crate, args.requirement)
+            return require(args.crate, args.requirement, args.wait_seconds)
         for raw_version in args.versions:
             version = Version.parse(raw_version)
             print(
@@ -334,7 +372,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except (json.JSONDecodeError, OSError, RuntimeError, ValueError) as error:
         print(f"crates-io: {error}", file=sys.stderr)
-        return 1
+        return EXIT_UNREADABLE
 
 
 if __name__ == "__main__":
