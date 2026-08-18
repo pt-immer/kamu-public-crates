@@ -248,7 +248,7 @@ lint:
 
 [doc("Audit the lane lockfile, allowing only the pinned public pgrx fork.")]
 deny:
-    python3 scripts/deny.py
+    ./scripts/deny.sh
 
 [doc("Populate the in-repo PGRX_HOME from the host pg_config.")]
 pgrx-init pg_config="/usr/bin/pg_config":

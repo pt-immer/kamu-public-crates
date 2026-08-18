@@ -68,7 +68,7 @@ jobs:
             META_ARGS=()
           fi
           MANIFEST_VER="$(cargo metadata --no-deps --format-version 1 "${META_ARGS[@]}" \
-            | python3 -c "import json,sys,os; m=json.load(sys.stdin); print(next(p['version'] for p in m['packages'] if p['name']==os.environ['CRATE']))")"
+            | jq -r --arg crate "$CRATE" 'first(.packages[] | select(.name == $crate) | .version)')"
           echo "manifest=$MANIFEST_VER tag=$VERSION"
           if [[ "$MANIFEST_VER" != "$VERSION" ]]; then
             echo "::error::$CRATE Cargo.toml version ($MANIFEST_VER) != release tag version ($VERSION)"
@@ -108,7 +108,10 @@ jobs:
           CRATE: ${{ steps.parse.outputs.crate }}
         run: |
           deps="$(cargo metadata --no-deps --format-version 1 \
-            | python3 -c "import json,sys,os; m=json.load(sys.stdin); p=next(x for x in m['packages'] if x['name']==os.environ['CRATE']); print('\n'.join(f'{d[\"name\"]}\t{d[\"req\"]}' for d in sorted(p['dependencies'], key=lambda d: d['name']) if d['name'].startswith('kamu-snap-')))")"
+            | jq -r --arg crate "$CRATE" '
+                .packages[] | select(.name == $crate) | .dependencies[]
+                | select(.name | startswith("kamu-snap-"))
+                | [.name, .req] | @tsv' | sort)"
           if [ -z "$deps" ]; then echo "no in-workspace kamu-snap-* deps."; exit 0; fi
           while IFS=$'\t' read -r dependency requirement; do
             just crates-io require "$dependency" "$requirement" && continue
