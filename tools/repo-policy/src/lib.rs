@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 pub mod actions;
 pub mod ci_paths;
+pub mod dev_env;
 pub mod dev_tools;
 pub mod justfile;
 pub mod registry;

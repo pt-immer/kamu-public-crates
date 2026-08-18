@@ -26,13 +26,13 @@ default:
 [doc("Install pinned toolchains, targets, and development tools.")]
 [no-exit-message]
 setup:
-    @python3 scripts/dev_environment.py setup
+    @cargo run -q -p repo-policy --bin dev-env -- setup
 
 # Report every prerequisite reached by the root gate.
 [doc("Verify every tool and Rust component required by the gates.")]
 [no-exit-message]
 doctor:
-    @python3 scripts/dev_environment.py doctor
+    @cargo run -q -p repo-policy --bin dev-env -- doctor
 
 # ---------------------------------------------------------------------------
 # Format / fix (mutating)
@@ -403,13 +403,6 @@ check-examples:
     cargo check --examples -p kamu-snap-crypto --features snap-bi
     cargo check --examples -p kamu-snap-response
 
-# Test fail-closed CI classification, registry probing, and standalone-package
-# ownership; then prove every tracked path is classified.
-[doc("Test CI path ownership and workflow policy.")]
-test-scripts:
-    python3 -m unittest discover -s scripts -p 'test_*.py'
-    cargo run -q -p repo-policy --bin ci-paths -- check-tracked
-
 # The pin and Actions checks. Reachable on its own because the files it reads --
 # the workflows, the composite actions, every manifest and both toolchain files --
 # are edited by changes that select no crate, and the workspace test sweep that
@@ -422,6 +415,7 @@ crates-io *args:
 test-policy:
     cargo nextest run -p repo-policy
     cargo test -p repo-policy --doc
+    cargo run -q -p repo-policy --bin ci-paths -- check-tracked
 
 # ---------------------------------------------------------------------------
 # Publish / vendored data / housekeeping
@@ -458,11 +452,10 @@ clean:
 gate:
     #!/usr/bin/env bash
     set -uo pipefail
-    names=("lint-all" "test-all" "test-money" "test-scripts" "test-policy" "msrv(1.94.0)" "cov-all" "doc" "build-nostd" "build-wasm" "build-wasm-snap" "check-worker-example" "check-examples" "deny")
+    names=("lint-all" "test-all" "test-money" "test-policy" "msrv(1.94.0)" "cov-all" "doc" "build-nostd" "build-wasm" "build-wasm-snap" "check-worker-example" "check-examples" "deny")
     cmds=("just lint-all"
           "just test-all"
           "just test-money"
-          "just test-scripts"
           "just test-policy"
           "cargo +1.94.0 nextest run --workspace -E 'not binary(compile_fail)' && cargo +1.94.0 test --workspace --doc --quiet"
           "just cov-all"

@@ -75,7 +75,7 @@ Repository-wide policy lives at the root. In particular, `lint-shell` and
   leave the ones no developer machine installs — `llvm-tools-preview`, `miri` —
   with nowhere to live.
 
-  `test_dev_environment.py` binds the literals in `clippy.toml`, the
+  `tools/repo-policy` binds the literals in `clippy.toml`, the
   `Justfile` and `README.md`. Toolchain literals matter more than the floor they
   restate: `rustup run <version>` addresses a toolchain by name, so one that
   outlives a bump either resolves to a stale install or does not resolve at all.
@@ -277,7 +277,6 @@ just test-all           # workspace and per-crate feature matrices
 just cov-all            # enforced coverage floors
 just check <crate>      # one crate, without the workspace sweep
 just test-fast          # workspace nextest plus doctests
-just test-scripts       # CI path ownership and workflow policy
 just test-policy        # the pinned versions and what Actions may run
 just pg selftest-all    # the compiler-free lane negative controls; CI runs this
 just pg doc-gate-selftest # the doc gate's controls; needs a populated PGRX_HOME
@@ -340,7 +339,7 @@ It does not reach the YugabyteDB path, which stays with
 is answered by yanking, not by blocking a merge.
 
 `tools/repo-policy`'s path classifier classifies every changed path and fails when a repository
-surface has no owner. `just test-scripts` proves every tracked path remains
+surface has no owner. `just test-policy` proves every tracked path remains
 classified.
 
 Why working on one crate runs another's jobs is answered by `DERIVED_CLASSES` in

@@ -96,7 +96,7 @@ build time:
 ```sh
 git clone --recurse-submodules https://github.com/pt-immer/kamu-public-crates.git
 cd kamu-public-crates
-python3 scripts/dev_environment.py setup
+cargo run -q -p repo-policy --bin dev-env -- setup
 export PATH="$PATH:$PWD/.tools/bin"
 just doctor
 ```

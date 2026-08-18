@@ -586,26 +586,21 @@ fn every_exact_pin_states_why_it_is_exact() {
     assert!(floors > 0, "every pin is exact; the floor class would be untested");
 }
 
-/// What identifies a tool section is stated in both languages that read the manifest. Two
-/// readers of one document disagreeing quietly is what this branch keeps finding.
+/// Only one language reads the manifest now, and the section suffix is a constant it imports.
+/// The check that mattered is that the sections doctor dispatches on are the sections the
+/// manifest states, in both directions, which `dev_env::doctor` settles before it prints a row.
 #[test]
-fn both_readers_of_the_manifest_agree_what_a_tool_section_is() {
-    let python = read("scripts/dev_environment.py");
-    let stated = python
-        .lines()
-        .find_map(|line| {
-            line.trim()
-                .strip_prefix("TOOL_SECTION_SUFFIX = ")?
-                .trim()
-                .strip_prefix('"')?
-                .strip_suffix('"')
-                .map(str::to_owned)
-        })
-        .expect("scripts/dev_environment.py states TOOL_SECTION_SUFFIX");
-    assert_eq!(
-        stated, TOOL_SECTION_SUFFIX,
-        "scripts/dev_environment.py and repo-policy disagree on what names a tool section",
-    );
+fn every_stated_tool_section_is_one_doctor_reports_on() {
+    let manifest = repo_policy::dev_env::load_manifest(&repo_policy::repo_root());
+    let stated = repo_policy::dev_env::tool_sections(&manifest);
+    assert!(!stated.is_empty(), "the manifest states no tool section");
+    for section in &stated {
+        assert!(
+            section.ends_with(TOOL_SECTION_SUFFIX),
+            "{section} was found as a tool section but does not end in {TOOL_SECTION_SUFFIX}"
+        );
+        assert!(!repo_policy::dev_env::tools(&manifest, section).is_empty(), "{section} states no tool");
+    }
 }
 
 /// The guide states which root workspace members are published. A count went stale by being a
