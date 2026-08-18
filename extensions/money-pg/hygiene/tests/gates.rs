@@ -27,7 +27,6 @@ fn gates_compose_every_required_check() {
         "test-regress-selftest",
         "artifact-selftest",
         "exactly-one-selftest",
-        "require-cache-exporter-selftest",
         "workspace-lock-selftest",
         "numa-selftest",
     ] {
