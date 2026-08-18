@@ -193,25 +193,11 @@ cross targets, then runs `just doctor`. ShellCheck is an operating-system
 package; setup prints the required version when it is absent.
 `VERBOSE=1` exposes full output behind compact aggregate recipes.
 
-The Justfile exports `.tools/bin` and `node_modules/.bin` after `PATH`, so a
-recipe runs the host's own tool where the host provides one and the
-repository-local copy where it does not. `just doctor` resolves in that same
-order. Under **Repository tools**, where setup is what installs them, the marker
-names the copy it found: `✓` repository-local, `•` host. Elsewhere `✓` means
-satisfied, because nothing in those sections is setup's to install. `✗` is
-always absent, unreadable, or not answering its pin.
-
-A pinned tool version is a floor unless its entry states why it must be exact,
-and the row prints the comparison it made. A tool whose output is itself a gate
-verdict is pinned exactly, because a copy above the floor passes locally and
-fails in CI. Rust toolchains stay exact, because `rustup run <version>`
-addresses one by name — an identity, not a floor.
-
-A developer machine and a CI runner provision differently on purpose, and
+A developer machine and a CI runner provision differently on purpose.
 [`docs/TOOLCHAIN-REALMS.md`](docs/TOOLCHAIN-REALMS.md) is the one place that
-describes both. It also carries the consequence of the search order: the host's
-copy answers before the repository-local one, so a host tool that misses its pin
-shadows anything setup installs, and setup refuses to install beneath it.
+describes both: what a pin means in each realm, the order recipes and both
+doctors resolve tools in, what each marker says about the copy that answered,
+and the consequence a host tool missing its pin has for `just setup`.
 
 `just pg doctor` follows the same rendering contract, with one marker of its
 own: `!` is an advisory warning, which never affects its exit code. It is a
@@ -365,10 +351,11 @@ simulates this skip cascade for every tracked path.
 Heavy jobs use job-level conditions. Do not add workflow-level `paths:` filters:
 they can leave required checks pending.
 
-`ci-success` is the sole required branch check. It gathers every job through
-`re-actors/alls-green`; keep its `needs` and allowed-skip list complete whenever
-jobs change. A recipe added only to a local aggregate is not CI coverage—verify
-that some CI job reaches it.
+`ci-success` is the sole required branch check, gathering every job through
+`re-actors/alls-green`. Its `needs` and its allowed-skip list are held EQUAL to
+the workflow's own job set, so a job added without being gathered fails rather
+than merges. A recipe reached only by a local aggregate is not CI coverage; some
+CI job must run it.
 
 Third-party actions use full commit IDs with a readable release label in a
 comment. Workflow outputs and environment variables use underscores. An
