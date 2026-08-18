@@ -1,5 +1,12 @@
 # Changelog — `kamu-snap-response-actix`
 
+## 3.0.1 — 2026-08-19
+
+### Changed
+
+- The internal-error body comes from `kamu_snap_response::internal_error_body`
+  rather than a private copy. No wire change for service code `00`.
+
 ## 3.0.0 — 2026-07-28
 
 ### Breaking

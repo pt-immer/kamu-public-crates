@@ -93,7 +93,7 @@ sha2 = { version = "0.10", features = ["asm", "compress", "oid"] }
 kamu-snap-crypto = { path = "crates/snap-crypto", version = "3" }
 kamu-snap-crypto-actix = { path = "crates/snap-crypto-actix", version = "3" }
 kamu-snap-crypto-axum = { path = "crates/snap-crypto-axum", version = "3" }
-kamu-snap-response = { path = "crates/snap-response", version = "3" }
+kamu-snap-response = { path = "crates/snap-response", version = "3.1" }
 kamu-snap-response-actix = { path = "crates/snap-response-actix", version = "3" }
 kamu-snap-response-axum = { path = "crates/snap-response-axum", version = "4" }
 # --- kamu-money-core ---

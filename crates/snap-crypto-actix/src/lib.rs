@@ -1,11 +1,7 @@
-//! actix-web inbound-verify glue for SNAP BI service signatures.
-//!
-//! [`verify_request`] translates Actix request types into the validated
-//! framework-neutral core facade. Buffer limits and body replay remain owned by
-//! the application.
-
+#![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 
+use actix_web::HttpRequest;
 use actix_web::http::{Method as ActixMethod, header::HeaderMap as ActixHeaderMap};
 use kamu_snap_crypto::snap_bi::{
     AUTHORIZATION, ServiceRequestParts, ServiceVerificationError, X_SIGNATURE, X_TIMESTAMP,
@@ -33,6 +29,22 @@ pub fn verify_request(
     let request =
         ServiceRequestParts::new(&http_method, path, authorization, signature_b64, timestamp, body)?;
     verify_service_request(client_secret.as_bytes(), request)
+}
+
+/// Verify a SNAP BI service request, taking the path from the request itself.
+///
+/// BRI signs the origin-form path and EXCLUDES the URI query, so this reads `request.path()`.
+/// [`verify_request`] cannot enforce that: its caller supplies the path, so a caller passing
+/// `path_and_query()` computes a different stringToSign and the mismatch surfaces as a failed
+/// signature rather than as the mistake it is. Prefer this entry point wherever the whole
+/// request is in hand; `verify_request` remains for a caller that legitimately holds only a
+/// path, such as a proxy or a replayed log.
+pub fn verify_http_request(
+    request: &HttpRequest,
+    body: &[u8],
+    client_secret: &str,
+) -> Result<(), ServiceVerificationError> {
+    verify_request(request.method(), request.path(), request.headers(), body, client_secret)
 }
 
 fn header_str<'a>(
@@ -124,6 +136,36 @@ mod tests {
                 "{authorization:?}",
             );
         }
+    }
+
+    /// BRI signs the origin-form path and excludes the query, so a request carrying one must
+    /// verify against a signature computed over the path ALONE.
+    ///
+    /// This is the rule `verify_request` cannot hold: its caller chooses what to pass, and a
+    /// caller passing `path_and_query()` gets a signature mismatch rather than a diagnosis. The
+    /// README said so; nothing failed when it was ignored.
+    #[test]
+    fn the_uri_query_is_excluded_from_the_signature() {
+        let authorization = "Bearer access-token";
+        let signature = signature(authorization);
+
+        let mut checked = 0_usize;
+        for query in ["", "?partnerReferenceNo=abc", "?a=1&b=2"] {
+            let mut request = actix_web::test::TestRequest::post().uri(&format!("{PATH}{query}"));
+            for (name, value) in [
+                ("authorization", authorization),
+                ("x-signature", signature.as_str()),
+                ("x-timestamp", TIMESTAMP),
+            ] {
+                request = request.insert_header((name, value));
+            }
+            assert!(
+                verify_http_request(&request.to_http_request(), BODY, SECRET).is_ok(),
+                "a query changed the stringToSign: {query:?}"
+            );
+            checked += 1;
+        }
+        assert_eq!(3, checked);
     }
 
     #[test]

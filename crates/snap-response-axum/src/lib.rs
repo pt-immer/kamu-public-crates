@@ -5,7 +5,7 @@ use axum::{
     http::{StatusCode, header},
     response::IntoResponse,
 };
-use kamu_snap_response::{Error, ServiceCode, SnapResponse};
+use kamu_snap_response::{ServiceCode, SnapResponse, internal_error_body};
 use serde::Serialize;
 
 /// Orphan-rule newtype implementing [`IntoResponse`].
@@ -30,12 +30,6 @@ impl<T: Serialize> IntoResponse for AxumResponder<T> {
 
         (status, [(header::CONTENT_TYPE, "application/json")], body).into_response()
     }
-}
-
-fn internal_error_body(service: ServiceCode) -> Vec<u8> {
-    serde_json::to_vec(&SnapResponse::<()>::failure(Error::InternalServerError, service)).unwrap_or_else(
-        |_| br#"{"responseCode":"5000001","responseMessage":"Internal Server Error"}"#.to_vec(),
-    )
 }
 
 /// Converts a SNAP BI response into its Axum responder.

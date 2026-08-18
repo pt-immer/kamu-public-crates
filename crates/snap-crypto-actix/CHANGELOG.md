@@ -1,5 +1,15 @@
 # Changelog — `kamu-snap-crypto-actix`
 
+## 3.1.0 — 2026-08-19
+
+### Added
+
+- `verify_http_request`, which takes the whole `HttpRequest` and reads the path
+  from it. BRI excludes the URI query from `stringToSign`, and `verify_request`
+  cannot enforce that because its caller supplies the path; a caller passing
+  `path_and_query()` saw a signature mismatch rather than a diagnosis.
+  `verify_request` is unchanged, for a caller that holds only a path.
+
 ## 3.0.0 — 2026-07-28
 
 ### Breaking
