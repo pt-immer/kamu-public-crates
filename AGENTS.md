@@ -82,7 +82,7 @@ Repository-wide policy lives at the root. In particular, `lint-shell` and
   The extension lane pins its own toolchain because the pgrx it is patched to
   requires that one, and binds it in its hygiene crate.
   Its CI jobs install `rust.lane` rather than `rust.primary`, and
-  `test_workflows.py` tells the two apart by whether a job invokes a root recipe
+  `tools/repo-policy` tells the two apart by whether a job invokes a root recipe
   that cds into the lane, a set it derives from the `Justfile` rather than lists
   — `just pg` is not the only way in, and `gate-all` composes `gate-pg`.
   `rust-toolchain.toml` wins over whatever a job installed, so a lane job given
@@ -230,13 +230,21 @@ unset because the daemon already holds the layers.
 
 CI sets it for the YugabyteDB job only, because the PostgreSQL jobs run in
 parallel: an uncached major sets their pace whether or not its siblings are
-cached, while the YugabyteDB job is both the longest and alone. Whether a size
-cap also binds this choice is UNKNOWN — the arithmetic once recorded here
-assumed a 10 GB repository cache, and active caches exceed that. The cap is the
-half that is missing: `actions/cache/usage` reports consumption only, and the
-limit comes from the organization's cache usage policy or the repository's
-Actions settings. Re-derive both before relying on a size reason. A target that
-is cached and then evicted is
+cached, while the YugabyteDB job is both the longest and alone. A size cap binds
+the choice as well, and the arithmetic the earlier note could not complete is
+this: the repository's cache limit was raised from the 10 GB default to 32 GiB
+on 2026-08-10, and the lane holds 7.90 GiB per manifest state, so roughly four
+live states fit. At the default it was measurably evicting — total active fell
+from 15.6 GiB to 9.82 GiB within minutes, which made restores intermittent
+rather than reliable.
+
+Neither half is readable from the API. `actions/cache/usage` reports
+consumption only — 14.4 GiB across 11 caches on 2026-08-18 — and GitHub exposes
+the limit in the repository's Actions settings and nowhere else:
+`actions/cache/usage-policy` answers 404 for the repository and the
+organization alike, with `admin:org` and `repo` both granted. Read it from that
+page before relying on a size reason. A target that is cached and then evicted
+is
 worse than one never cached: each run pays to download a stale near-miss and
 rebuilds the layer anyway. The PostgreSQL images build their dependencies in a
 layer; only the export is dropped. Exporting needs the docker-container buildx
