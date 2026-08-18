@@ -9,6 +9,7 @@ pub mod actions;
 pub mod ci_paths;
 pub mod dev_env;
 pub mod dev_tools;
+pub mod gate;
 pub mod justfile;
 pub mod registry;
 pub mod source_policy;

@@ -83,8 +83,11 @@ fn each_changelog_opens_on_the_version_its_manifest_carries() {
 
 #[test]
 fn owner_records_name_real_gate_recipes_and_ci_jobs() {
-    let recipes = recipes(&repo_root());
-    let gate = recipes["gate"].body();
+    let root = repo_root();
+    let recipes = recipes(&root);
+    let manifest = repo_policy::dev_env::load_manifest(&root);
+    let scheduled: Vec<String> =
+        repo_policy::gate::stages(&manifest.rust.msrv).into_iter().map(|stage| stage.command).collect();
     let workflow = read(".github/workflows/on-pr-synced.yml");
 
     for (manifest, owner) in owners() {
@@ -94,7 +97,7 @@ fn owner_records_name_real_gate_recipes_and_ci_jobs() {
             owner.gate_recipe
         );
         assert!(
-            gate.contains(&format!("\"just {}\"", owner.gate_recipe)),
+            scheduled.iter().any(|command| command == &format!("just {}", owner.gate_recipe)),
             "{manifest}: the gate does not schedule {}",
             owner.gate_recipe
         );

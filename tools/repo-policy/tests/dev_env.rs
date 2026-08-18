@@ -47,7 +47,6 @@ fn every_pinned_toolchain_literal_names_a_manifest_version() {
     }
 
     for (file, prefixes) in [
-        ("Justfile", vec!["cargo +", "rustup run ", "msrv("]),
         ("README.md", vec!["Rust-", "Rust "]),
         // Clippy gates which lints apply on this, so a stale value lints the workspace against a
         // Rust it no longer supports.
@@ -59,11 +58,10 @@ fn every_pinned_toolchain_literal_names_a_manifest_version() {
         assert!(stray.is_empty(), "{file} names {stray:?}, which the manifest does not");
     }
 
-    let labels = literals_after(&read("Justfile"), &["msrv("]);
-    assert!(!labels.is_empty(), "no msrv stage label to bind");
-    for label in &labels {
-        assert_eq!(&manifest.rust.msrv, label, "the msrv stage label names another version");
-    }
+    // The Justfile states none at all: the gate reads its MSRV channel from the manifest, so a
+    // literal here would be a second home rather than a stale one.
+    let stated = literals_after(&read("Justfile"), &["cargo +", "rustup run ", "msrv("]);
+    assert!(stated.is_empty(), "the Justfile states toolchain literals again: {stated:?}");
 }
 
 #[test]

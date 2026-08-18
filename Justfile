@@ -450,80 +450,10 @@ clean:
 # `VERBOSE=1` for every stage's output.
 [doc("Run the complete Docker-free gate for the nine public crates.")]
 gate:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    names=("lint-all" "test-all" "test-money" "test-policy" "msrv(1.94.0)" "cov-all" "doc" "build-nostd" "build-wasm" "build-wasm-snap" "check-worker-example" "check-examples" "deny")
-    cmds=("just lint-all"
-          "just test-all"
-          "just test-money"
-          "just test-policy"
-          "cargo +1.94.0 nextest run --workspace -E 'not binary(compile_fail)' && cargo +1.94.0 test --workspace --doc --quiet"
-          "just cov-all"
-          "just doc"
-          "just build-nostd"
-          "just build-wasm"
-          "just build-wasm-snap"
-          "just check-worker-example"
-          "just check-examples"
-          "just deny")
-    # Group assignment. Stages within a group run SERIALLY because they share one
-    # Cargo build directory and would otherwise queue on its lock, gaining nothing;
-    # the groups themselves run concurrently. Only groups that ALREADY own a disjoint
-    # build directory are split out: `cov-all` drives cargo-llvm-cov into
-    # target/llvm-cov-target, and `misc` either builds a separate workspace or does
-    # not build at all.
-    #
-    # The msrv and cross-target stages are deliberately left in `host`. Splitting them
-    # would need NEW target directories to escape the same lock, and they measure 21s
-    # of a 430s run -- gigabytes of duplicated artifacts, cold on first use, to buy 5%.
-    #
-    # Every stage still runs. This overlaps them; it never drops one.
-    grps=(host host host host host host cov host host host host misc host misc)
-    tmp=$(mktemp -d)
-    trap 'rm -rf "$tmp"' EXIT
-    run_group() {
-      # The scratch directory belongs to the parent shell; a group that finishes
-      # early must not take it down while its siblings are still writing.
-      trap - EXIT
-      local grp=$1 i started elapsed rc
-      for i in "${!names[@]}"; do
-        [ "${grps[$i]}" = "$grp" ] || continue
-        started=$SECONDS
-        eval "${cmds[$i]}" >"$tmp/$i.out" 2>&1
-        rc=$?
-        elapsed=$((SECONDS - started))
-        printf '%s %s\n' "$rc" "$elapsed" >"$tmp/$i.meta"
-        # Printed as it lands, so a five-minute barrier still shows progress. Order is
-        # completion order; the ordered view is the failure replay and VERBOSE=1 below.
-        if [ "$rc" -eq 0 ]; then printf '  PASS  %5ds  %s\n' "$elapsed" "${names[$i]}"
-        else printf '  FAIL  %5ds  %s\n' "$elapsed" "${names[$i]}"; fi
-      done
-    }
-    for g in host cov misc; do run_group "$g" & done
-    wait
-    declare -a rcs outs secs
-    fail=0
-    for i in "${!names[@]}"; do
-      # A missing .meta means the group died before recording a verdict. Treat that as
-      # a failure rather than letting `set -u` abort with an unrelated message.
-      if [ -r "$tmp/$i.meta" ]; then read -r rc sec <"$tmp/$i.meta"; else rc=1 sec=0; fi
-      rcs[$i]=$rc; secs[$i]=$sec
-      outs[$i]=$(cat "$tmp/$i.out" 2>/dev/null)
-      [ "$rc" -eq 0 ] || fail=1
-    done
-    printf '  ----  %5ds  total\n' "$SECONDS"
-    if [ "${VERBOSE:-0}" = "1" ]; then
-      for i in "${!names[@]}"; do printf '\n=== %s ===\n%s\n' "${names[$i]}" "${outs[$i]}"; done
-    elif [ "$fail" -ne 0 ]; then
-      for i in "${!names[@]}"; do [ "${rcs[$i]}" -ne 0 ] && printf '\n=== %s (FAILED) ===\n%s\n' "${names[$i]}" "${outs[$i]}"; done
-    fi
-    # State explicitly when this Docker-free gate did not cover the excluded lane.
-    if [ -n "$(git status --porcelain --untracked-files=all -- extensions/money-pg)" ]; then
-      echo
-      echo "  NOTE  extensions/money-pg has changes this gate did NOT cover."
-      echo "        Run 'just gate-all' before pushing them."
-    fi
-    exit "$fail"
+    # Built, then run: `cargo run` would hold the build directory while the stages below invoke
+    # cargo themselves, and they fail rather than wait for it.
+    @cargo build -q -p repo-policy --bin gate
+    @"${CARGO_TARGET_DIR:-target}/debug/gate"
 
 # Passthrough keeps the lane's recipe inventory in its own Justfile. It reports
 # nothing of its own, so `[no-exit-message]` leaves the lane recipe's failure as
