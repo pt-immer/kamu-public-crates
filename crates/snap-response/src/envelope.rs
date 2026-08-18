@@ -299,6 +299,28 @@ pub enum PayloadError {
     Serialization(#[source] serde_json::Error),
 }
 
+/// The wire body for an internal error, for a caller that cannot return one.
+///
+/// A framework's response conversion has no way to fail, so an adapter whose own serialization
+/// failed needs bytes rather than a `Result`. It lives here because both adapters need the same
+/// bytes, and a copy in each is a copy of this crate's own wire format.
+///
+/// The fallback is DERIVED from the response it is falling back for. Spelled out, it pins one
+/// service code -- and this function takes one, so every caller passing another would have been
+/// answered with the wrong `responseCode` on that path.
+#[must_use]
+pub fn internal_error_body(service: ServiceCode) -> Vec<u8> {
+    let response = SnapResponse::<()>::failure(Error::InternalServerError, service);
+    serde_json::to_vec(&response).unwrap_or_else(|_| {
+        format!(
+            r#"{{"{RESPONSE_CODE_KEY}":"{}","{RESPONSE_MESSAGE_KEY}":"{}"}}"#,
+            response.response_code(),
+            response.response_message()
+        )
+        .into_bytes()
+    })
+}
+
 impl<T> serde::Serialize for SnapResponse<T>
 where
     T: serde::Serialize,
@@ -389,5 +411,34 @@ fn deserialize_success_payload<T: serde::de::DeserializeOwned>(
             serde_json::from_value(serde_json::Value::Null).map_err(|_| object_error)
         }
         Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+mod internal_error_body_tests {
+    use super::*;
+
+    /// The body an adapter emits must carry the SERVICE CODE it was given. A spelled-out fallback
+    /// pinned one, so every other service code would have been answered wrongly on that path.
+    #[test]
+    fn the_body_carries_the_service_code_it_was_given() {
+        let mut checked = 0_usize;
+        for raw in [0_u8, 17, 99] {
+            let service = ServiceCode::new(raw).expect("the fixture is a service code");
+            let body = internal_error_body(service);
+            let parsed: serde_json::Value = serde_json::from_slice(&body).expect("the body is JSON");
+            let expected = SnapResponse::<()>::failure(Error::InternalServerError, service);
+            assert_eq!(
+                expected.response_code(),
+                parsed[RESPONSE_CODE_KEY].as_str().expect("the body names a response code"),
+                "service {raw:02}"
+            );
+            assert_eq!(
+                expected.response_message(),
+                parsed[RESPONSE_MESSAGE_KEY].as_str().expect("the body names a message")
+            );
+            checked += 1;
+        }
+        assert_eq!(3, checked);
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "kamu-snap-response"
-version = "3.0.0"
+version = "3.1.0"
 description = "Validated response states and error taxonomy for Bank Indonesia SNAP BI integrations"
 documentation = "https://docs.rs/kamu-snap-response"
 categories = ["api-bindings", "encoding", "web-programming"]

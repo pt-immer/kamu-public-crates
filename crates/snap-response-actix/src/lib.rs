@@ -2,7 +2,7 @@
 #![forbid(unsafe_code)]
 
 use actix_web::{HttpRequest, HttpResponse, HttpResponseBuilder, Responder, body::BoxBody};
-use kamu_snap_response::{Error, ServiceCode, SnapResponse};
+use kamu_snap_response::{ServiceCode, SnapResponse, internal_error_body};
 use serde::Serialize;
 
 /// Orphan-rule newtype implementing [`Responder`].
@@ -28,12 +28,6 @@ impl<T: Serialize> Responder for ActixResponder<T> {
 
         HttpResponseBuilder::new(status).content_type("application/json").body(body)
     }
-}
-
-fn internal_error_body(service: ServiceCode) -> Vec<u8> {
-    serde_json::to_vec(&SnapResponse::<()>::failure(Error::InternalServerError, service)).unwrap_or_else(
-        |_| br#"{"responseCode":"5000001","responseMessage":"Internal Server Error"}"#.to_vec(),
-    )
 }
 
 /// Converts a SNAP BI response into its Actix Web responder.

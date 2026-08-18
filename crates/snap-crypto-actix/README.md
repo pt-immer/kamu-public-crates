@@ -9,31 +9,28 @@
 
 Actix request translation for `kamu-snap-crypto`.
 
-`verify_request` reads the three SNAP BI authentication headers, converts
+`verify_http_request` reads the three SNAP BI authentication headers, converts
 Actix's HTTP method, and delegates authorization parsing, canonicalization, and
 HMAC verification to the core crate.
 
 ```rust,no_run
 use actix_web::{HttpRequest, HttpResponse, web};
-use kamu_snap_crypto_actix::verify_request;
+use kamu_snap_crypto_actix::verify_http_request;
 
 async fn handler(req: HttpRequest, body: web::Bytes) -> HttpResponse {
-    match verify_request(
-        req.method(),
-        req.path(),
-        req.headers(),
-        &body,
-        "client-secret",
-    ) {
+    match verify_http_request(&req, &body, "client-secret") {
         Ok(()) => HttpResponse::Ok().finish(),
         Err(_) => HttpResponse::Unauthorized().finish(),
     }
 }
 ```
 
+It takes the path from the request, so BRI's exclusion of the URI query from
+`stringToSign` is enforced here rather than asked of the caller. `verify_request`
+takes a path instead, for a caller that holds only one.
+
 Configure Actix's payload limit for the route before materializing
 `web::Bytes`. Pass the same byte buffer to verification and deserialization.
-Use `req.path()`: BRI excludes query parameters from `stringToSign`.
 
 ## 3.0 changes
 

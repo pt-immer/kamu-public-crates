@@ -1,5 +1,15 @@
 # Changelog — `kamu-snap-response`
 
+## 3.1.0 — 2026-08-19
+
+### Added
+
+- `internal_error_body`, the wire body for an internal error, for a caller that
+  cannot return one. Both framework adapters carried a private copy whose
+  fallback spelled out one service code while the function took one, so any
+  other service code was answered with the wrong `responseCode` on that path.
+  The fallback is now derived from the response it replaces.
+
 ## 3.0.0 — 2026-07-28
 
 ### Breaking

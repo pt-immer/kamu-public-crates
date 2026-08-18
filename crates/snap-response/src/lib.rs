@@ -9,6 +9,7 @@ pub mod response_code;
 pub use category::Category;
 pub use envelope::{
     FailureResponse, MalformedResponse, PayloadError, PayloadObject, SnapResponse, SuccessResponse,
+    internal_error_body,
 };
 #[cfg(feature = "crypto")]
 pub use error::{CryptoFailure, CryptoFailureClass};
