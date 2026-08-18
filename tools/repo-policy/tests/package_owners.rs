@@ -128,3 +128,23 @@ fn owner_records_name_dependabot_directories() {
         }
     }
 }
+
+/// The PostgreSQL `kamu-money-core` is proven against must be one the extension lane supports.
+///
+/// Two different claims — what the crate is tested on, and what the extension builds for — that
+/// must agree. `testcontainers`' own default answered the first with a major past end of life.
+#[test]
+fn the_roundtrip_postgresql_is_a_major_the_lane_supports() {
+    let reference = repo_policy::justfile::variable(&repo_root(), "PG_ROUNDTRIP_IMAGE");
+    let tag = reference.rsplit_once(':').expect("the image names a tag").1;
+    let major = tag.split('-').next().expect("the tag opens on a major");
+
+    let lane = repo_root().join("extensions/money-pg");
+    let supported = repo_policy::justfile::variable(&lane, "PG_MAJORS");
+    let majors: Vec<&str> = supported.split_whitespace().collect();
+    assert!(!majors.is_empty(), "the lane declares no PostgreSQL majors");
+    assert!(
+        majors.contains(&major),
+        "the roundtrip runs on PostgreSQL {major}, which the lane does not build for: {majors:?}"
+    );
+}

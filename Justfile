@@ -4,6 +4,11 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 # fallback for what the host does not provide. A developer who already runs a
 # satisfying tool keeps running it; `just setup` fills the gaps rather than
 # shadowing the machine. See docs/TOOLCHAIN-REALMS.md.
+# The PostgreSQL kamu-money-core's text form is proven against. The tag names a major and
+# floats within it: the claim is the major, which `tools/repo-policy` holds to one the
+# extension lane supports.
+PG_ROUNDTRIP_IMAGE := "postgres:18-alpine"
+
 export PATH := env_var("PATH") + ":" + justfile_directory() + "/.tools/bin:" + justfile_directory() + "/node_modules/.bin"
 
 # List available recipes
@@ -253,7 +258,8 @@ test-money:
 # Concurrency is bounded by `.config/nextest.toml`.
 [doc("Run kamu-money-core's Docker-backed database tests.")]
 test-money-db:
-    cargo nextest run -p kamu-money-core --all-features -E 'binary(pg_roundtrip) or binary(sqlx_roundtrip)'
+    KMONEY_PG_IMAGE="{{ PG_ROUNDTRIP_IMAGE }}" \
+        cargo nextest run -p kamu-money-core --all-features -E 'binary(pg_roundtrip) or binary(sqlx_roundtrip)'
 
 # Test every Docker-free feature surface; run doctests separately from nextest.
 [doc("Run every Docker-free root-workspace test matrix.")]

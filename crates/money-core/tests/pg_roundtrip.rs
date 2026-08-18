@@ -18,6 +18,7 @@ use kamu_money_core::advanced::domain::{DOMAIN_MAX, POW10_SCALE};
 use kamu_money_core::iso::{IDR, JPY, KWD, USD};
 use kamu_money_core::{Money, Rate};
 use postgres::{Client, NoTls};
+use testcontainers::ImageExt;
 use testcontainers::runners::SyncRunner;
 use testcontainers_modules::postgres::Postgres;
 
@@ -30,8 +31,30 @@ struct Pg {
     _container: testcontainers::Container<Postgres>,
 }
 
+/// The PostgreSQL this crate is proven against, as its caller resolved it.
+///
+/// No default: `Postgres::default()` names a floating tag on a major this repository does not
+/// support, and a version nothing else here builds against is not evidence about this one.
+fn pg_image() -> (String, String) {
+    let reference = std::env::var("KMONEY_PG_IMAGE").unwrap_or_else(|_| {
+        panic!(
+            "KMONEY_PG_IMAGE is not set.\n\
+             This test runs against the PostgreSQL its caller names, which is held to a major \
+             the extension lane supports. It carries no default, because the default was a \
+             major past end of life.\n\
+             Run it as:  just test-money-db"
+        )
+    });
+    match reference.rsplit_once(':') {
+        Some((name, tag)) if !name.is_empty() && !tag.is_empty() => (name.to_owned(), tag.to_owned()),
+        _ => panic!("KMONEY_PG_IMAGE must be `repo:tag`, got {reference:?}"),
+    }
+}
+
 fn start() -> Pg {
-    let container = Postgres::default().start().expect("docker must be available");
+    let (name, tag) = pg_image();
+    let container =
+        Postgres::default().with_name(name).with_tag(tag).start().expect("docker must be available");
     let port = container.get_host_port_ipv4(5432).expect("mapped port");
     // 127.0.0.1, never `localhost`: localhost resolves ::1 first while Docker publishes IPv4,
     // which yields ECONNREFUSED or a 60s hang.

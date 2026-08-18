@@ -43,8 +43,28 @@ struct Dump {
     recipes: BTreeMap<String, Recipe>,
 }
 
+/// One variable's value, evaluated. `--dump` renders an assignment as its expression tree, and
+/// the tree is not the answer a consumer of the value wants.
+pub fn variable(directory: &Path, name: &str) -> String {
+    let output =
+        Command::new("just").args(["--evaluate", name]).current_dir(directory).output().expect("just runs");
+    assert!(
+        output.status.success(),
+        "just --evaluate {name} failed in {}: {}",
+        directory.display(),
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
 /// Every recipe a Justfile declares.
 pub fn recipes(directory: &Path) -> BTreeMap<String, Recipe> {
+    let recipes = dump(directory).recipes;
+    assert!(!recipes.is_empty(), "no recipe was found; every check over them is vacuous");
+    recipes
+}
+
+fn dump(directory: &Path) -> Dump {
     let output = Command::new("just")
         .args(["--dump", "--dump-format", "json"])
         .current_dir(directory)
@@ -56,9 +76,7 @@ pub fn recipes(directory: &Path) -> BTreeMap<String, Recipe> {
         directory.display(),
         String::from_utf8_lossy(&output.stderr).trim()
     );
-    let dump: Dump = serde_json::from_slice(&output.stdout).expect("just --dump emits JSON");
-    assert!(!dump.recipes.is_empty(), "no recipe was found; every check over them is vacuous");
-    dump.recipes
+    serde_json::from_slice(&output.stdout).expect("just --dump emits JSON")
 }
 
 /// Root recipes that run inside the extension lane, transitively.
