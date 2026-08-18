@@ -110,28 +110,24 @@ for region in "${REGIONS[@]}"; do
     save "${file}"
     planted=$((planted + 1))
 
-    ANCHOR="${anchor}" PROBE="${probe}" python3 - "${file}" <<'PY'
-import os
-import sys
-
-path = sys.argv[1]
-anchor = os.environ["ANCHOR"]
-probe = os.environ["PROBE"]
-with open(path, encoding="utf-8") as handle:
-    lines = handle.readlines()
-out = []
-done = False
-for line in lines:
-    if not done and line.rstrip("\n") == anchor:
-        indent = line[: len(line) - len(line.lstrip())]
-        out.append(f"{indent}/// See [`{probe}`].\n")
-        done = True
-    out.append(line)
-if not done:
-    raise SystemExit(f"doc-gate-selftest: anchor not matched in {path}")
-with open(path, "w", encoding="utf-8") as handle:
-    handle.write("".join(out))
-PY
+    # Inserts one doc line above the first line equal to the anchor, at the anchor's own
+    # indentation, and refuses when the anchor is not there: a plant that silently did nothing
+    # would leave doc-pg passing for the wrong reason.
+    ANCHOR="${anchor}" PROBE="${probe}" awk '
+        BEGIN { done = 0 }
+        !done && $0 == ENVIRON["ANCHOR"] {
+            match($0, /^[ \t]*/)
+            printf "%s/// See [`%s`].\n", substr($0, 1, RLENGTH), ENVIRON["PROBE"]
+            done = 1
+        }
+        { print }
+        END { if (!done) exit 3 }
+    ' "${file}" > "${file}.planted" || {
+        rm -f "${file}.planted"
+        bad "anchor not matched in ${file}"
+        exit 1
+    }
+    mv "${file}.planted" "${file}"
 done
 
 if [ "${planted}" -eq 0 ]; then
