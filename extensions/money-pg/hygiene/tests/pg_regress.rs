@@ -172,9 +172,12 @@ fn the_character_position_is_stripped_only_where_it_trails() {
     suite.plant("02-text", &mutate(&golden, " at character 8", " at character 4242"));
     suite.expect_accepted("02-text", &[], "a position naming a different offset");
 
+    // The corruption is ONLY the position, mid-message. Adding a word as well would be rejected
+    // for the word, leaving the normalizer's width untested -- measured: a normalizer widened to
+    // strip the phrase anywhere survived that version of this control.
     suite.plant(
         "02-text",
-        &mutate(&golden, "invalid money literal", "invalid money literal at character 8 oops"),
+        &mutate(&golden, "invalid money literal,", "invalid money literal at character 8,"),
     );
     suite.expect_rejected("02-text", "output differs", "'at character N' INSIDE a message");
 }
