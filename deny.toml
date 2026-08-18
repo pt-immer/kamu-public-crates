@@ -25,6 +25,21 @@ ignore = [
   # at deployment (keep signing keys off network-observable hot paths). Revisit
   # and drop this ignore the moment a constant-time `rsa` release ships.
   "RUSTSEC-2023-0071",
+  # RUSTSEC-2026-0258: `h2` accepts and queues empty HTTP/2 DATA frames without
+  # limit, so a peer can drive a server's memory up. Patched in >= 0.4.16, which
+  # this lockfile now takes; the remaining exposure is `h2` 0.3, which has NO
+  # patched release and enters through actix-http -> actix-web, a dependency of
+  # kamu-logging and the two kamu-snap-*-actix adapters.
+  #
+  # These crates are libraries: the reachable risk is a denial of service
+  # against a downstream actix HTTP/2 SERVER, not against anything this
+  # repository runs, and it is remote-triggerable for whoever deploys one.
+  # Deployments terminating HTTP/2 at a proxy that bounds concurrent streams are
+  # not reached through it.
+  #
+  # Drop this ignore when actix-http releases against h2 0.4, or when the 0.3
+  # line receives a backport.
+  "RUSTSEC-2026-0258",
 ]
 version = 2
 yanked = "deny"
