@@ -102,7 +102,7 @@ fn release_gate_covers_one_immutable_deployable_artifact() {
 /// compiler hands it at all. A `#[cfg(feature = "x")]` block the recipe does not enable is not
 /// documented, not link-checked, and not visibly absent.
 ///
-/// `doc-gate-selftest.sh` proves the regions that exist today by planting a link in each. This
+/// `doc_gate.rs` proves the regions that exist today by planting a link in each. This
 /// covers the one it cannot: a region added later.
 ///
 /// Parsed, not scanned. A line-based reader misses an attribute rustfmt wrapped across lines,

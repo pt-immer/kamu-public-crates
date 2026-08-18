@@ -278,7 +278,6 @@ just cov-all            # enforced coverage floors
 just check <crate>      # one crate, without the workspace sweep
 just test-fast          # workspace nextest plus doctests
 just test-policy        # the pinned versions and what Actions may run
-just pg selftest-all    # the compiler-free lane negative controls; CI runs this
 just pg doc-gate-selftest # the doc gate's controls; needs a populated PGRX_HOME
 just pg core-relock     # re-lock kamu-money-core with the lane patch active
 ```
@@ -287,11 +286,14 @@ Every negative control must be reached by a required check directly. A control
 reachable only through `gate-offline` is covered by nothing, and one that never
 runs cannot be told from one that cannot fail.
 
-`selftest-all` gathers the controls that need no compiler, and the CI job that
-runs it installs no PostgreSQL. `doc-gate-selftest` plants broken intra-doc links
-and runs `doc-pg`, so it needs the toolchain and a populated `PGRX_HOME`; it has
-its own recipe and its own step in the job that already has both. Adding it to
-`selftest-all` moves it to a job where `cargo doc` dies on `$PGRX_HOME`.
+The lane's negative controls are tests in the `hygiene` crate, so `test-hygiene`
+reaches every one and a control cannot be unhooked from the check that runs it
+without being deleted outright. The three that need more than a compiler are
+`#[ignore]`d and named by the recipe that supplies what they need:
+`doc-gate-selftest` a populated `PGRX_HOME`, `yb-image-selftest` a Docker daemon,
+`yb-selftest` a battery output; it also owns the workspace lock and the skip,
+because a control that decides for itself that having no input is fine passes
+when handed nothing.
 
 New recipes use the `<area>-<verb>` / `*-all` naming scheme. Aggregates compose
 granular recipes; CI should call the same granular recipes rather than duplicate

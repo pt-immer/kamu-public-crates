@@ -18,7 +18,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------------------------
 # THE ASSERTION TABLE.
 #
-# One list, consumed BOTH by the checker below and by assert-battery-selftest.sh through
+# One list, consumed BOTH by the checker below and by hygiene/tests/assert_battery.rs through
 # `--list`. That coupling keeps the self-test synchronized with the production oracle.
 # hard-coded its own mutations, covered 6 of 10 assertions, and still printed "every assertion
 # still bites". Driving the control from this table means an assertion added here is negatively
