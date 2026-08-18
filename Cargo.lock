@@ -3025,6 +3025,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "syn 3.0.3",
  "toml",
  "yaml_serde",
 ]

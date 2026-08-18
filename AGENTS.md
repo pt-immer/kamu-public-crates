@@ -110,9 +110,8 @@ Repository-wide policy lives at the root. In particular, `lint-shell` and
   global state must run in isolated processes; do not call `init()` repeatedly
   to construct error variants.
 - Persisted money hashes use
-  `kamu_money_core::advanced::stable_hash`. The root source-policy test scans
-  every tracked Rust file, including the excluded lane, for
-  `DefaultHasher::new`.
+  `kamu_money_core::advanced::stable_hash`. `tools/repo-policy` parses every tracked Rust file, including the excluded
+  lane, and refuses a `DefaultHasher::new` construction.
 - BRI SNAP BI signatures exclude URI queries. The provider vector in
   `crates/snap-crypto/tests/snap_bi_recipes.rs` pins this contract. Adapters pass
   `path()`, not `path_and_query()`, unless a new provider contract and vector
