@@ -175,9 +175,8 @@ jobs:
         with:
           tool: just@${{ fromJSON(steps.pins.outputs.manifest).cargo_tools['just'].version }}
 
-      # The lane depends on a requirement, not on whichever version was published last. A release
-      # outside that requirement is one this lane does not consume, and compiling against the
-      # version it does still resolve would report a different crate as proven.
+      # A release outside the lane's requirement is one it does not consume; compiling against
+      # the version it still resolves would report a different crate as proven.
       - name: Determine whether the lane consumes this release
         id: consumes
         env:
@@ -221,9 +220,8 @@ jobs:
           esac
           exit "$status"
 
-      # The majors run in parallel. Sequentially they are four uncached pgrx builds in one job, and
-      # a job killed at the runner's ceiling reports a failure indistinguishable from a real one --
-      # after the version is already immutable.
+      # Sequentially this is four uncached pgrx builds in one job, and a job killed at the
+      # runner's ceiling fails indistinguishably from a real fault, after the version is immutable.
       - name: Compile and test the extension against the registry crate
         if: ${{ steps.consumes.outputs.consumes == 'true' }}
         timeout-minutes: 300

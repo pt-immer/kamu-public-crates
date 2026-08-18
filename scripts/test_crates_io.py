@@ -9,8 +9,6 @@ import urllib.error
 from unittest.mock import patch
 
 from crates_io import (
-    EXIT_ANSWERED_NO,
-    EXIT_UNREADABLE,
     Version,
     fetch_index,
     latest_satisfying,
@@ -142,14 +140,14 @@ class UnreadableIsNotAbsentTests(unittest.TestCase):
 
     @patch("crates_io.fetch_index", return_value=(404, b""))
     def test_absent_version_exits_answered_no(self, _fetch) -> None:
-        self.assertEqual(EXIT_ANSWERED_NO, main(["require", "x", "=1.0.0"]))
+        self.assertEqual(1, main(["require", "x", "=1.0.0"]))
 
     @patch(
         "crates_io.fetch_index",
         side_effect=RuntimeError("crates.io lookup failed after 3 attempts for x"),
     )
     def test_unreachable_index_exits_unreadable(self, _fetch) -> None:
-        self.assertEqual(EXIT_UNREADABLE, main(["require", "x", "=1.0.0"]))
+        self.assertEqual(2, main(["require", "x", "=1.0.0"]))
 
     @patch("crates_io.time.sleep", return_value=None)
     @patch("crates_io.time.monotonic")
@@ -163,7 +161,7 @@ class UnreadableIsNotAbsentTests(unittest.TestCase):
         monotonic.side_effect = [0.0, 10.0, 100.0]
         fetch.side_effect = RuntimeError("crates.io lookup failed")
         self.assertEqual(
-            EXIT_UNREADABLE,
+            2,
             main(["require", "x", "=1.0.0", "--wait-seconds", "60"]),
         )
 
@@ -197,7 +195,7 @@ class IndexLagTests(unittest.TestCase):
     ) -> None:
         monotonic.side_effect = [0.0, 10.0, 100.0]
         self.assertEqual(
-            EXIT_ANSWERED_NO,
+            1,
             require("x", "=1.0.0", wait_seconds=60),
         )
 

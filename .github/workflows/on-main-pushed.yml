@@ -42,8 +42,6 @@ jobs:
           landed_tree="$(git rev-parse "${SHA}^{tree}")"
           echo "landed commit $SHA carries tree $landed_tree"
 
-          # Three outcomes, not two. A query that could not be answered is neither a certificate
-          # nor its absence, and reporting it as absence accuses main on someone else's outage.
           if ! response="$(gh api "repos/${REPOSITORY}/commits/${SHA}/pulls")"; then
             echo "::error::could not read the pull requests behind $SHA; this run proved nothing"
             exit 1
@@ -70,9 +68,8 @@ jobs:
               continue
             fi
 
-            # Filtered server-side. One unfiltered page carries 30 of this repository's 42 check
-            # runs, which leaves the API's ordering to decide what a client sees; a re-run makes
-            # the name ambiguous as well, and the latest attempt is the standing verdict.
+            # Filtered server-side: one unfiltered page carries 30 of this repository's 42
+            # check runs. A re-run repeats the name, and the latest attempt is the verdict.
             if ! runs="$(gh api \
               "repos/${REPOSITORY}/commits/${head_sha}/check-runs?check_name=${REQUIRED_CHECK}")"; then
               echo "::error::could not read ${REQUIRED_CHECK} on $head_sha; this run proved nothing"
