@@ -14,9 +14,6 @@ outputs:
   builder_image:
     description: >-
       The pgrx build environment the lane's compiler-only jobs run inside, pinned by digest.
-      Republished here for the same reason as the manifest: the jobs that run in it index one
-      value rather than each naming an image, and a tag would close over this repository's
-      inputs without covering the apt state resolved while the image builds.
     value: ${{ steps.read.outputs.builder_image }}
 
 runs:
@@ -55,9 +52,7 @@ runs:
           echo "$delimiter"
         } >>"$GITHUB_OUTPUT"
 
-        # One line, and pull-request-controlled like the manifest. Whitespace is stripped rather
-        # than trusted, so a value carrying a newline cannot write further outputs; requiring the
-        # digest is what makes the reference an identity rather than a name that can be moved.
+        # Pull-request-controlled: whitespace stripped so a newline cannot write further outputs.
         reference="$(grep -vE '^[[:space:]]*(#|$)' "$BUILDER" | head -n 1 | tr -d '[:space:]')"
         case "$reference" in
           *@sha256:*) ;;

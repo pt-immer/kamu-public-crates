@@ -54,12 +54,12 @@ your option (`MIT OR Apache-2.0`).
 
 [badge-crates]: https://img.shields.io/crates/v/kamu-snap-crypto-axum?style=flat-square&logo=rust
 [badge-docs]: https://img.shields.io/docsrs/kamu-snap-crypto-axum?style=flat-square&logo=docs.rs&label=docs.rs
-[badge-ci]: https://img.shields.io/github/actions/workflow/status/pt-immer/kamu-public-crates/on-pr-synced.yml?branch=main&style=flat-square&label=CI
+[badge-ci]: https://img.shields.io/github/actions/workflow/status/pt-immer/kamu-public-crates/on-main-pushed.yml?branch=main&style=flat-square&label=CI
 [badge-license]: https://img.shields.io/crates/l/kamu-snap-crypto-axum?style=flat-square
 [badge-msrv]: https://img.shields.io/crates/msrv/kamu-snap-crypto-axum?style=flat-square&logo=rust&label=MSRV
 
 [link-crates]: https://crates.io/crates/kamu-snap-crypto-axum
 [link-docs]: https://docs.rs/kamu-snap-crypto-axum
-[link-ci]: https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-pr-synced.yml
+[link-ci]: https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-main-pushed.yml
 [link-license]: https://github.com/pt-immer/kamu-public-crates/blob/main/crates/snap-crypto-axum
 [link-msrv]: https://github.com/pt-immer/kamu-public-crates/blob/main/Cargo.toml

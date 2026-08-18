@@ -12,6 +12,7 @@ from crates_io import (
     Version,
     fetch_index,
     latest_satisfying,
+    main,
     matches_requirement,
     parse_index,
     require,
@@ -132,6 +133,71 @@ class NetworkFailureTests(unittest.TestCase):
             io.BytesIO(),
         )
         self.assertEqual((404, b""), fetch_index("example-crate"))
+
+
+class UnreadableIsNotAbsentTests(unittest.TestCase):
+    """An index that never answered must not be reported as one that said no."""
+
+    @patch("crates_io.fetch_index", return_value=(404, b""))
+    def test_absent_version_exits_answered_no(self, _fetch) -> None:
+        self.assertEqual(1, main(["require", "x", "=1.0.0"]))
+
+    @patch(
+        "crates_io.fetch_index",
+        side_effect=RuntimeError("crates.io lookup failed after 3 attempts for x"),
+    )
+    def test_unreachable_index_exits_unreadable(self, _fetch) -> None:
+        self.assertEqual(2, main(["require", "x", "=1.0.0"]))
+
+    @patch("crates_io.time.sleep", return_value=None)
+    @patch("crates_io.time.monotonic")
+    @patch("crates_io.fetch_index")
+    def test_waiting_out_an_unreachable_index_still_exits_unreadable(
+        self,
+        fetch,
+        monotonic,
+        _sleep,
+    ) -> None:
+        monotonic.side_effect = [0.0, 10.0, 100.0]
+        fetch.side_effect = RuntimeError("crates.io lookup failed")
+        self.assertEqual(
+            2,
+            main(["require", "x", "=1.0.0", "--wait-seconds", "60"]),
+        )
+
+
+class IndexLagTests(unittest.TestCase):
+    @patch("crates_io.time.sleep", return_value=None)
+    @patch("crates_io.time.monotonic")
+    @patch("crates_io.fetch_index")
+    def test_wait_succeeds_once_the_version_reaches_the_index(
+        self,
+        fetch,
+        monotonic,
+        _sleep,
+    ) -> None:
+        monotonic.side_effect = [0.0, 10.0, 20.0]
+        fetch.side_effect = [
+            (404, b""),
+            (404, b""),
+            (200, b'{"name":"x","vers":"1.0.0","yanked":false}\n'),
+        ]
+        self.assertEqual(0, require("x", "=1.0.0", wait_seconds=60))
+
+    @patch("crates_io.time.sleep", return_value=None)
+    @patch("crates_io.time.monotonic")
+    @patch("crates_io.fetch_index", return_value=(404, b""))
+    def test_wait_expires_into_answered_no(
+        self,
+        _fetch,
+        monotonic,
+        _sleep,
+    ) -> None:
+        monotonic.side_effect = [0.0, 10.0, 100.0]
+        self.assertEqual(
+            1,
+            require("x", "=1.0.0", wait_seconds=60),
+        )
 
 
 if __name__ == "__main__":

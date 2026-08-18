@@ -118,12 +118,12 @@ building from `crates.io` do **not** need submodule access.
 
 [badge-crates]: https://img.shields.io/crates/v/kamu-iso3166?style=flat-square&logo=rust
 [badge-docs]: https://img.shields.io/docsrs/kamu-iso3166?style=flat-square&logo=docs.rs&label=docs.rs
-[badge-ci]: https://img.shields.io/github/actions/workflow/status/pt-immer/kamu-public-crates/on-pr-synced.yml?branch=main&style=flat-square&label=CI
+[badge-ci]: https://img.shields.io/github/actions/workflow/status/pt-immer/kamu-public-crates/on-main-pushed.yml?branch=main&style=flat-square&label=CI
 [badge-license]: https://img.shields.io/crates/l/kamu-iso3166?style=flat-square
 [badge-msrv]: https://img.shields.io/crates/msrv/kamu-iso3166?style=flat-square&logo=rust&label=MSRV
 
 [link-crates]: https://crates.io/crates/kamu-iso3166
 [link-docs]: https://docs.rs/kamu-iso3166
-[link-ci]: https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-pr-synced.yml
+[link-ci]: https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-main-pushed.yml
 [link-license]: https://github.com/pt-immer/kamu-public-crates/blob/main/crates/iso3166
 [link-msrv]: https://github.com/pt-immer/kamu-public-crates/blob/main/Cargo.toml

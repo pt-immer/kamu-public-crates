@@ -4,7 +4,7 @@
 
 **Small Rust libraries for exact money, Indonesian payments, country data, and production tracing.**
 
-[![CI](https://img.shields.io/github/actions/workflow/status/pt-immer/kamu-public-crates/on-pr-synced.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-pr-synced.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/pt-immer/kamu-public-crates/on-main-pushed.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/pt-immer/kamu-public-crates/actions/workflows/on-main-pushed.yml)
 [![Rust 1.94+](https://img.shields.io/badge/Rust-1.94%2B-000000?style=for-the-badge&logo=rust)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue?style=for-the-badge)](#license)
 

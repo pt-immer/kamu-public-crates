@@ -319,10 +319,30 @@ their commands.
 
 ## CI structure
 
-`.github/workflows/on-pr-synced.yml` runs for pull requests and pushes to
-`main`. `scripts/ci_paths.py` classifies every changed path and fails when a
-repository surface has no owner. `just test-scripts` proves every tracked
-path remains classified.
+One gate per event, and a workflow named for the event it answers.
+`publish-builder-image.yml` shares the push trigger and gates nothing; it
+publishes an artifact when the inputs that decide it change.
+`.github/workflows/on-pr-synced.yml` answers pull
+requests, and `workflow_dispatch` for a run against a branch on demand, which
+diffs the empty tree so every job runs. It has no push trigger: the ruleset
+requires an up-to-date branch, squash-only merges and linear history, so a merge
+lands the tree the run already certified. Nothing seeds the cache that leaves
+behind, because that pool is keyed per job.
+
+The administrative override and a direct push land no such certificate, so
+`on-main-pushed.yml` requires one: the landing tree must be the tree a green
+`ci-success` covered on the pull request head. It is also what the `CI` badges
+read, because a `pull_request` run is never attributed to `main`.
+
+`on-release-published.yml` compiles and tests the extension against the
+`kamu-money-core` it just published, across every supported PostgreSQL major.
+It does not reach the YugabyteDB path, which stays with
+`just pg gate-pg-release`. It runs after the version is immutable, so a failure
+is answered by yanking, not by blocking a merge.
+
+`scripts/ci_paths.py` classifies every changed path and fails when a repository
+surface has no owner. `just test-scripts` proves every tracked path remains
+classified.
 
 Why working on one crate runs another's jobs is answered by `DERIVED_CLASSES` in
 `scripts/ci_paths.py`, which carries every fan-out edge with its reason. The

@@ -155,15 +155,8 @@ fn every_cargo_pgrx_installation_pins_the_same_version() {
         );
     }
 
-    // CI installs no CLI at all: the lane's compiler-only jobs run inside the published build
-    // environment, which carries the one this file pins and a PGRX_HOME already initialised
-    // against it. A PGRX_HOME initialised by one cargo-pgrx is not interchangeable with
-    // another's, so the image supplying both together is what makes them agree.
-    //
-    // What is checkable offline is that those jobs take the image from the single published
-    // reference rather than each naming one, and that the reference is a digest. A tag would
-    // close over this repository's inputs without covering the apt state resolved while the
-    // image builds, so two images could answer to it and only one carries this version.
+    // CI installs no CLI: the compiler-only jobs run inside the published image, which carries
+    // this version and a PGRX_HOME initialised against it.
     let workflow = repository.join(".github/workflows/on-pr-synced.yml");
     every_anchored_line_carries(&workflow, "      image: ", "needs.changes.outputs.builder_image");
     every_anchored_line_carries(&repository.join(".config/builder-image"), "money-pg-builder", "@sha256:");

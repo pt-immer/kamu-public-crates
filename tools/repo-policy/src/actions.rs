@@ -37,9 +37,7 @@ pub const INSTALL_ACTION: &str = "taiki-e/install-action";
 /// cannot import it.
 pub const MANIFEST_OUTPUT: &str = "manifest";
 
-/// The composite action that reads the manifest and publishes it once. Running it is what makes a
-/// workflow a reader of the output above, so the set of readers inside Actions is derived from
-/// this rather than maintained as a list.
+/// Running this action is what makes a workflow a reader of the output above.
 pub const MANIFEST_ACTION: &str = "read-dev-tools";
 
 /// The code half of a line, with any trailing comment removed.
@@ -53,9 +51,7 @@ pub fn code_of(line: &str) -> &str {
         let mut start = None;
         let mut escaped = false;
         for (index, character) in line.char_indices() {
-            // A backslash escapes the next character inside double quotes, and is literal inside
-            // single ones. Reading `\"` as the close puts the rest of the string outside the
-            // quote, where a `#` reads as a comment and takes executable content out of the scan.
+            // A backslash escapes inside double quotes and is literal inside single ones.
             if escaped {
                 escaped = false;
                 continue;

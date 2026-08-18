@@ -1,10 +1,12 @@
 name: On PR Synced
 
+# No push trigger: the ruleset requires an up-to-date branch, squash-only merges and linear
+# history, so a merge lands the tree this run already certified. Nothing seeds the cache that
+# leaves behind either -- that pool is keyed per job, so filling it means running those jobs.
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 
 
@@ -46,16 +48,24 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
-          PUSH_BASE: ${{ github.event.before }}
-          PUSH_HEAD: ${{ github.sha }}
+          DISPATCH_HEAD: ${{ github.sha }}
         run: |
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            base="$PR_BASE"
-            head="$PR_HEAD"
-          else
-            base="$PUSH_BASE"
-            head="$PUSH_HEAD"
-          fi
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request)
+              base="$PR_BASE"
+              head="$PR_HEAD"
+              ;;
+            workflow_dispatch)
+              # No base: check everything. The empty tree makes every tracked file read as added.
+              base="$(git hash-object -t tree /dev/null)"
+              head="$DISPATCH_HEAD"
+              ;;
+            *)
+              echo "::error::classify: $EVENT_NAME names no base to diff"
+              exit 1
+              ;;
+          esac
           python3 scripts/ci_paths.py emit --base "$base" --head "$head"
 
   fmt:

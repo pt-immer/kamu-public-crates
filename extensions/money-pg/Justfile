@@ -612,6 +612,9 @@ test-pg-driver major="18":
 test-yb-driver tag="" major="18":
     ./kamu-money-pg/yb/run-yb-driver.sh "{{ tag }}" "{{ major }}"
 
+[doc("Every supported PostgreSQL major at once, without the YugabyteDB suites.")]
+test-pg-matrix: (test-pg PG_MAJORS "4")
+
 [doc("Run every suite that avoids a from-source YugabyteDB build.")]
 test-pg-all: test-yb (test-pg PG_MAJORS "4") test-pg-driver test-yb-driver
 
