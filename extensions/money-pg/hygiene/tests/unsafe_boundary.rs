@@ -23,12 +23,12 @@ fn unsafe_syntax_count(source: &str) -> Result<usize, syn::Error> {
         }
 
         fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
-            self.0 += usize::from(item.sig.unsafety.is_some());
+            self.0 += usize::from(matches!(item.sig.safety, syn::Safety::Unsafe(_)));
             syn::visit::visit_impl_item_fn(self, item);
         }
 
         fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
-            self.0 += usize::from(item.sig.unsafety.is_some());
+            self.0 += usize::from(matches!(item.sig.safety, syn::Safety::Unsafe(_)));
             syn::visit::visit_item_fn(self, item);
         }
 
@@ -43,7 +43,7 @@ fn unsafe_syntax_count(source: &str) -> Result<usize, syn::Error> {
         }
 
         fn visit_trait_item_fn(&mut self, item: &'ast syn::TraitItemFn) {
-            self.0 += usize::from(item.sig.unsafety.is_some());
+            self.0 += usize::from(matches!(item.sig.safety, syn::Safety::Unsafe(_)));
             syn::visit::visit_trait_item_fn(self, item);
         }
     }
