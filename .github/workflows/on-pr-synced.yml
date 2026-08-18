@@ -607,11 +607,9 @@ jobs:
         with:
           workspaces: extensions/money-pg
       - run: just pg fmt-check
+      # This reaches the lane's negative controls too: they are tests in the hygiene crate, so a
+      # control cannot be unhooked from the check that runs it without being deleted outright.
       - run: just pg test-hygiene
-      # The lane's negative controls. They live behind `gate-offline` locally, which no CI job
-      # runs, so without this step a control could stop firing and merge green -- and a control
-      # that never runs is indistinguishable from one that cannot fail.
-      - run: just pg selftest-all
 
   miri-money-pg:
     name: miri (kamu-money-pg safe payload)

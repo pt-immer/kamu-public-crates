@@ -174,7 +174,7 @@ RUN cargo pgrx package -p kamu-money-pg \
 #
 # The selector is kamu-money-pg/yb/exactly-one.sh: it refuses on any count but one, and names the
 # paths it found. Keeping it in a file rather than inline is what lets
-# kamu-money-pg/yb/exactly-one-selftest.sh falsify it -- an assertion that only ever runs inside a
+# hygiene/tests/exactly_one.rs falsify it -- an assertion that only ever runs inside a
 # Docker build has no negative control short of a build argument invented to break it.
 #
 # ARTIFACT-MANIFEST.txt is `sha256sum`'s own format, so kamu-money-pg/yb/artifact.sh verifies it

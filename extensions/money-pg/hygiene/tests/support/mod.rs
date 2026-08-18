@@ -185,3 +185,122 @@ pub fn recipe_empty_parameters(dump: &Value, name: &str) -> Vec<String> {
         .filter_map(|parameter| parameter.get("name").and_then(Value::as_str).map(str::to_owned))
         .collect()
 }
+
+/// What one shell invocation produced.
+///
+/// The three fields are kept apart because which stream a message lands on is part of several
+/// contracts under test: `yb-image.sh` and `exactly-one.sh` are read for their stdout by callers
+/// that discard the status, so a refusal that still printed a path would be acted on.
+pub struct Shell {
+    pub status: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl Shell {
+    pub fn succeeded(&self) -> bool {
+        self.status == 0
+    }
+
+    /// The two streams together, for a caller that only wants "was this reason reported".
+    pub fn output(&self) -> String {
+        format!("{}{}", self.stdout, self.stderr)
+    }
+}
+
+/// Run `program` from `directory`, with `environment` applied on top of the inherited one.
+///
+/// A `None` value REMOVES a variable rather than emptying it. Several controls need that: an
+/// inherited `KMONEY_WORKSPACE_LOCK_FD` or `BENCH_NUMA_NODE` would arm the case instead of
+/// testing it, and both scripts distinguish unset from empty.
+pub fn run(
+    program: impl AsRef<std::ffi::OsStr>,
+    arguments: &[&str],
+    directory: &Path,
+    environment: &[(&str, Option<&str>)],
+) -> Shell {
+    let mut command = Command::new(program);
+    command.args(arguments).current_dir(directory);
+    for (name, value) in environment {
+        match value {
+            Some(value) => command.env(name, value),
+            None => command.env_remove(name),
+        };
+    }
+    let output = command.output().expect("the program must run");
+    Shell {
+        // A signalled process has no code. -1 is not a status any of these scripts returns, so it
+        // reads as "killed" rather than colliding with a refusal.
+        status: output.status.code().unwrap_or(-1),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    }
+}
+
+/// Run `script` under `bash -c`, which is how a caller that sources one of these libraries
+/// reaches the functions inside it.
+pub fn bash(directory: &Path, script: &str, environment: &[(&str, Option<&str>)]) -> Shell {
+    run("bash", &["-c", script], directory, environment)
+}
+
+/// A scratch tree that removes itself.
+///
+/// Integration tests in one binary run as threads of one process, so the label alone is not
+/// unique; the counter makes it so without a clock or a random source.
+pub struct Scratch {
+    path: PathBuf,
+}
+
+impl Scratch {
+    pub fn new(label: &str) -> Self {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let serial = NEXT.fetch_add(1, Ordering::Relaxed);
+        let path =
+            std::env::temp_dir().join(format!("kmoney-selftest-{label}-{}-{serial}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).expect("scratch tree must be creatable");
+        Self { path }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn join(&self, relative: impl AsRef<Path>) -> PathBuf {
+        self.path.join(relative)
+    }
+
+    /// Create a directory and every parent, returning it.
+    pub fn directory(&self, relative: impl AsRef<Path>) -> PathBuf {
+        let path = self.join(relative);
+        std::fs::create_dir_all(&path).expect("scratch directory must be creatable");
+        path
+    }
+
+    /// Write a file, creating its parent directories.
+    pub fn write(&self, relative: impl AsRef<Path>, contents: &str) -> PathBuf {
+        let path = self.join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("scratch parent must be creatable");
+        }
+        std::fs::write(&path, contents)
+            .unwrap_or_else(|error| panic!("{} must be writable: {error}", path.display()));
+        path
+    }
+
+    /// Write a file and make it executable, for the stub programs several controls put on `PATH`.
+    pub fn write_program(&self, relative: impl AsRef<Path>, contents: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = self.write(relative, contents);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+            .expect("scratch program must be executable");
+        path
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}

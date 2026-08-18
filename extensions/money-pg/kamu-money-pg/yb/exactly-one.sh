@@ -13,7 +13,7 @@
 # Counting the matches turns that silent choice into a failure. It lives in a file rather than
 # inline in the Dockerfile because an assertion that only ever runs inside a Docker build cannot
 # be falsified without inventing a build argument to break it. Here
-# `kamu-money-pg/yb/exactly-one-selftest.sh` exercises every branch, on the host, in gate-offline.
+# `hygiene/tests/exactly_one.rs` exercises every branch, on the host, in `test-hygiene`.
 set -euo pipefail
 
 [ "$#" -eq 2 ] || {
