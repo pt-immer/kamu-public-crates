@@ -408,6 +408,10 @@ test-scripts:
 # the workflows, the composite actions, every manifest and both toolchain files --
 # are edited by changes that select no crate, and the workspace test sweep that
 # also runs it is gated on `rust`.
+[doc("Probe crates.io: require, ensure-absent or matches.")]
+crates-io *args:
+    cargo run -q -p repo-policy --bin crates-io -- {{ args }}
+
 [doc("Test the pinned versions and what Actions is allowed to run.")]
 test-policy:
     cargo nextest run -p repo-policy
