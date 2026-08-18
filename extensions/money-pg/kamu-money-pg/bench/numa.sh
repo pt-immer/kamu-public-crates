@@ -123,8 +123,9 @@ _numa_expand() {
     done | sort -n -u | tr '\n' ',' | sed 's/,$//'
 }
 
-# DO THE MASKS AGREE? Pure -- no /proc, no /sys, no docker -- so `numa-selftest.sh` can drive the
-# mismatch cases directly instead of needing a two-socket machine and a container to fail on.
+# DO THE MASKS AGREE? Pure -- no /proc, no /sys, no docker -- so `hygiene/tests/numa.rs` can
+# drive the mismatch cases directly instead of needing a two-socket machine and a container to
+# fail on.
 #
 #   0  both agree        1  CPU mask disagrees        2  memory mask disagrees
 numa_masks_agree() {

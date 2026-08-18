@@ -296,7 +296,7 @@ miri-payload:
 # whitespace, while a one-element `["-D warnings"]` array reaches rustdoc as a
 # single argv token it rejects, warning about the flag and about nothing else.
 #
-# `scripts/doc-gate-selftest.sh` proves all three settings by planting a broken
+# `hygiene/tests/doc_gate.rs` proves all three settings by planting a broken
 # link in each region and requiring this recipe to report every one. A test that
 # read the settings instead was twice wrong about exactly the spellings above.
 #
@@ -404,22 +404,29 @@ yb-native tag="":
     YB_REF="$(./kamu-money-pg/yb/yb-image.sh {{ tag }})"
     ./kamu-money-pg/yb/run-yb.sh "$YB_REF" "$RUN_ROOT" "$RUN_ROOT/out-yb.txt" kamu-money-pg/yb/abi_battery.sql
 
+# Lock before touching the shared default run root, resolve the default path, and decide the skip.
+# The controls themselves are `hygiene/tests/assert_battery.rs`, which refuses to run without an
+# output rather than deciding for itself that having none is fine.
 [doc("Negative control: prove every battery assertion still rejects a mutated output.")]
 yb-selftest out="":
     #!/usr/bin/env bash
     set -euo pipefail
+    source ./kamu-money-pg/yb/workspace-lock.sh
+    workspace_lock "yb-selftest" || exit 1
     OUT="{{ out }}"
     [ -n "$OUT" ] || OUT="${KMONEY_RUN_ROOT:-kamu-money-pg/yb/out}/out-yb.txt"
-    ./kamu-money-pg/yb/assert-battery-selftest.sh "$OUT"
+    if [ ! -s "$OUT" ]; then
+        echo "yb-selftest: SKIP -- no battery output at $OUT (run 'just yb-native' first)" >&2
+        exit 0
+    fi
+    KMONEY_BATTERY_OUTPUT="$OUT" \
+        cargo nextest run {{ CORE_PATCH }} -p kamu-money-pg-hygiene --test assert_battery --run-ignored all
 [doc("The ported #[pg_test] suite against a live single-node YugabyteDB.")]
 test-yb-regress tag="": (yb-build tag)
     #!/usr/bin/env bash
     set -euo pipefail
     ./kamu-money-pg/yb/run-yb-regress.sh "$(./kamu-money-pg/yb/yb-image.sh {{ tag }})"
 
-[doc("Negative control: prove the case-suite runner still rejects a wrong output.")]
-test-regress-selftest:
-    ./kamu-money-pg/tests/pg_regress/selftest.sh
 [doc("kmoney on a 3-node RF=3 cluster: every node, a tablet split, and a missing-library control.")]
 test-yb-cluster tag="":
     #!/usr/bin/env bash
@@ -457,15 +464,7 @@ yb-pin-check tag="":
 
 [doc("Negative controls for the image pin gate: every refusal path, and both overrides.")]
 yb-image-selftest:
-    ./kamu-money-pg/yb/yb-image-selftest.sh
-[doc("Negative controls for the artifact resolver: provenance, coherence, and the maxdepth rule.")]
-artifact-selftest:
-    ./kamu-money-pg/yb/artifact-selftest.sh
-
-[doc("Negative controls for the copy-out artifact selector: zero, one, and two matches.")]
-exactly-one-selftest:
-    ./kamu-money-pg/yb/exactly-one-selftest.sh
-
+    cargo nextest run {{ CORE_PATCH }} -p kamu-money-pg-hygiene --test yb_image --run-ignored all
 # The one command whose flag is load-bearing. `cargo update -p kamu-money-core` WITHOUT the patch
 # re-locks the lane to whatever crates.io last published, and every container suite then compiles
 # the published crate instead of this tree -- silently, because a patch offering a version the
@@ -476,27 +475,11 @@ exactly-one-selftest:
 core-relock:
     cargo update {{ CORE_PATCH }} -p kamu-money-core
 
-[doc("Negative controls for the single-writer lock: exclusion, re-entrancy, release on kill.")]
-workspace-lock-selftest:
-    ./kamu-money-pg/yb/workspace-lock-selftest.sh
-
-[doc("Negative controls for the NUMA pin verifier: CPU-only and memory-only mismatch.")]
-numa-selftest:
-    ./kamu-money-pg/bench/numa-selftest.sh
-
-# Every negative control in the lane, in one place, because a control that no required check runs
-# is indistinguishable from one that cannot fire. These need no Docker, no database and no
-# compiler, so CI runs this recipe directly rather than reaching them through `gate-offline`;
-# `gates_compose_every_required_check` asserts both halves of that arrangement.
-[doc("Run the compiler-free negative controls: regress, artifact, copy-out, cache exporter, lock, NUMA. The doc gate's are in doc-gate-selftest.")]
-selftest-all: test-regress-selftest artifact-selftest exactly-one-selftest workspace-lock-selftest numa-selftest
-
-# Deliberately NOT part of `selftest-all`, which is compiler-free and reached by a CI job that
-# installs no PostgreSQL. This one runs `doc-pg`, so it needs a populated PGRX_HOME; it belongs
-# beside that recipe, in the job that already has one.
+# Deliberately not a hygiene test: it runs `doc-pg`, so it needs a populated PGRX_HOME, which the
+# job running `test-hygiene` does not have. It belongs beside that recipe, in the job that has one.
 [doc("Negative controls for the doc gate: a planted link in each region it must reach.")]
 doc-gate-selftest:
-    ./scripts/doc-gate-selftest.sh
+    cargo nextest run {{ CORE_PATCH }} -p kamu-money-pg-hygiene --test doc_gate --run-ignored all
 
 # Measurements; never gates
 [doc("SQL cost: kmoney vs numeric(36,18) on stock PostgreSQL, with the floor. Never a gate.")]
@@ -566,7 +549,7 @@ _yb-ab-ref base runtime="":
         export YB_REQUIRE_BAKED=1
     fi
     ./kamu-money-pg/yb/run-yb.sh "$RUNTIME" "$RUN_ROOT" "$RUN_ROOT/out-yb.txt" kamu-money-pg/yb/abi_battery.sql
-    ./kamu-money-pg/yb/assert-battery-selftest.sh "$RUN_ROOT/out-yb.txt"
+    just yb-selftest "$RUN_ROOT/out-yb.txt"
     docker build "${KMONEY_CORE_DOCKER_ARGS[@]}" \
         -f kamu-money-pg/yb/Dockerfile.pg15 --target ref \
         --build-arg YB_IMAGE="$BASE" -o "$RUN_ROOT/ref" .
@@ -616,7 +599,7 @@ test-pg-all: test-yb (test-pg PG_MAJORS "4") test-pg-driver test-yb-driver
 
 # Gates
 [doc("The gate for a change that touches no database: format, lint, audit, docs, Miri, and offline tests.")]
-gate-offline: fmt-check lint deny doc-gate-selftest test-hygiene miri-payload selftest-all
+gate-offline: fmt-check lint deny doc-gate-selftest test-hygiene miri-payload
 
 [doc("The offline gate plus every suite reachable without a from-source YugabyteDB build.")]
 gate-pg: gate-offline yb-image-selftest test-pg-all

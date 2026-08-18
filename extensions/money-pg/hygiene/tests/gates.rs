@@ -15,23 +15,10 @@ fn gates_compose_every_required_check() {
         offline,
         // `doc-gate-selftest` rather than `doc-pg`: it runs that recipe against a probed tree and
         // then against a clean one, so composing both would be a second full rustdoc pass.
-        ["fmt-check", "lint", "deny", "doc-gate-selftest", "test-hygiene", "miri-payload", "selftest-all"],
+        ["fmt-check", "lint", "deny", "doc-gate-selftest", "test-hygiene", "miri-payload"],
         "gate-offline no longer composes exactly the checks the lane gate promises"
     );
 
-    // Every negative control the lane owns, gathered in one recipe, and that recipe reached by a
-    // required check. A control behind a local aggregate only is not CI coverage: it can stop
-    // firing and merge green, which is indistinguishable from a control that cannot fail.
-    let selftests = support::recipe_dependencies(&lane_dump, "selftest-all");
-    for required in [
-        "test-regress-selftest",
-        "artifact-selftest",
-        "exactly-one-selftest",
-        "workspace-lock-selftest",
-        "numa-selftest",
-    ] {
-        assert!(selftests.contains(&required), "selftest-all must depend on {required}");
-    }
     // WHICH recipes CI must reach is the lane's own claim, so it is asserted here. The match is
     // on a `run:` VALUE, parsed rather than searched: a bare substring is satisfied by a
     // commented-out step, by a step whose `name:` merely mentions the recipe, and by any longer
@@ -45,7 +32,7 @@ fn gates_compose_every_required_check() {
         .map(str::trim)
         .collect();
     assert!(!commands.is_empty(), "no `run:` step parsed -- this guard would pass vacuously");
-    for required in ["just pg selftest-all", "just pg doc-gate-selftest"] {
+    for required in ["just pg test-hygiene", "just pg doc-gate-selftest"] {
         assert!(
             commands.contains(&required),
             "a CI job must run `{required}` as a whole step; no CI job runs `gate-offline`, so \
@@ -115,7 +102,7 @@ fn release_gate_covers_one_immutable_deployable_artifact() {
 /// compiler hands it at all. A `#[cfg(feature = "x")]` block the recipe does not enable is not
 /// documented, not link-checked, and not visibly absent.
 ///
-/// `doc-gate-selftest.sh` proves the regions that exist today by planting a link in each. This
+/// `doc_gate.rs` proves the regions that exist today by planting a link in each. This
 /// covers the one it cannot: a region added later.
 ///
 /// Parsed, not scanned. A line-based reader misses an attribute rustfmt wrapped across lines,
