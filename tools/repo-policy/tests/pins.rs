@@ -243,8 +243,8 @@ fn every_selected_toolchain_is_a_reference_or_a_named_channel() {
 /// promises.
 ///
 /// This governs public-workspace matrices. A lane job may not carry one at all, which
-/// `scripts/test_workflows.py` refuses separately, because a matrix there would install the
-/// public workspace's floor into the lane.
+/// `tests/workflows.rs` refuses separately, because a matrix there would install the public
+/// workspace's floor into the lane.
 #[test]
 fn the_toolchain_matrix_compiles_at_the_declared_floor() {
     let mut matrices = 0_usize;
@@ -544,14 +544,11 @@ fn every_manifest_a_job_reads_is_published_by_the_job_it_names() {
 fn every_reader_of_a_manifest_expression_spells_the_same_output_name() {
     let expected = format!("outputs.{MANIFEST_OUTPUT}");
 
-    let mut readers: Vec<String> = tracked(&["*.yml"])
+    let readers: Vec<String> = tracked(&["*.yml"])
         .into_iter()
         .filter(|relative| relative.starts_with(".github/"))
         .filter(|relative| read(relative).contains(MANIFEST_ACTION))
         .collect();
-
-    // The one reader outside Actions; it cannot import the constant.
-    readers.push("scripts/test_workflows.py".to_owned());
 
     for relative in &readers {
         // Escapes dropped: one reader spells the name inside a regex as `\.`.
@@ -589,26 +586,21 @@ fn every_exact_pin_states_why_it_is_exact() {
     assert!(floors > 0, "every pin is exact; the floor class would be untested");
 }
 
-/// What identifies a tool section is stated in both languages that read the manifest. Two
-/// readers of one document disagreeing quietly is what this branch keeps finding.
+/// Only one language reads the manifest now, and the section suffix is a constant it imports.
+/// The check that mattered is that the sections doctor dispatches on are the sections the
+/// manifest states, in both directions, which `dev_env::doctor` settles before it prints a row.
 #[test]
-fn both_readers_of_the_manifest_agree_what_a_tool_section_is() {
-    let python = read("scripts/dev_environment.py");
-    let stated = python
-        .lines()
-        .find_map(|line| {
-            line.trim()
-                .strip_prefix("TOOL_SECTION_SUFFIX = ")?
-                .trim()
-                .strip_prefix('"')?
-                .strip_suffix('"')
-                .map(str::to_owned)
-        })
-        .expect("scripts/dev_environment.py states TOOL_SECTION_SUFFIX");
-    assert_eq!(
-        stated, TOOL_SECTION_SUFFIX,
-        "scripts/dev_environment.py and repo-policy disagree on what names a tool section",
-    );
+fn every_stated_tool_section_is_one_doctor_reports_on() {
+    let manifest = repo_policy::dev_env::load_manifest(&repo_policy::repo_root());
+    let stated = repo_policy::dev_env::tool_sections(&manifest);
+    assert!(!stated.is_empty(), "the manifest states no tool section");
+    for section in &stated {
+        assert!(
+            section.ends_with(TOOL_SECTION_SUFFIX),
+            "{section} was found as a tool section but does not end in {TOOL_SECTION_SUFFIX}"
+        );
+        assert!(!repo_policy::dev_env::tools(&manifest, section).is_empty(), "{section} states no tool");
+    }
 }
 
 /// The guide states which root workspace members are published. A count went stale by being a

@@ -42,6 +42,10 @@ jobs:
           fetch-depth: 0
       - id: pins
         uses: ./.github/actions/read-dev-tools
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch, 2026-07-16
+        with:
+          toolchain: ${{ fromJSON(steps.pins.outputs.manifest).rust.primary }}
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Classify every changed path
         id: classify
         env:
@@ -66,7 +70,7 @@ jobs:
               exit 1
               ;;
           esac
-          python3 scripts/ci_paths.py emit --base "$base" --head "$head"
+          cargo run -q -p repo-policy --bin ci-paths -- emit --base "$base" --head "$head"
 
   fmt:
     name: rustfmt
@@ -310,20 +314,6 @@ jobs:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},taplo-cli@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['taplo-cli'].version }},typos-cli@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['typos-cli'].version }}
       - run: npm ci --no-fund --no-audit
       - run: just lint-docs
-
-  test-scripts:
-    name: test repository scripts
-    needs: changes
-    if: ${{ needs.changes.outputs.lint == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          submodules: true
-      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
-        with:
-          tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
-      - run: just test-scripts
 
   test-policy:
     name: test repository policy
@@ -779,7 +769,6 @@ jobs:
       - docs-iso3166
       - deny
       - lint-docs
-      - test-scripts
       - test-policy
       - check-worker-example
       - check-examples
@@ -822,7 +811,6 @@ jobs:
             docs-iso3166,
             deny,
             lint-docs,
-            test-scripts,
             test-policy,
             check-worker-example,
             check-examples,

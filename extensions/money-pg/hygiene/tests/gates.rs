@@ -27,7 +27,6 @@ fn gates_compose_every_required_check() {
         "test-regress-selftest",
         "artifact-selftest",
         "exactly-one-selftest",
-        "require-cache-exporter-selftest",
         "workspace-lock-selftest",
         "numa-selftest",
     ] {
@@ -58,14 +57,13 @@ fn gates_compose_every_required_check() {
         "gate-pg must compose gate-offline"
     );
 
+    // What the ROOT gate schedules is a root claim, asserted where the scheduler is importable:
+    // `tools/repo-policy/tests/gate.rs`. Reading it from here could only match recipe text, and
+    // the stage list is no longer written there.
     let repository_dump = support::just_dump(&support::repository_root());
     assert!(
         support::recipe_dependencies(&repository_dump, "lint-all").contains(&"scrub"),
         "root lint-all must include the repository scrub"
-    );
-    assert!(
-        support::recipe_body(&repository_dump, "gate").contains("just lint-all"),
-        "root gate must run lint-all"
     );
 }
 

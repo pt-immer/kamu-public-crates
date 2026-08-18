@@ -33,6 +33,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch, 2026-07-16
         with:
           toolchain: ${{ fromJSON(steps.pins.outputs.manifest).rust.primary }}
+      - uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2
+        with:
+          tool: just@${{ fromJSON(steps.pins.outputs.manifest).cargo_tools['just'].version }}
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Parse release tag -> crate + version
@@ -65,7 +68,7 @@ jobs:
             META_ARGS=()
           fi
           MANIFEST_VER="$(cargo metadata --no-deps --format-version 1 "${META_ARGS[@]}" \
-            | python3 -c "import json,sys,os; m=json.load(sys.stdin); print(next(p['version'] for p in m['packages'] if p['name']==os.environ['CRATE']))")"
+            | jq -r --arg crate "$CRATE" 'first(.packages[] | select(.name == $crate) | .version)')"
           echo "manifest=$MANIFEST_VER tag=$VERSION"
           if [[ "$MANIFEST_VER" != "$VERSION" ]]; then
             echo "::error::$CRATE Cargo.toml version ($MANIFEST_VER) != release tag version ($VERSION)"
@@ -97,7 +100,7 @@ jobs:
         env:
           CRATE: ${{ steps.parse.outputs.crate }}
           VERSION: ${{ steps.parse.outputs.version }}
-        run: python3 scripts/crates_io.py ensure-absent "$CRATE" "$VERSION"
+        run: just crates-io ensure-absent "$CRATE" "$VERSION"
 
       - name: Verify in-workspace kamu-snap-* deps are already published
         if: ${{ steps.parse.outputs.publishable == 'true' }}
@@ -105,10 +108,13 @@ jobs:
           CRATE: ${{ steps.parse.outputs.crate }}
         run: |
           deps="$(cargo metadata --no-deps --format-version 1 \
-            | python3 -c "import json,sys,os; m=json.load(sys.stdin); p=next(x for x in m['packages'] if x['name']==os.environ['CRATE']); print('\n'.join(f'{d[\"name\"]}\t{d[\"req\"]}' for d in sorted(p['dependencies'], key=lambda d: d['name']) if d['name'].startswith('kamu-snap-')))")"
+            | jq -r --arg crate "$CRATE" '
+                .packages[] | select(.name == $crate) | .dependencies[]
+                | select(.name | startswith("kamu-snap-"))
+                | [.name, .req] | @tsv' | sort)"
           if [ -z "$deps" ]; then echo "no in-workspace kamu-snap-* deps."; exit 0; fi
           while IFS=$'\t' read -r dependency requirement; do
-            python3 scripts/crates_io.py require "$dependency" "$requirement" && continue
+            just crates-io require "$dependency" "$requirement" && continue
             status=$?
             if [ "$status" -eq 2 ]; then
               echo "::error::could not read the crates.io index; whether '${dependency}' satisfies '${requirement}' is unknown"
@@ -192,15 +198,21 @@ jobs:
             exit 1
           fi
           echo "lane requires kamu-money-core '${requirement}'"
-          verdict="$(python3 scripts/crates_io.py matches "$requirement" "$VERSION")"
-          echo "$verdict"
-          case "$verdict" in
-            *=true)
+          set +e
+          just crates-io matches "$requirement" "$VERSION"
+          status=$?
+          set -e
+          case "$status" in
+            0)
               echo "consumes=true" >> "$GITHUB_OUTPUT"
               ;;
-            *)
+            1)
               echo "consumes=false" >> "$GITHUB_OUTPUT"
               echo "::notice::kamu-money-core ${VERSION} lies outside the lane's requirement '${requirement}'; this release is not one it consumes"
+              ;;
+            *)
+              echo "::error::could not decide whether '${requirement}' admits ${VERSION}"
+              exit "$status"
               ;;
           esac
 
@@ -211,7 +223,7 @@ jobs:
           VERSION: ${{ needs.publish.outputs.version }}
         run: |
           set -uo pipefail
-          python3 scripts/crates_io.py require "$CRATE" "=${VERSION}" --wait-seconds 300
+          just crates-io require "$CRATE" "=${VERSION}" --wait-seconds 300
           status=$?
           case "$status" in
             0) ;;

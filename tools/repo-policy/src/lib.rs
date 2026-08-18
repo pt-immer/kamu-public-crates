@@ -6,7 +6,13 @@
 use std::path::{Path, PathBuf};
 
 pub mod actions;
+pub mod ci_paths;
+pub mod dev_env;
 pub mod dev_tools;
+pub mod gate;
+pub mod justfile;
+pub mod registry;
+pub mod source_policy;
 
 /// The repository root, from this crate's own location.
 pub fn repo_root() -> PathBuf {
@@ -28,11 +34,17 @@ pub fn read(relative: &str) -> String {
 /// Enumerating from the repository is what keeps a scan total: a list of files, or of globs
 /// narrower than the thing being scanned, only covers what someone remembered.
 pub fn tracked(patterns: &[&str]) -> Vec<String> {
+    tracked_in(&repo_root(), patterns)
+}
+
+/// Every path git tracks under one root. Separate so a check can be pointed at a planted tree
+/// and observed failing, which is the only way to know it can fail at all.
+pub fn tracked_in(root: &Path, patterns: &[&str]) -> Vec<String> {
     let mut arguments = vec!["ls-files", "-z", "--"];
     arguments.extend_from_slice(patterns);
     let output = std::process::Command::new("git")
         .args(&arguments)
-        .current_dir(repo_root())
+        .current_dir(root)
         .output()
         .expect("git ls-files runs");
     assert!(output.status.success(), "git ls-files failed for {patterns:?}");

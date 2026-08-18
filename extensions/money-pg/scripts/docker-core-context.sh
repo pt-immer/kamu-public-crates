@@ -25,17 +25,20 @@ case "$KMONEY_USE_LOCAL_CORE" in
         ;;
 esac
 
+# The `[package]` version only. A bare `version =` match would take a dependency's.
 DOCKER_CORE_VERSION="$(
-    python3 - "$DOCKER_CORE_MANIFEST" <<'PY'
-import pathlib
-import sys
-import tomllib
-
-manifest = pathlib.Path(sys.argv[1])
-with manifest.open("rb") as stream:
-    print(tomllib.load(stream)["package"]["version"])
-PY
+    awk '/^\[package\]/ { in_package = 1; next }
+         /^\[/          { in_package = 0 }
+         in_package && /^version[[:space:]]*=/ {
+             gsub(/^version[[:space:]]*=[[:space:]]*"|"[[:space:]]*$/, "")
+             print
+             exit
+         }' "$DOCKER_CORE_MANIFEST"
 )"
+[ -n "$DOCKER_CORE_VERSION" ] || {
+    echo "docker-core-context: no [package] version in $DOCKER_CORE_MANIFEST" >&2
+    return 2
+}
 
 (
     cd "$DOCKER_CORE_REPO_ROOT" || exit

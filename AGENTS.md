@@ -75,7 +75,7 @@ Repository-wide policy lives at the root. In particular, `lint-shell` and
   leave the ones no developer machine installs — `llvm-tools-preview`, `miri` —
   with nowhere to live.
 
-  `test_dev_environment.py` binds the literals in `clippy.toml`, the
+  `tools/repo-policy` binds the literals in `clippy.toml`, the
   `Justfile` and `README.md`. Toolchain literals matter more than the floor they
   restate: `rustup run <version>` addresses a toolchain by name, so one that
   outlives a bump either resolves to a stale install or does not resolve at all.
@@ -110,9 +110,8 @@ Repository-wide policy lives at the root. In particular, `lint-shell` and
   global state must run in isolated processes; do not call `init()` repeatedly
   to construct error variants.
 - Persisted money hashes use
-  `kamu_money_core::advanced::stable_hash`. The root source-policy test scans
-  every tracked Rust file, including the excluded lane, for
-  `DefaultHasher::new`.
+  `kamu_money_core::advanced::stable_hash`. `tools/repo-policy` parses every tracked Rust file, including the excluded
+  lane, and refuses a `DefaultHasher::new` construction.
 - BRI SNAP BI signatures exclude URI queries. The provider vector in
   `crates/snap-crypto/tests/snap_bi_recipes.rs` pins this contract. Adapters pass
   `path()`, not `path_and_query()`, unless a new provider contract and vector
@@ -278,7 +277,6 @@ just test-all           # workspace and per-crate feature matrices
 just cov-all            # enforced coverage floors
 just check <crate>      # one crate, without the workspace sweep
 just test-fast          # workspace nextest plus doctests
-just test-scripts       # CI path ownership and workflow policy
 just test-policy        # the pinned versions and what Actions may run
 just pg selftest-all    # the compiler-free lane negative controls; CI runs this
 just pg doc-gate-selftest # the doc gate's controls; needs a populated PGRX_HOME
@@ -340,12 +338,12 @@ It does not reach the YugabyteDB path, which stays with
 `just pg gate-pg-release`. It runs after the version is immutable, so a failure
 is answered by yanking, not by blocking a merge.
 
-`scripts/ci_paths.py` classifies every changed path and fails when a repository
-surface has no owner. `just test-scripts` proves every tracked path remains
+`tools/repo-policy`'s path classifier classifies every changed path and fails when a repository
+surface has no owner. `just test-policy` proves every tracked path remains
 classified.
 
 Why working on one crate runs another's jobs is answered by `DERIVED_CLASSES` in
-`scripts/ci_paths.py`, which carries every fan-out edge with its reason. The
+`tools/repo-policy/src/ci_paths.rs`, which carries every fan-out edge with its reason. The
 reason is a required field and the map is checked against an independently
 written expectation, so an edge cannot be added, widened or narrowed silently.
 Change the map, not this paragraph.

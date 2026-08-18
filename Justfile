@@ -4,6 +4,11 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 # fallback for what the host does not provide. A developer who already runs a
 # satisfying tool keeps running it; `just setup` fills the gaps rather than
 # shadowing the machine. See docs/TOOLCHAIN-REALMS.md.
+# The PostgreSQL kamu-money-core's text form is proven against. The tag names a major and
+# floats within it: the claim is the major, which `tools/repo-policy` holds to one the
+# extension lane supports.
+PG_ROUNDTRIP_IMAGE := "postgres:18-alpine"
+
 export PATH := env_var("PATH") + ":" + justfile_directory() + "/.tools/bin:" + justfile_directory() + "/node_modules/.bin"
 
 # List available recipes
@@ -21,13 +26,13 @@ default:
 [doc("Install pinned toolchains, targets, and development tools.")]
 [no-exit-message]
 setup:
-    @python3 scripts/dev_environment.py setup
+    @cargo run -q -p repo-policy --bin dev-env -- setup
 
 # Report every prerequisite reached by the root gate.
 [doc("Verify every tool and Rust component required by the gates.")]
 [no-exit-message]
 doctor:
-    @python3 scripts/dev_environment.py doctor
+    @cargo run -q -p repo-policy --bin dev-env -- doctor
 
 # ---------------------------------------------------------------------------
 # Format / fix (mutating)
@@ -253,7 +258,8 @@ test-money:
 # Concurrency is bounded by `.config/nextest.toml`.
 [doc("Run kamu-money-core's Docker-backed database tests.")]
 test-money-db:
-    cargo nextest run -p kamu-money-core --all-features -E 'binary(pg_roundtrip) or binary(sqlx_roundtrip)'
+    KMONEY_PG_IMAGE="{{ PG_ROUNDTRIP_IMAGE }}" \
+        cargo nextest run -p kamu-money-core --all-features -E 'binary(pg_roundtrip) or binary(sqlx_roundtrip)'
 
 # Test every Docker-free feature surface; run doctests separately from nextest.
 [doc("Run every Docker-free root-workspace test matrix.")]
@@ -397,21 +403,19 @@ check-examples:
     cargo check --examples -p kamu-snap-crypto --features snap-bi
     cargo check --examples -p kamu-snap-response
 
-# Test fail-closed CI classification, registry probing, and standalone-package
-# ownership; then prove every tracked path is classified.
-[doc("Test CI path ownership and workflow policy.")]
-test-scripts:
-    python3 -m unittest discover -s scripts -p 'test_*.py'
-    python3 scripts/ci_paths.py check-tracked
-
 # The pin and Actions checks. Reachable on its own because the files it reads --
 # the workflows, the composite actions, every manifest and both toolchain files --
 # are edited by changes that select no crate, and the workspace test sweep that
 # also runs it is gated on `rust`.
+[doc("Probe crates.io: require, ensure-absent or matches.")]
+crates-io *args:
+    cargo run -q -p repo-policy --bin crates-io -- {{ args }}
+
 [doc("Test the pinned versions and what Actions is allowed to run.")]
 test-policy:
     cargo nextest run -p repo-policy
     cargo test -p repo-policy --doc
+    cargo run -q -p repo-policy --bin ci-paths -- check-tracked
 
 # ---------------------------------------------------------------------------
 # Publish / vendored data / housekeeping
@@ -446,81 +450,10 @@ clean:
 # `VERBOSE=1` for every stage's output.
 [doc("Run the complete Docker-free gate for the nine public crates.")]
 gate:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    names=("lint-all" "test-all" "test-money" "test-scripts" "test-policy" "msrv(1.94.0)" "cov-all" "doc" "build-nostd" "build-wasm" "build-wasm-snap" "check-worker-example" "check-examples" "deny")
-    cmds=("just lint-all"
-          "just test-all"
-          "just test-money"
-          "just test-scripts"
-          "just test-policy"
-          "cargo +1.94.0 nextest run --workspace -E 'not binary(compile_fail)' && cargo +1.94.0 test --workspace --doc --quiet"
-          "just cov-all"
-          "just doc"
-          "just build-nostd"
-          "just build-wasm"
-          "just build-wasm-snap"
-          "just check-worker-example"
-          "just check-examples"
-          "just deny")
-    # Group assignment. Stages within a group run SERIALLY because they share one
-    # Cargo build directory and would otherwise queue on its lock, gaining nothing;
-    # the groups themselves run concurrently. Only groups that ALREADY own a disjoint
-    # build directory are split out: `cov-all` drives cargo-llvm-cov into
-    # target/llvm-cov-target, and `misc` either builds a separate workspace or does
-    # not build at all.
-    #
-    # The msrv and cross-target stages are deliberately left in `host`. Splitting them
-    # would need NEW target directories to escape the same lock, and they measure 21s
-    # of a 430s run -- gigabytes of duplicated artifacts, cold on first use, to buy 5%.
-    #
-    # Every stage still runs. This overlaps them; it never drops one.
-    grps=(host host host host host host cov host host host host misc host misc)
-    tmp=$(mktemp -d)
-    trap 'rm -rf "$tmp"' EXIT
-    run_group() {
-      # The scratch directory belongs to the parent shell; a group that finishes
-      # early must not take it down while its siblings are still writing.
-      trap - EXIT
-      local grp=$1 i started elapsed rc
-      for i in "${!names[@]}"; do
-        [ "${grps[$i]}" = "$grp" ] || continue
-        started=$SECONDS
-        eval "${cmds[$i]}" >"$tmp/$i.out" 2>&1
-        rc=$?
-        elapsed=$((SECONDS - started))
-        printf '%s %s\n' "$rc" "$elapsed" >"$tmp/$i.meta"
-        # Printed as it lands, so a five-minute barrier still shows progress. Order is
-        # completion order; the ordered view is the failure replay and VERBOSE=1 below.
-        if [ "$rc" -eq 0 ]; then printf '  PASS  %5ds  %s\n' "$elapsed" "${names[$i]}"
-        else printf '  FAIL  %5ds  %s\n' "$elapsed" "${names[$i]}"; fi
-      done
-    }
-    for g in host cov misc; do run_group "$g" & done
-    wait
-    declare -a rcs outs secs
-    fail=0
-    for i in "${!names[@]}"; do
-      # A missing .meta means the group died before recording a verdict. Treat that as
-      # a failure rather than letting `set -u` abort with an unrelated message.
-      if [ -r "$tmp/$i.meta" ]; then read -r rc sec <"$tmp/$i.meta"; else rc=1 sec=0; fi
-      rcs[$i]=$rc; secs[$i]=$sec
-      outs[$i]=$(cat "$tmp/$i.out" 2>/dev/null)
-      [ "$rc" -eq 0 ] || fail=1
-    done
-    printf '  ----  %5ds  total\n' "$SECONDS"
-    if [ "${VERBOSE:-0}" = "1" ]; then
-      for i in "${!names[@]}"; do printf '\n=== %s ===\n%s\n' "${names[$i]}" "${outs[$i]}"; done
-    elif [ "$fail" -ne 0 ]; then
-      for i in "${!names[@]}"; do [ "${rcs[$i]}" -ne 0 ] && printf '\n=== %s (FAILED) ===\n%s\n' "${names[$i]}" "${outs[$i]}"; done
-    fi
-    # State explicitly when this Docker-free gate did not cover the excluded lane.
-    if [ -n "$(git status --porcelain --untracked-files=all -- extensions/money-pg)" ]; then
-      echo
-      echo "  NOTE  extensions/money-pg has changes this gate did NOT cover."
-      echo "        Run 'just gate-all' before pushing them."
-    fi
-    exit "$fail"
+    # Built, then run: `cargo run` would hold the build directory while the stages below invoke
+    # cargo themselves, and they fail rather than wait for it.
+    @cargo build -q -p repo-policy --bin gate
+    @"${CARGO_TARGET_DIR:-target}/debug/gate"
 
 # Passthrough keeps the lane's recipe inventory in its own Justfile. It reports
 # nothing of its own, so `[no-exit-message]` leaves the lane recipe's failure as
