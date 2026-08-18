@@ -402,7 +402,7 @@ check-examples:
 [doc("Test CI path ownership and workflow policy.")]
 test-scripts:
     python3 -m unittest discover -s scripts -p 'test_*.py'
-    python3 scripts/ci_paths.py check-tracked
+    cargo run -q -p repo-policy --bin ci-paths -- check-tracked
 
 # The pin and Actions checks. Reachable on its own because the files it reads --
 # the workflows, the composite actions, every manifest and both toolchain files --

@@ -340,12 +340,12 @@ It does not reach the YugabyteDB path, which stays with
 `just pg gate-pg-release`. It runs after the version is immutable, so a failure
 is answered by yanking, not by blocking a merge.
 
-`scripts/ci_paths.py` classifies every changed path and fails when a repository
+`tools/repo-policy`'s path classifier classifies every changed path and fails when a repository
 surface has no owner. `just test-scripts` proves every tracked path remains
 classified.
 
 Why working on one crate runs another's jobs is answered by `DERIVED_CLASSES` in
-`scripts/ci_paths.py`, which carries every fan-out edge with its reason. The
+`tools/repo-policy/src/ci_paths.rs`, which carries every fan-out edge with its reason. The
 reason is a required field and the map is checked against an independently
 written expectation, so an edge cannot be added, widened or narrowed silently.
 Change the map, not this paragraph.

@@ -602,3 +602,69 @@ pub fn needs_output_references(expression: &str) -> Vec<(String, String)> {
     }
     references
 }
+
+/// One job's scheduling policy: what it depends on, and what decides whether it runs.
+#[derive(Debug)]
+pub struct JobPolicy {
+    pub source: &'static str,
+    pub name: String,
+    pub needs: BTreeSet<String>,
+    /// The classifier output the job's `if:` reads, when it reads exactly one.
+    pub output: Option<String>,
+    /// The condition as written, so a caller can refuse a spelling it cannot simulate.
+    pub condition: Option<String>,
+    /// Whether the condition is `always()`, which survives a skipped dependency.
+    pub always: bool,
+    /// Every string written anywhere in this job.
+    pub expressions: Vec<&'static str>,
+}
+
+/// Every job, with the condition and dependencies that decide whether Actions schedules it.
+///
+/// A condition this repository does not use is refused rather than read as "no condition": a
+/// job whose gate went unparsed would be simulated as unconditional, and the cascade check
+/// would clear a job it never examined.
+pub fn job_policies() -> Vec<JobPolicy> {
+    let mut policies = Vec::new();
+    for source in sources() {
+        let Executable::Workflow(workflow) = &source.parsed else {
+            continue;
+        };
+        let jobs = child(&source.tree, "jobs");
+        for (name, job) in &workflow.jobs {
+            let needs = match job {
+                Job::NormalJob(job) => job.needs.iter().cloned().collect::<BTreeSet<_>>(),
+                Job::ReusableWorkflowCallJob(job) => job.needs.iter().cloned().collect(),
+            };
+            let tree = jobs.and_then(|jobs| child(jobs, name));
+            let mut expressions = Vec::new();
+            if let Some(tree) = tree {
+                strings(tree, &mut expressions);
+            }
+            // Read from the tree: the typed `if` keeps its expression private, and this check is
+            // about the text the condition is written as.
+            let condition =
+                tree.and_then(|tree| child(tree, "if")).and_then(Value::as_str).map(str::to_owned);
+
+            let trimmed = condition.as_deref().map(str::trim);
+            let always = trimmed == Some("${{ always() }}");
+            let output = trimmed.filter(|_| !always).and_then(|text| {
+                text.strip_prefix("${{ needs.changes.outputs.")
+                    .and_then(|rest| rest.strip_suffix(" == 'true' }}"))
+                    .map(str::to_owned)
+            });
+
+            policies.push(JobPolicy {
+                source: source.path.as_str(),
+                name: name.clone(),
+                needs,
+                output,
+                condition: condition.clone(),
+                always,
+                expressions,
+            });
+        }
+    }
+    assert!(!policies.is_empty(), "no job was found; every check over them would pass vacuously");
+    policies
+}

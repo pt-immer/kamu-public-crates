@@ -10,7 +10,7 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-clap = { version = "4.6.6", features = ["derive"] }
+clap = { version = "4.6.6", features = ["derive", "env"] }
 github-actions-models = "1.29.0"
 serde = { workspace = true, features = ["derive", "std"] }
 semver = "1.0.28"

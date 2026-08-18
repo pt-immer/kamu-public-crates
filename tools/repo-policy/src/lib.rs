@@ -6,7 +6,9 @@
 use std::path::{Path, PathBuf};
 
 pub mod actions;
+pub mod ci_paths;
 pub mod dev_tools;
+pub mod justfile;
 pub mod registry;
 
 /// The repository root, from this crate's own location.

@@ -243,8 +243,8 @@ fn every_selected_toolchain_is_a_reference_or_a_named_channel() {
 /// promises.
 ///
 /// This governs public-workspace matrices. A lane job may not carry one at all, which
-/// `scripts/test_workflows.py` refuses separately, because a matrix there would install the
-/// public workspace's floor into the lane.
+/// `tests/workflows.rs` refuses separately, because a matrix there would install the public
+/// workspace's floor into the lane.
 #[test]
 fn the_toolchain_matrix_compiles_at_the_declared_floor() {
     let mut matrices = 0_usize;
@@ -544,14 +544,11 @@ fn every_manifest_a_job_reads_is_published_by_the_job_it_names() {
 fn every_reader_of_a_manifest_expression_spells_the_same_output_name() {
     let expected = format!("outputs.{MANIFEST_OUTPUT}");
 
-    let mut readers: Vec<String> = tracked(&["*.yml"])
+    let readers: Vec<String> = tracked(&["*.yml"])
         .into_iter()
         .filter(|relative| relative.starts_with(".github/"))
         .filter(|relative| read(relative).contains(MANIFEST_ACTION))
         .collect();
-
-    // The one reader outside Actions; it cannot import the constant.
-    readers.push("scripts/test_workflows.py".to_owned());
 
     for relative in &readers {
         // Escapes dropped: one reader spells the name inside a regex as `\.`.
