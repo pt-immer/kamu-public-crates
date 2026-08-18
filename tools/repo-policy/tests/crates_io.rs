@@ -111,8 +111,31 @@ fn matches_reports_each_version_and_exits_on_the_verdict() {
 }
 
 #[test]
-fn a_5xx_is_retried_and_then_reported_unreadable() {
+fn a_5xx_is_retried_before_being_reported_unreadable() {
     let directory = scratch("server-error");
-    let prefix = stub_curl(&directory, "503", "");
-    crates_io(&prefix).args(["require", "x", "=1.0.0"]).assert().code(2);
+    let log = directory.join("attempts");
+    let script = directory.join("curl");
+    fs::write(&script, format!("#!/bin/sh\necho attempt >> '{}'\nprintf '\\n503'\n", log.display()))
+        .expect("stub is writable");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("stub is executable");
+
+    crates_io(&directory).args(["require", "x", "=1.0.0"]).assert().code(2);
+
+    let attempts = fs::read_to_string(&log).expect("the stub was called").lines().count();
+    assert_eq!(3, attempts, "a retryable status must be retried, not failed on sight");
+}
+
+#[test]
+fn a_4xx_that_is_not_404_is_not_retried() {
+    let directory = scratch("client-error");
+    let log = directory.join("attempts");
+    let script = directory.join("curl");
+    fs::write(&script, format!("#!/bin/sh\necho attempt >> '{}'\nprintf '\\n403'\n", log.display()))
+        .expect("stub is writable");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("stub is executable");
+
+    crates_io(&directory).args(["require", "x", "=1.0.0"]).assert().code(2);
+
+    let attempts = fs::read_to_string(&log).expect("the stub was called").lines().count();
+    assert_eq!(1, attempts, "a permanent status must not be retried");
 }

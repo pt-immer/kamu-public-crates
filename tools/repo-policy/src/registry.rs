@@ -137,11 +137,16 @@ pub fn latest_satisfying(name: &str, requirement: &str) -> Result<Option<Version
         Entry::Absent => return Ok(None),
         Entry::Found(releases) => releases,
     };
-    Ok(releases
+    Ok(pick(releases, &request))
+}
+
+/// The highest release a requirement admits. A yanked release satisfies nothing.
+fn pick(releases: Vec<Release>, request: &VersionReq) -> Option<Version> {
+    releases
         .into_iter()
         .filter(|release| !release.yanked && request.matches(&release.version))
         .map(|release| release.version)
-        .max())
+        .max()
 }
 
 /// Poll until a satisfying version is published, or the deadline passes.
@@ -240,6 +245,34 @@ mod tests {
             releases.iter().map(|r| r.version.clone()).collect::<Vec<_>>()
         );
         assert!(releases[1].yanked);
+    }
+
+    fn releases(rows: &[(&str, bool)]) -> Vec<Release> {
+        rows.iter()
+            .map(|(raw, yanked)| Release {
+                version: Version::parse(raw).expect("test version parses"),
+                yanked: *yanked,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_yanked_release_satisfies_nothing() {
+        let request = VersionReq::parse("1").expect("requirement parses");
+        assert_eq!(
+            Some(Version::parse("1.0.0").unwrap()),
+            pick(releases(&[("1.0.0", false), ("1.1.0", true)]), &request)
+        );
+        assert_eq!(None, pick(releases(&[("1.1.0", true)]), &request));
+    }
+
+    #[test]
+    fn the_highest_admitted_release_wins_regardless_of_index_order() {
+        let request = VersionReq::parse("0.1").expect("requirement parses");
+        assert_eq!(
+            Some(Version::parse("0.1.9").unwrap()),
+            pick(releases(&[("0.1.9", false), ("0.1.2", false), ("0.2.0", false)]), &request)
+        );
     }
 
     #[test]
