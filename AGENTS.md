@@ -113,9 +113,10 @@ Repository-wide policy lives at the root. In particular, `lint-shell` and
   `kamu_money_core::advanced::stable_hash`. `tools/repo-policy` parses every tracked Rust file, including the excluded
   lane, and refuses a `DefaultHasher::new` construction.
 - BRI SNAP BI signatures exclude URI queries. The provider vector in
-  `crates/snap-crypto/tests/snap_bi_recipes.rs` pins this contract. Adapters pass
-  `path()`, not `path_and_query()`, unless a new provider contract and vector
-  require otherwise.
+  `crates/snap-crypto/tests/snap_bi_recipes.rs` pins the recipe, and both
+  framework adapters now derive the path themselves rather than asking a caller
+  for it, so the exclusion is enforced where the signature is computed. A caller
+  that holds only a path still has `verify_request`, which cannot enforce it.
 - The extension lane's `Cargo.lock` must record `kamu-money-core` at the version
   `crates/money-core` carries. A `[patch.crates-io]` entry offering any other
   version is ignored rather than refused, so the container suites go on
@@ -160,20 +161,8 @@ coherent with its source data.
 
 ## Canonical workflow
 
-```sh
-just                    # list root recipes
-just setup              # submodule, pinned toolchains, targets, and local tools
-just doctor             # verify the development environment
-just check-all          # fast format + Clippy + test loop
-just gate               # complete public-workspace barrier
-just ci                 # public gate plus package dry-runs
-just pg <recipe>        # enter the excluded lane
-just pg gate-offline    # lane checks that need no database
-just gate-pg            # developer lane gate; no native YB release build
-just gate-all           # public gate plus developer lane gate
-just pg gate-pg-release # native YugabyteDB correctness proof
-just pg test-yb-deployment # cluster, read replica, concurrency, dump and restore
-```
+`just` lists the root recipes and `just pg` the lane's, each with the doc string
+the recipe itself carries.
 
 Run `just gate` before pushing public-workspace changes. Run `just gate-all`
 before pushing extension changes. The latter takes hours and needs Docker.
@@ -187,11 +176,8 @@ YugabyteDB commands serialize the shared default scratch root. Set a unique
 `KMONEY_RUN_ROOT` for independent concurrent runs; explicit roots bypass that
 default-root lock.
 
-Missing tools or targets fail rather than skip. Tool versions live in
-`.config/dev-tools.json`; `just setup` installs the repository-local tools and
-cross targets, then runs `just doctor`. ShellCheck is an operating-system
-package; setup prints the required version when it is absent.
-`VERBOSE=1` exposes full output behind compact aggregate recipes.
+Missing tools or targets fail rather than skip. `VERBOSE=1` exposes full output
+behind compact aggregate recipes.
 
 A developer machine and a CI runner provision differently on purpose.
 [`docs/TOOLCHAIN-REALMS.md`](docs/TOOLCHAIN-REALMS.md) is the one place that
@@ -204,9 +190,21 @@ own: `!` is an advisory warning, which never affects its exit code. It is a
 distinct glyph because `•` already means a tool that passed from outside the
 repository, and a warning is not a pass.
 
-Both doctors color an interactive stdout only and honor `NO_COLOR`. `setup`,
-`doctor` and the `pg` passthrough carry `[no-exit-message]`, so a failure is the
-script's own report; the exit status still travels.
+Every negative control must be reached by a required check directly. A control
+reachable only through `gate-offline` is covered by nothing, and one that never
+runs cannot be told from one that cannot fail.
+
+The lane's negative controls are tests in the `hygiene` crate, so a control
+cannot be unhooked from the check that runs it without being deleted outright.
+The ones needing more than a compiler are `#[ignore]`d, and the recipe that
+supplies what they need owns the skip: a control that decides for itself that
+having no input is fine passes when handed nothing.
+
+New recipes use the `<area>-<verb>` / `*-all` naming scheme. Aggregates compose
+granular recipes; CI should call the same granular recipes rather than duplicate
+their commands.
+
+## Container images and the CI cache
 
 Both container images compile their dependencies in a layer of their own, keyed
 on the manifests, so editing lane source recompiles `kamu-money-pg` and nothing
@@ -262,36 +260,6 @@ rather than by patch floats to a newer patch; rustup then honours the pin by
 downloading a second toolchain inside every container, on every run, without
 ever producing a wrong answer. `hygiene/tests/pins.rs` holds that agreement, and
 the pgrx one.
-
-Granular root checks:
-
-```sh
-just lint-all           # Rust, Markdown, TOML, spelling, shell, scrub
-just test-all           # workspace and per-crate feature matrices
-just cov-all            # enforced coverage floors
-just check <crate>      # one crate, without the workspace sweep
-just test-fast          # workspace nextest plus doctests
-just test-policy        # the pinned versions and what Actions may run
-just pg doc-gate-selftest # the doc gate's controls; needs a populated PGRX_HOME
-just pg core-relock     # re-lock kamu-money-core with the lane patch active
-```
-
-Every negative control must be reached by a required check directly. A control
-reachable only through `gate-offline` is covered by nothing, and one that never
-runs cannot be told from one that cannot fail.
-
-The lane's negative controls are tests in the `hygiene` crate, so `test-hygiene`
-reaches every one and a control cannot be unhooked from the check that runs it
-without being deleted outright. The three that need more than a compiler are
-`#[ignore]`d and named by the recipe that supplies what they need:
-`doc-gate-selftest` a populated `PGRX_HOME`, `yb-image-selftest` a Docker daemon,
-`yb-selftest` a battery output; it also owns the workspace lock and the skip,
-because a control that decides for itself that having no input is fine passes
-when handed nothing.
-
-New recipes use the `<area>-<verb>` / `*-all` naming scheme. Aggregates compose
-granular recipes; CI should call the same granular recipes rather than duplicate
-their commands.
 
 ## Test policy
 
