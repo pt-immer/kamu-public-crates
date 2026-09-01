@@ -33,7 +33,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch, 2026-07-16
         with:
           toolchain: ${{ fromJSON(steps.pins.outputs.manifest).rust.primary }}
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2
         with:
           tool: just@${{ fromJSON(steps.pins.outputs.manifest).cargo_tools['just'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -177,7 +177,7 @@ jobs:
           submodules: true
       - id: pins
         uses: ./.github/actions/read-dev-tools
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2
         with:
           tool: just@${{ fromJSON(steps.pins.outputs.manifest).cargo_tools['just'].version }}
 
