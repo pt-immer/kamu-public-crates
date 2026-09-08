@@ -1414,9 +1414,9 @@ dependencies = [
 
 [[package]]
 name = "github-actions-models"
-version = "1.29.0"
+version = "1.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08e715b12c9b6cdcfc1c6e07867b22d211544665bca9f95afcddae92db0e46fb"
+checksum = "565db35feba2c7838f086bb96a573b09484c803655c98a95fd3bc1b39348c974"
 dependencies = [
  "indexmap 2.14.0",
  "self_cell",
@@ -3826,7 +3826,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
