@@ -818,6 +818,8 @@ dependencies = [
 [[package]]
 name = "kamu-money-core"
 version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8938812628d1d3ec3c6a3701ebb50e931c99b6cf0588ec1fd708feca32d2fb1"
 dependencies = [
  "ethnum",
  "proc-macro2",
@@ -845,7 +847,7 @@ dependencies = [
  "kamu-money-core",
  "serde_json",
  "syn 3.0.3",
- "toml 1.1.4+spec-1.1.0",
+ "toml 1.1.5+spec-1.1.0",
 ]
 
 [[package]]
@@ -1198,7 +1200,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
- "toml 1.1.4+spec-1.1.0",
+ "toml 1.1.5+spec-1.1.0",
  "url",
  "winapi",
 ]
@@ -1217,7 +1219,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
- "toml 1.1.4+spec-1.1.0",
+ "toml 1.1.5+spec-1.1.0",
  "url",
  "winapi",
 ]
@@ -1848,9 +1850,9 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "1.1.4+spec-1.1.0"
+version = "1.1.5+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3aace63f4bbcdfc2c965b059de67119c89c4017a70d633be6c104910f67056f5"
+checksum = "12c0ba9680044b4ce98d391a62094047eada0d64860b80166c39f4a6b5640785"
 dependencies = [
  "indexmap",
  "serde_core",
