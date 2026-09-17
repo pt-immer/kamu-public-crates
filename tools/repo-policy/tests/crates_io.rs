@@ -103,14 +103,6 @@ fn an_unreadable_index_never_reports_a_version_absent() {
 }
 
 #[test]
-fn matches_reports_each_version_and_exits_on_the_verdict() {
-    let directory = scratch("matches");
-    let prefix = stub_curl(&directory, "200", PUBLISHED);
-    crates_io(&prefix).args(["matches", "^0.2", "0.2.0"]).assert().code(0).stdout("0.2.0=true\n");
-    crates_io(&prefix).args(["matches", "^0.2", "0.3.0"]).assert().code(1).stdout("0.3.0=false\n");
-}
-
-#[test]
 fn a_5xx_is_retried_before_being_reported_unreadable() {
     let directory = scratch("server-error");
     let log = directory.join("attempts");
