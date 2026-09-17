@@ -127,21 +127,7 @@ pub fn run(root: &Path, stages: &[Stage]) -> i32 {
         }
     }
 
-    if lane_has_changes(root) {
-        println!("\n  NOTE  extensions/money-pg has changes this gate did NOT cover.");
-        println!("        Run 'just gate-all' before pushing them.");
-    }
-
     i32::from(failed)
-}
-
-/// Whether the excluded lane carries changes this Docker-free gate did not cover.
-fn lane_has_changes(root: &Path) -> bool {
-    Command::new("git")
-        .args(["status", "--porcelain", "--untracked-files=all", "--", "extensions/money-pg"])
-        .current_dir(root)
-        .output()
-        .is_ok_and(|output| !output.stdout.is_empty())
 }
 
 #[cfg(test)]

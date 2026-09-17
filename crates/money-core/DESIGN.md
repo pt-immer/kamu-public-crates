@@ -57,8 +57,8 @@ flowchart TD
     native --> hosted["self-hosted PostgreSQL<br/>YugabyteDB"]
 ```
 
-The native route lives in the excluded
-[`extensions/money-pg`](../../extensions/money-pg) workspace. Its shape matters
+The native route lives in the separate
+[`kamu-money-pg`](https://github.com/pt-immer/kamu-money-pg) repository. Its shape matters
 here because this crate's register defines it: one SQL type per currency, so a
 cross-currency expression fails while the query is parsed rather than at run
 time. `kmoney_mixed` stores heterogeneous currencies and deliberately has no
@@ -66,8 +66,8 @@ arithmetic and no sum aggregate. The currency lives in the catalog, not the
 value, which is why a pinned payload is 16 bytes and `kmoney_mixed` appends two
 ISO-code bytes for 18.
 
-That lane owns its own [`DESIGN.md`](../../extensions/money-pg/DESIGN.md) and
-[YugabyteDB runbook](../../extensions/money-pg/kamu-money-pg/yb/RUNBOOK.md).
+That repository owns its own [design contract](https://github.com/pt-immer/kamu-money-pg/blob/main/DESIGN.md)
+and [YugabyteDB runbook](https://github.com/pt-immer/kamu-money-pg/blob/main/kamu-money-pg/yb/RUNBOOK.md).
 
 ## External constraints
 

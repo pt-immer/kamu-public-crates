@@ -59,11 +59,6 @@ fn the_primary_channel_is_the_one_rustup_selects_at_the_repository_root() {
     assert_eq!(tools().rust.primary, channel("rust-toolchain.toml"));
 }
 
-#[test]
-fn the_lane_channel_is_the_one_rustup_selects_inside_the_lane() {
-    assert_eq!(tools().rust.lane, channel("extensions/money-pg/rust-toolchain.toml"));
-}
-
 /// How a manifest answers the question "what is your floor".
 enum Floor {
     /// Stated here, as a version.
@@ -105,7 +100,7 @@ fn floor_of(relative: &str) -> Option<Floor> {
 #[test]
 fn every_package_has_a_floor_and_every_literal_belongs_to_a_side() {
     let manifest = tools();
-    let (mut public, mut lane, mut inherited) = (0_usize, 0_usize, 0_usize);
+    let (mut public, mut inherited) = (0_usize, 0_usize);
 
     for relative in tracked(&["*Cargo.toml"]) {
         let Some(floor) = floor_of(&relative) else {
@@ -122,12 +117,6 @@ fn every_package_has_a_floor_and_every_literal_belongs_to_a_side() {
             ),
             Floor::Stated(version) => version,
         };
-        if relative.starts_with("extensions/money-pg/") {
-            // Held equal to the lane's own clippy.toml by the lane's hygiene crate. Counted
-            // here so a lane manifest cannot pass by going unread.
-            lane += 1;
-            continue;
-        }
         assert!(
             same_series(&manifest.rust.msrv, DevTools::PATH, &declared, &relative),
             "{} states msrv {} while {relative} declares rust-version {declared}",
@@ -138,7 +127,6 @@ fn every_package_has_a_floor_and_every_literal_belongs_to_a_side() {
     }
 
     assert!(public > 0, "no public manifest declared a floor to bind");
-    assert!(lane > 0, "no lane manifest was seen; the side split would be untested");
     assert!(inherited > 0, "no manifest inherited a floor; the workspace case would be untested");
 }
 
@@ -150,9 +138,7 @@ fn listed(relative: &str, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The root toolchain file carries what the root `setup` installs. The lane's carries its own,
-/// and the lane installs it from there, so the manifest states the lane's channel and nothing
-/// else about it.
+/// The toolchain file carries the components and targets setup installs.
 #[test]
 fn the_root_toolchain_file_carries_what_the_manifest_says_setup_installs() {
     let manifest = tools();
@@ -242,9 +228,6 @@ fn every_selected_toolchain_is_a_reference_or_a_named_channel() {
 /// other pin it still runs, still passes, and stops testing the version every published crate
 /// promises.
 ///
-/// This governs public-workspace matrices. A lane job may not carry one at all, which
-/// `tests/workflows.rs` refuses separately, because a matrix there would install the public
-/// workspace's floor into the lane.
 #[test]
 fn the_toolchain_matrix_compiles_at_the_declared_floor() {
     let mut matrices = 0_usize;
@@ -791,66 +774,4 @@ fn every_documented_path_export_appends_the_repository_tools() {
         }
     }
     assert!(checked > 0, "no file exported a PATH; this would pass vacuously");
-}
-
-/// Without a source label the package is unlinked from the repository and inherits no permissions.
-#[test]
-fn every_pushed_image_is_labelled_with_the_repository_that_describes_it() {
-    let mut pushes = 0_usize;
-    for relative in tracked(&[".github/workflows/*.yml"]) {
-        let text = read(&relative);
-        let code: Vec<&str> = text.lines().map(code_of).collect();
-        let names = |needle: &str| code.iter().any(|line| line.contains(needle));
-        if !names("docker buildx build --push") {
-            continue;
-        }
-        assert!(
-            names("org.opencontainers.image.source="),
-            "{relative} pushes an image without labelling its source; the package would be \
-             published unlinked from the repository",
-        );
-        assert!(
-            names("containerimage.digest"),
-            "{relative} pushes an image without publishing its digest; nothing immutable is \
-             offered to a consumer that cannot rely on the tag",
-        );
-        pushes += 1;
-    }
-    assert!(pushes > 0, "no workflow pushed an image; this would pass vacuously");
-}
-
-/// A hashed input that does not trigger changes the tag a run would produce without causing one.
-/// The reverse is allowed: the workflow triggers on itself without being part of what it builds.
-#[test]
-fn every_hashed_builder_input_also_triggers_the_build() {
-    let relative = ".github/workflows/publish-builder-image.yml";
-    let text = read(relative);
-
-    let triggers: BTreeSet<String> = text
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix("- ").map(str::trim))
-        .filter(|entry| entry.contains('/') && !entry.contains(' '))
-        .map(str::to_owned)
-        .collect();
-    assert!(!triggers.is_empty(), "{relative} lists no trigger path; this would pass vacuously");
-
-    let hashed: BTreeSet<String> = Regex::new(r"hashFiles\(([^)]*)\)")
-        .expect("literal pattern")
-        .captures_iter(&text)
-        .flat_map(|found| {
-            found[1]
-                .split(',')
-                .map(|argument| argument.trim().trim_matches('\'').to_owned())
-                .collect::<Vec<_>>()
-        })
-        .filter(|argument| !argument.is_empty())
-        .collect();
-    assert!(!hashed.is_empty(), "{relative} hashes no input; this would pass vacuously");
-
-    for input in &hashed {
-        assert!(
-            triggers.contains(input),
-            "{relative} hashes {input} into the tag but never builds when it changes",
-        );
-    }
 }

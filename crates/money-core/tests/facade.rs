@@ -45,7 +45,7 @@ fn every_name_the_compatibility_paths_offered_has_a_home() {
 ///
 /// Every other test in this crate lives under `src` and reaches these through `crate::`, so a
 /// `pub` narrowed to `pub(crate)` would leave the whole in-crate suite green and break the
-/// extension lane, which the root gate does not build.
+/// separate extension repository.
 #[test]
 fn the_raw_unit_and_codec_surfaces_stay_public() {
     use kamu_money_core::advanced::residue::UntaggedDivision;

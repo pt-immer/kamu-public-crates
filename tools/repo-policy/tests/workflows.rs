@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use repo_policy::actions::{Executable, MANIFEST_ACTION, MANIFEST_OUTPUT, job_policies, sources};
 use repo_policy::ci_paths::{DERIVED_CLASSES, classify_paths};
-use repo_policy::justfile::{lane_entry_recipes, recipes};
+use repo_policy::justfile::recipes;
 use repo_policy::{read, repo_root, tracked};
 
 const GATE: &str = ".github/workflows/on-pr-synced.yml";
@@ -130,25 +130,12 @@ fn selected_channel(value: &str) -> String {
 
 #[test]
 fn every_toolchain_step_selects_the_channel_its_own_work_reads() {
-    let entries = lane_entry_recipes();
-    let mut checked: BTreeMap<&str, usize> = BTreeMap::from([("extension lane", 0), ("public workspace", 0)]);
-
+    let mut checked = 0;
+    let expected = "rust.primary";
+    let allowed = BTreeSet::from([expected, "nightly", "matrix"]);
     for policy in job_policies() {
         let text = read(policy.source);
         let body = job_body(&text, &policy.name);
-        let enters_lane = entries.iter().any(|recipe| {
-            body.contains(&format!("just {recipe} ")) || body.trim_end().ends_with(&format!("just {recipe}"))
-        });
-        let (expected, where_) =
-            if enters_lane { ("rust.lane", "extension lane") } else { ("rust.primary", "public workspace") };
-        let allowed: BTreeSet<&str> = if enters_lane {
-            // Miri is the exception the lane actually has; a matrix is not, and would install
-            // the public workspace's MSRV into a lane job.
-            BTreeSet::from([expected, "nightly"])
-        } else {
-            BTreeSet::from([expected, "nightly", "matrix"])
-        };
-
         for step in body.split("      - uses: dtolnay/rust-toolchain@").skip(1) {
             let selected: BTreeSet<String> = step
                 .lines()
@@ -160,20 +147,17 @@ fn every_toolchain_step_selects_the_channel_its_own_work_reads() {
             let selected_refs: BTreeSet<&str> = selected.iter().map(String::as_str).collect();
             assert!(
                 selected_refs.is_subset(&allowed),
-                "{} selects {selected_refs:?} but works in the {where_}, which reads {expected}",
+                "{} selects {selected_refs:?} but works in the public workspace, which reads {expected}",
                 policy.name
             );
-            // Only a step reading the PINNED channel counts: `nightly` is allowed on both sides,
-            // so counting it would leave a tally non-zero with no job compared to its own pin.
+            // Count pinned selections separately from nightly and matrix entries.
             if selected_refs == BTreeSet::from([expected]) {
-                *checked.get_mut(where_).expect("both sides are tallied") += 1;
+                checked += 1;
             }
         }
     }
 
-    for (side, count) in checked {
-        assert!(count > 0, "no {side} toolchain step checked; this would pass vacuously");
-    }
+    assert!(checked > 0, "no pinned toolchain step checked; this would pass vacuously");
 }
 
 /// The text written under one job id.

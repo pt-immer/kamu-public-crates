@@ -11,10 +11,6 @@ outputs:
       added to the manifest is reachable without an output and a republish being added to
       carry it.
     value: ${{ steps.read.outputs.manifest }}
-  builder_image:
-    description: >-
-      The pgrx build environment the lane's compiler-only jobs run inside, pinned by digest.
-    value: ${{ steps.read.outputs.builder_image }}
 
 runs:
   using: composite
@@ -26,15 +22,10 @@ runs:
         # under a path, or sets a working-directory default, would otherwise reach for a file
         # that is not there and fail as an opaque non-zero step.
         MANIFEST: ${{ github.workspace }}/.config/dev-tools.json
-        BUILDER: ${{ github.workspace }}/.config/builder-image
       run: |
         set -euo pipefail
         if [ ! -r "$MANIFEST" ]; then
           echo "::error::read-dev-tools: $MANIFEST is not readable; check the repository out first"
-          exit 1
-        fi
-        if [ ! -r "$BUILDER" ]; then
-          echo "::error::read-dev-tools: $BUILDER is not readable; check the repository out first"
           exit 1
         fi
         # The manifest is pull-request-controlled content. A fixed delimiter lets a line equal to
@@ -51,12 +42,3 @@ runs:
           printf '%s\n' "$(cat "$MANIFEST")"
           echo "$delimiter"
         } >>"$GITHUB_OUTPUT"
-
-        # Pull-request-controlled: whitespace stripped so a newline cannot write further outputs.
-        reference="$(grep -vE '^[[:space:]]*(#|$)' "$BUILDER" | head -n 1 | tr -d '[:space:]')"
-        case "$reference" in
-          *@sha256:*) ;;
-          "") echo "::error::read-dev-tools: $BUILDER names no image"; exit 1 ;;
-          *) echo "::error::read-dev-tools: $BUILDER must pin by digest, got $reference"; exit 1 ;;
-        esac
-        echo "builder_image=$reference" >>"$GITHUB_OUTPUT"

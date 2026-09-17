@@ -2,7 +2,6 @@
   "rust": {
     "primary": "1.97.1",
     "msrv": "1.94.0",
-    "lane": "1.96.0",
     "primary_components": [
       "clippy",
       "rustfmt",
@@ -56,12 +55,6 @@
     "shellcheck": {
       "version": "0.11.0",
       "exact": "its findings are the verdict, so a different version disagrees with CI"
-    }
-  },
-  "ci_only_tools": {
-    "cargo-pgrx": {
-      "version": "0.19.2",
-      "exact": "must equal the pgrx the lane builds against, or the extension will not link"
     }
   }
 }

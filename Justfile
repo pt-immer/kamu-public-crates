@@ -5,8 +5,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 # satisfying tool keeps running it; `just setup` fills the gaps rather than
 # shadowing the machine. See docs/TOOLCHAIN-REALMS.md.
 # The PostgreSQL kamu-money-core's text form is proven against. The tag names a major and
-# floats within it: the claim is the major, which `tools/repo-policy` holds to one the
-# extension lane supports.
+# floats within it; the driver tests use this image independently of the extension.
 PG_ROUNDTRIP_IMAGE := "postgres:18-alpine"
 
 export PATH := env_var("PATH") + ":" + justfile_directory() + "/.tools/bin:" + justfile_directory() + "/node_modules/.bin"
@@ -149,8 +148,12 @@ scrub:
     hits=0
     scan() { # label pattern [exclude-ere]
         local label="$1" pattern="$2" exclude="${3:-}"
-        local found
-        found=$(git grep -nIE "$pattern" -- ':!Justfile' 2>/dev/null)
+        local found status=0
+        found=$(git grep -nIE "$pattern" -- ':!Justfile' 2>&1) || status=$?
+        if [ "$status" -gt 1 ]; then
+            printf 'scrub: could not scan tracked files: %s\n' "$found" >&2
+            exit "$status"
+        fi
         if [ -n "$exclude" ]; then
             found=$(printf '%s\n' "$found" | grep -vE "$exclude")
         fi
@@ -188,35 +191,14 @@ scrub:
     fi
     echo "scrub: clean"
 
-# ShellCheck follows sourced files and runs lane scripts from their own root so
-# relative imports resolve.
 [doc("ShellCheck every tracked shell script.")]
 lint-shell:
     #!/usr/bin/env bash
-    set -uo pipefail
-    if ! command -v shellcheck >/dev/null 2>&1; then
-        echo "lint-shell: ShellCheck is missing; run 'just setup'" >&2
-        exit 1
-    fi
-    lane=extensions/money-pg
-    rc=0
-    shell_files=$(git ls-files --cached --others --exclude-standard '*.sh')
-    host=$(printf '%s\n' "$shell_files" | grep -v "^$lane/" || true)
-    lane_files=$(printf '%s\n' "$shell_files" | grep "^$lane/" | sed "s|^$lane/||" || true)
-    if [ -n "$host" ]; then
-        # shellcheck disable=SC2086
-        shellcheck -x $host || rc=1
-    fi
-    if [ -n "$lane_files" ]; then
-        # shellcheck disable=SC2086
-        (cd "$lane" && shellcheck -x $lane_files) || rc=1
-    fi
-    n_host=$(printf '%s' "$host" | grep -c . || true)
-    n_lane=$(printf '%s' "$lane_files" | grep -c . || true)
-    if [ "$rc" -eq 0 ]; then
-        echo "lint-shell: clean over $n_host repository + $n_lane lane script(s)"
-    fi
-    exit "$rc"
+    set -euo pipefail
+    files=$(mktemp)
+    trap 'rm -f "$files"' EXIT
+    git ls-files --cached --others --exclude-standard -z '*.sh' > "$files"
+    xargs -0 -r shellcheck -x < "$files"
 
 # Complete docs-only CI surface, including the scrub for Markdown-only changes.
 [doc("Run formatting, Markdown, TOML, spelling, and scrub checks for docs.")]
@@ -454,25 +436,6 @@ gate:
     # cargo themselves, and they fail rather than wait for it.
     @cargo build -q -p repo-policy --bin gate
     @"${CARGO_TARGET_DIR:-target}/debug/gate"
-
-# Passthrough keeps the lane's recipe inventory in its own Justfile. It reports
-# nothing of its own, so `[no-exit-message]` leaves the lane recipe's failure as
-# the whole message; the exit status still travels.
-[doc("Run a recipe in the excluded PostgreSQL extension lane.")]
-[no-exit-message]
-pg *ARGS:
-    @cd extensions/money-pg && just {{ ARGS }}
-
-# The PostgreSQL lane's developer gate. Hours and Docker-backed, but excludes the native YB
-# release proof (`just pg gate-pg-release`).
-[doc("Run the Docker-backed developer gate for the extension lane.")]
-gate-pg:
-    cd extensions/money-pg && just gate-pg
-
-# Pre-push barrier for a change under extensions/money-pg: the nine public crates plus the lane's
-# developer gate. Extension releases also require `just pg gate-pg-release`.
-[doc("Run the public-crate gate and extension developer gate.")]
-gate-all: gate gate-pg
 
 # Local published-crate gate plus the workspace publish dry-run.
 [doc("Run the public-crate gate plus every package dry-run.")]
