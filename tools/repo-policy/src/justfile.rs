@@ -8,11 +8,9 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct Recipe {
-    pub name: String,
     pub dependencies: Vec<Dependency>,
     /// Each line as its fragments; an interpolation is a fragment of its own.
     body: Vec<Vec<serde_json::Value>>,
-    pub doc: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -41,20 +39,6 @@ impl Recipe {
 #[derive(Debug, Deserialize)]
 struct Dump {
     recipes: BTreeMap<String, Recipe>,
-}
-
-/// One variable's value, evaluated. `--dump` renders an assignment as its expression tree, and
-/// the tree is not the answer a consumer of the value wants.
-pub fn variable(directory: &Path, name: &str) -> String {
-    let output =
-        Command::new("just").args(["--evaluate", name]).current_dir(directory).output().expect("just runs");
-    assert!(
-        output.status.success(),
-        "just --evaluate {name} failed in {}: {}",
-        directory.display(),
-        String::from_utf8_lossy(&output.stderr).trim()
-    );
-    String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
 /// Every recipe a Justfile declares.
