@@ -18,4 +18,5 @@ per-crate changelogs for details:
 - Move the PostgreSQL/YugabyteDB extension to the standalone
   [kamu-money-pg repository](https://github.com/pt-immer/kamu-money-pg).
 - Remove extension builds, tool pins and release checks from this workspace.
-- Update locked rustls for RUSTSEC-2026-0285 and replace the yanked chacha20 release.
+- Update locked rustls for RUSTSEC-2026-0285, replace yanked chacha20, and
+  floor smol-toml above the vulnerable parser releases (GHSA-7w5x-hrqm-74c2).
