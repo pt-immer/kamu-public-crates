@@ -83,7 +83,7 @@ jobs:
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
           components: rustfmt
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
       - run: just fmt-rust-check
@@ -101,7 +101,7 @@ jobs:
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
           components: clippy
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -120,7 +120,7 @@ jobs:
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
           components: clippy
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -140,7 +140,7 @@ jobs:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
           components: clippy
           targets: wasm32-unknown-unknown
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -159,7 +159,7 @@ jobs:
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
           components: clippy
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -183,7 +183,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch, 2026-07-16
         with:
           toolchain: ${{ matrix.toolchain }}
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -201,7 +201,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch, 2026-07-16
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -220,7 +220,7 @@ jobs:
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
           targets: thumbv7em-none-eabi
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -237,7 +237,7 @@ jobs:
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
           targets: wasm32-unknown-unknown
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -255,7 +255,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch, 2026-07-16
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -273,7 +273,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch, 2026-07-16
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -291,7 +291,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch, 2026-07-16
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-deny@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-deny'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -307,7 +307,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: lts/*
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},taplo-cli@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['taplo-cli'].version }},typos-cli@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['typos-cli'].version }}
       - run: npm ci --no-fund --no-audit
@@ -325,7 +325,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch, 2026-07-16
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -345,7 +345,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: lts/*
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -365,7 +365,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch, 2026-07-16
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -383,7 +383,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch, 2026-07-16
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -402,7 +402,7 @@ jobs:
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-llvm-cov@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-llvm-cov'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -423,7 +423,7 @@ jobs:
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-llvm-cov@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-llvm-cov'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -440,7 +440,7 @@ jobs:
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
           targets: wasm32-unknown-unknown
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -457,7 +457,7 @@ jobs:
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-llvm-cov@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-llvm-cov'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -474,7 +474,7 @@ jobs:
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-llvm-cov@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-llvm-cov'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -491,7 +491,7 @@ jobs:
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
           components: clippy
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -508,7 +508,7 @@ jobs:
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
           components: rust-src
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -524,7 +524,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch, 2026-07-16
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -540,7 +540,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch, 2026-07-16
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -557,7 +557,7 @@ jobs:
         with:
           toolchain: ${{ fromJSON(needs.changes.outputs.manifest).rust.primary }}
           components: llvm-tools-preview
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-llvm-cov@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-llvm-cov'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
@@ -571,7 +571,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
+      - uses: taiki-e/install-action@26e9283f268b880168bdbd2c545dfcd60ec2c6ab # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},shellcheck@${{ fromJSON(needs.changes.outputs.manifest).system_tools['shellcheck'].version }}
       - run: just lint-shell
