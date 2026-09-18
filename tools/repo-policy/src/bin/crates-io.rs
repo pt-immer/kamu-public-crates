@@ -28,12 +28,6 @@ enum Command {
     },
     /// Fail if the exact version is already published.
     EnsureAbsent { crate_name: String, version: String },
-    /// Report whether each version satisfies the requirement.
-    Matches {
-        requirement: String,
-        #[arg(required = true)]
-        versions: Vec<String>,
-    },
 }
 
 fn main() -> ExitCode {
@@ -66,15 +60,6 @@ fn run(command: Command) -> Result<ExitCode, registry::Unreadable> {
                 eprintln!("crates.io: {crate_name} {target} is already published");
                 Ok(ExitCode::from(EXIT_ANSWERED_NO))
             }
-        }
-        Command::Matches { requirement, versions } => {
-            let mut all = true;
-            for version in &versions {
-                let satisfied = registry::matches(&requirement, version)?;
-                println!("{version}={satisfied}");
-                all &= satisfied;
-            }
-            Ok(if all { ExitCode::SUCCESS } else { ExitCode::from(EXIT_ANSWERED_NO) })
         }
     }
 }

@@ -7,11 +7,6 @@ use repo_policy::dev_env::{
 };
 use repo_policy::{read, repo_root};
 
-/// The extension lane installs its own channel. Setup does not, because a developer who never
-/// enters the lane would download a second toolchain for nothing. Stated rather than derived, so
-/// a channel added without a setup command still fails.
-const INSTALLED_BY_THE_LANE: [&str; 1] = ["lane"];
-
 /// Every dotted version literal in a file, found where the given prefix introduces one.
 fn literals_after(text: &str, prefixes: &[&str]) -> BTreeSet<String> {
     let mut found = BTreeSet::new();
@@ -80,9 +75,6 @@ fn setup_commands_install_every_required_rust_item() {
         ("primary", &manifest.rust.primary, &manifest.rust.primary_components),
         ("msrv", &manifest.rust.msrv, &manifest.rust.msrv_components),
     ] {
-        if INSTALLED_BY_THE_LANE.contains(&channel) {
-            continue;
-        }
         assert!(!components.is_empty(), "{channel} lists no component");
         let installs: Vec<&String> = rendered
             .iter()

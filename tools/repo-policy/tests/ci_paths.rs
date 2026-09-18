@@ -16,7 +16,6 @@ fn representative_paths() -> BTreeMap<&'static str, &'static str> {
         ("iso3166", "crates/iso3166/src/lib.rs"),
         ("logging", "crates/logging/src/lib.rs"),
         ("money", "crates/money-core/tests/facade.rs"),
-        ("moneypg", "extensions/money-pg/Cargo.toml"),
         ("shared", "Cargo.lock"),
         ("shell", "ops/new-check.sh"),
         ("snap", "crates/snap-crypto/src/lib.rs"),
@@ -31,7 +30,6 @@ fn expected_fan_out() -> BTreeMap<&'static str, BTreeSet<&'static str>> {
         ("log", BTreeSet::from(["logging", "shared"])),
         ("money", BTreeSet::from(["money", "shared"])),
         ("snap", BTreeSet::from(["snap", "shared"])),
-        ("moneypg", BTreeSet::from(["moneypg", "shared"])),
         ("worker", BTreeSet::from(["logging", "shared"])),
         ("lint", BTreeSet::from(BASE_CLASSES)),
         ("shell", BTreeSet::from(["shell"])),
@@ -86,4 +84,13 @@ fn a_derived_class_fires_on_its_sources_and_on_nothing_else() {
 fn every_tracked_path_has_an_owner() {
     let tracked = repo_policy::tracked(&["."]);
     classify_paths(&tracked).expect("every tracked path is classified");
+}
+
+#[test]
+fn retired_extension_paths_only_exist_in_history() {
+    let tracked = repo_policy::tracked(&["."]);
+    assert!(!tracked.iter().any(|path| path.starts_with("extensions/money-pg/")));
+    let classes = classify_paths(["extensions/money-pg/Cargo.toml"]).unwrap();
+    assert!(classes["rust"], "extraction deletions must run the shared gate");
+    assert!(!classes.contains_key("moneypg"));
 }

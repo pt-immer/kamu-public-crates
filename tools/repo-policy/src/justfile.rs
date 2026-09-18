@@ -1,6 +1,6 @@
 //! The Justfile, read through `just --dump` rather than parsed again.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
 
@@ -8,11 +8,9 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct Recipe {
-    pub name: String,
     pub dependencies: Vec<Dependency>,
     /// Each line as its fragments; an interpolation is a fragment of its own.
     body: Vec<Vec<serde_json::Value>>,
-    pub doc: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -43,20 +41,6 @@ struct Dump {
     recipes: BTreeMap<String, Recipe>,
 }
 
-/// One variable's value, evaluated. `--dump` renders an assignment as its expression tree, and
-/// the tree is not the answer a consumer of the value wants.
-pub fn variable(directory: &Path, name: &str) -> String {
-    let output =
-        Command::new("just").args(["--evaluate", name]).current_dir(directory).output().expect("just runs");
-    assert!(
-        output.status.success(),
-        "just --evaluate {name} failed in {}: {}",
-        directory.display(),
-        String::from_utf8_lossy(&output.stderr).trim()
-    );
-    String::from_utf8_lossy(&output.stdout).trim().to_owned()
-}
-
 /// Every recipe a Justfile declares.
 pub fn recipes(directory: &Path) -> BTreeMap<String, Recipe> {
     let recipes = dump(directory).recipes;
@@ -79,53 +63,13 @@ fn dump(directory: &Path) -> Dump {
     serde_json::from_slice(&output.stdout).expect("just --dump emits JSON")
 }
 
-/// Root recipes that run inside the extension lane, transitively.
-///
-/// `just pg` is not the only way in — `gate-pg` cds there too and `gate-all` composes it — so a
-/// hand-written marker would be a claim about the Justfile rather than a reading of it.
-pub fn lane_entry_recipes() -> BTreeSet<String> {
-    let recipes = recipes(&crate::repo_root());
-    let mut entries: BTreeSet<String> = recipes
-        .values()
-        .filter(|recipe| recipe.body().contains("cd extensions/money-pg"))
-        .map(|recipe| recipe.name.clone())
-        .collect();
-
-    loop {
-        let reached: BTreeSet<String> = recipes
-            .values()
-            .filter(|recipe| {
-                !entries.contains(&recipe.name)
-                    && recipe.dependencies.iter().any(|need| entries.contains(&need.recipe))
-            })
-            .map(|recipe| recipe.name.clone())
-            .collect();
-        if reached.is_empty() {
-            break;
-        }
-        entries.extend(reached);
-    }
-
-    assert!(!entries.is_empty(), "no root recipe enters the extension lane; re-point this derivation");
-    entries
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn the_lane_entry_set_is_derived_not_listed() {
-        let entries = lane_entry_recipes();
-        assert!(entries.contains("pg"), "just pg cds into the lane");
-        assert!(entries.contains("gate-pg"), "gate-pg cds into the lane");
-        assert!(entries.contains("gate-all"), "gate-all composes gate-pg");
-        assert!(!entries.contains("gate"), "the public gate does not enter the lane");
-    }
-
-    #[test]
     fn a_recipe_body_renders_the_lines_it_runs() {
         let recipes = recipes(&crate::repo_root());
-        assert!(recipes["gate-pg"].body().contains("cd extensions/money-pg"));
+        assert!(recipes["lint-md"].body().contains("markdownlint-cli2"));
     }
 }

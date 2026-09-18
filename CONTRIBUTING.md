@@ -2,7 +2,8 @@
 
 Thank you for contributing. The root Cargo workspace contains public
 libraries that version and release independently. The PostgreSQL extension under
-`extensions/money-pg` is a separate, excluded workspace.
+The PostgreSQL extension is maintained in the separate
+[kamu-money-pg repository](https://github.com/pt-immer/kamu-money-pg).
 
 ## Setup
 
@@ -44,25 +45,6 @@ enforced coverage.
 `just check-all` is intentionally smaller. It is useful while editing, but is
 not a release or pre-push barrier.
 
-### Extension changes
-
-Enter the excluded lane through the root passthrough:
-
-```sh
-just pg             # list lane recipes
-just pg gate-offline
-just gate-all       # root gate plus the developer lane gate
-just pg gate-pg-release  # native YugabyteDB correctness proof
-just pg test-yb-deployment  # cluster, read replica, concurrency, restore
-```
-
-`just gate-all` needs Docker and can take hours. Run it before pushing a change
-under `extensions/money-pg`. Run `just pg gate-pg-release` before an extension
-release; it includes the from-source native YugabyteDB build, the byte-exact A/B
-against upstream PostgreSQL 15 and the ported case suite, which the ordinary
-development gate omits. The deployment suites are separate: see
-`just pg test-yb-deployment`.
-
 ### Test conventions
 
 Ordinary tests run with
@@ -73,8 +55,7 @@ doctests from their measurements. Preserve an explicit doctest owner when
 adding or splitting test aggregates.
 
 Do not use workspace-wide `--all-features`. `kamu-logging` has mutually
-exclusive native and wasm features, and pgrx features select one PostgreSQL
-major. The Justfiles hold the supported matrices.
+exclusive native and wasm features. The Justfile holds the supported matrices.
 
 Each crate that carries a line-coverage floor states it in its own `cov-*`
 recipe and nowhere else, beside the reason it sits where it does; `just cov-all`
@@ -121,13 +102,8 @@ dependency availability, and crates.io state before the protected `crates-io`
 environment approves publishing exactly one crate. A lockfile-only refresh does
 not require a version bump; a crate source or manifest change does.
 
-Releasing `kamu-money-core` runs one more job afterwards: the extension lane is
-compiled from this tree and tested against the published `kamu-money-core`
-rather than this tree's copy of it, and only when the released version satisfies
-the requirement the lane declares. It waits for the sparse index first, and it holds no
-registry token. Because it runs after the version is immutable, it reports
-rather than prevents — if it fails, the published version is wrong for the lane
-and the answer is to yank it and release a fixed one, not to retry the job.
+The PostgreSQL extension consumes published core releases independently.
+Its dependency-update PRs own extension integration validation.
 
 The SNAP family must publish in dependency order:
 
@@ -138,10 +114,6 @@ The SNAP family must publish in dependency order:
 Wait for the crates.io index between tiers. Cargo cannot package a crate while
 an in-workspace dependency—even an optional one—is unavailable from the
 registry.
-
-The excluded `kamu-money-pg` lane may have a versioned GitHub Release, but its
-workflow stops before crates.io. It is a native extension, not a publishable Rust
-library.
 
 ## Updating standards data
 

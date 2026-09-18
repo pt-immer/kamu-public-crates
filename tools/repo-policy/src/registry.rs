@@ -117,14 +117,6 @@ pub fn fetch(name: &str) -> Result<Entry, Unreadable> {
     Err(Unreadable(format!("crates.io lookup failed after {ATTEMPTS} attempts for {name}: {last}")))
 }
 
-/// Whether a version satisfies a Cargo requirement.
-pub fn matches(requirement: &str, version: &str) -> Result<bool, Unreadable> {
-    let request = requirement_of(requirement)?;
-    let version = Version::parse(version)
-        .map_err(|error| Unreadable(format!("invalid version {version:?}: {error}")))?;
-    Ok(request.matches(&version))
-}
-
 fn requirement_of(requirement: &str) -> Result<VersionReq, Unreadable> {
     VersionReq::parse(requirement)
         .map_err(|error| Unreadable(format!("invalid requirement {requirement:?}: {error}")))
@@ -214,13 +206,13 @@ mod tests {
         ] {
             for version in accepted {
                 assert!(
-                    matches(requirement, version).expect("requirement parses"),
+                    pick(releases(&[(version, false)]), &requirement_of(requirement).unwrap()).is_some(),
                     "{requirement} should accept {version}"
                 );
             }
             for version in rejected {
                 assert!(
-                    !matches(requirement, version).expect("requirement parses"),
+                    !pick(releases(&[(version, false)]), &requirement_of(requirement).unwrap()).is_some(),
                     "{requirement} should reject {version}"
                 );
             }
@@ -229,8 +221,11 @@ mod tests {
 
     #[test]
     fn a_prerelease_needs_a_requirement_that_names_one() {
-        assert!(!matches("1.2.3", "1.2.3-rc.1").expect("requirement parses"));
-        assert!(matches(">=1.2.3-rc.1, <1.2.3", "1.2.3-rc.2").expect("requirement parses"));
+        assert!(pick(releases(&[("1.2.3-rc.1", false)]), &requirement_of("1.2.3").unwrap()).is_none());
+        assert!(
+            pick(releases(&[("1.2.3-rc.2", false)]), &requirement_of(">=1.2.3-rc.1, <1.2.3").unwrap())
+                .is_some()
+        );
     }
 
     #[test]

@@ -5,8 +5,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const BASE_CLASSES: [&str; 9] =
-    ["docs", "iso3166", "logging", "money", "moneypg", "shared", "shell", "snap", "tools"];
+pub const BASE_CLASSES: [&str; 8] =
+    ["docs", "iso3166", "logging", "money", "shared", "shell", "snap", "tools"];
 
 /// A change to any of these bears on every crate: the lockfile and root manifest resolve them
 /// all, the Justfile defines every recipe, the workflows define every job, and `scripts/` holds
@@ -57,13 +57,13 @@ pub struct Derived {
 /// No entry is narrowed by inspecting diff content. This module receives paths, not hunks; a job
 /// missed by a content heuristic fails quietly, and the fail-closed direction is the one that
 /// cannot certify an unproven change.
-pub const DERIVED_CLASSES: [Derived; 9] = [
+pub const DERIVED_CLASSES: [Derived; 8] = [
     Derived {
         name: "rust",
         sources: &["iso3166", "logging", "money", "snap", "shared", "tools"],
         reason: "fmt, workspace Clippy and the workspace test job resolve every member in one \
                  graph, so any member's source is an input to all of them; `tools/` is a member \
-                 like any other, and its tests read files rather than running any lane container",
+                 like any other, and its tests read files rather than running database containers",
     },
     Derived { name: "iso", sources: &["iso3166", "shared"], reason: "the kamu-iso3166 jobs" },
     Derived { name: "log", sources: &["logging", "shared"], reason: "the kamu-logging jobs" },
@@ -73,12 +73,6 @@ pub const DERIVED_CLASSES: [Derived; 9] = [
         sources: &["snap", "shared"],
         reason: "one class for six crates: they depend on each other, so testing one without the \
                  others proves less than it appears to",
-    },
-    Derived {
-        name: "moneypg",
-        sources: &["moneypg", "shared"],
-        reason: "the excluded lane patches kamu-money-core to a local path and compiles it, so \
-                 that crate's package inputs are inputs to this lane as well",
     },
     Derived {
         name: "worker",
@@ -122,22 +116,14 @@ pub fn classify_path(path: &str) -> BTreeSet<&'static str> {
         classes.insert("iso3166");
     } else if path.starts_with("crates/logging/") {
         classes.insert("logging");
-    } else if let Some(relative) = path.strip_prefix("crates/money-core/") {
+    } else if path.starts_with("crates/money-core/") {
         classes.insert("money");
-        // Unit tests live inline under `src/`, and a dependency's `#[cfg(test)]` code is never
-        // compiled, so a test-only edit selects a lane it cannot affect. That over-selection is
-        // deliberate: this function receives paths, not diffs.
-        if matches!(relative, "Cargo.toml" | "build.rs")
-            || relative.starts_with("build/")
-            || relative.starts_with("src/")
-            || relative.starts_with("vendor/")
-        {
-            classes.insert("moneypg");
-        }
     } else if path.starts_with("crates/snap-") {
         classes.insert("snap");
     } else if path.starts_with("extensions/money-pg/") {
-        classes.insert("moneypg");
+        // Retired paths still appear as deletions in the extraction diff.
+        // A tracked-file test below prohibits their reintroduction.
+        classes.insert("shared");
     } else if path.starts_with("tools/") {
         classes.insert("tools");
     }
@@ -207,9 +193,9 @@ mod tests {
         for (path, expected) in [
             ("crates/iso3166/src/lib.rs", vec!["iso3166"]),
             ("crates/logging/src/lib.rs", vec!["logging"]),
-            ("crates/money-core/src/lib.rs", vec!["money", "moneypg"]),
+            ("crates/money-core/src/lib.rs", vec!["money"]),
             ("crates/snap-response/src/lib.rs", vec!["snap"]),
-            ("extensions/money-pg/Cargo.toml", vec!["moneypg"]),
+            ("extensions/money-pg/Cargo.toml", vec!["shared"]),
         ] {
             let classes = owned(path);
             for name in expected {
@@ -219,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn money_core_package_inputs_retest_the_extension() {
+    fn money_core_inputs_only_select_public_crate_jobs() {
         for path in [
             "crates/money-core/Cargo.toml",
             "crates/money-core/build.rs",
@@ -229,7 +215,7 @@ mod tests {
         ] {
             let classes = classify_paths([path]).expect("every fixture is owned");
             assert!(classes["money"], "{path} selects money");
-            assert!(classes["moneypg"], "{path} selects moneypg");
+            assert!(!classes.contains_key("moneypg"), "{path} must not select extension builds");
         }
         assert!(
             !owned("crates/money-core/README.md").contains("moneypg"),

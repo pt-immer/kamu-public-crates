@@ -1,7 +1,6 @@
 //! Repository-wide source policy, read as Rust rather than matched as text.
 //!
-//! The scan covers the excluded extension lane as well as the public workspace: a persisted hash
-//! is a persisted hash wherever it is written.
+//! The scan covers every tracked Rust source in the repository.
 
 use std::path::Path;
 

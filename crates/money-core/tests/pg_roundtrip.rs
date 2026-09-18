@@ -39,9 +39,8 @@ fn pg_image() -> (String, String) {
     let reference = std::env::var("KMONEY_PG_IMAGE").unwrap_or_else(|_| {
         panic!(
             "KMONEY_PG_IMAGE is not set.\n\
-             This test runs against the PostgreSQL its caller names, which is held to a major \
-             the extension lane supports. It carries no default, because the default was a \
-             major past end of life.\n\
+             This test runs against the PostgreSQL image its caller names. \
+             Run it through the repository recipe to use the configured image.\n\
              Run it as:  just test-money-db"
         )
     });

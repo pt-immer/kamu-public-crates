@@ -19,12 +19,12 @@ fn no_tracked_rust_constructs_an_unstable_hasher() {
 }
 
 #[test]
-fn the_scan_reaches_the_whole_repository_including_the_excluded_lane() {
+fn the_scan_reaches_the_whole_repository() {
     let files = tracked(&["*.rs"]);
     assert!(files.len() > 50, "tracked Rust source discovery found too few files: {}", files.len());
     assert!(
-        files.iter().any(|path| path.starts_with("extensions/money-pg/")),
-        "the excluded lane is outside the scan"
+        files.iter().any(|path| path.starts_with("crates/money-core/")),
+        "money-core is outside the scan"
     );
 }
 
@@ -56,4 +56,15 @@ fn a_planted_violation_is_found_wherever_it_is_nested() {
     assert_eq!("extensions/example/src/nested/guard.rs", offences[0].file);
 
     fs::remove_dir_all(&root).expect("scratch tree is removable");
+}
+
+#[test]
+fn scrub_refuses_a_directory_whose_tracked_files_cannot_be_read() {
+    let root = std::env::temp_dir().join(format!("repo-policy-scrub-{}", std::process::id()));
+    fs::create_dir_all(&root).expect("scratch directory");
+    fs::write(root.join("Justfile"), repo_policy::read("Justfile")).expect("scratch Justfile");
+    let output = Command::new("just").arg("scrub").current_dir(&root).output().expect("just runs");
+    fs::remove_dir_all(root).expect("remove scratch directory");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("could not scan tracked files"));
 }
