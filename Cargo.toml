@@ -48,7 +48,7 @@ actix-web = { version = "4", default-features = false }
 console = "0.16"
 console_error_panic_hook = "0.1.7"
 opentelemetry = { version = "0.32", default-features = false }
-opentelemetry-otlp = { version = "0.32", default-features = false }
+opentelemetry-otlp = { version = "0.33", default-features = false }
 opentelemetry_sdk = { version = "0.32", default-features = false }
 # `time` no longer sets the workspace MSRV — `sqlx` 0.9 does, declaring
 # rust-version 1.94.0, and kamu-money-core's `sqlx` feature pulls it in. The
