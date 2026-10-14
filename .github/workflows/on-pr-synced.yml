@@ -407,7 +407,7 @@ jobs:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-llvm-cov@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-llvm-cov'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
       - run: just cov
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: lcov-iso3166
           path: target/lcov.info
