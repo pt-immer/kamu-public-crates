@@ -33,7 +33,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(steps.pins.outputs.manifest).cargo_tools['just'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
 
       - name: Parse release tag -> crate + version
         id: parse

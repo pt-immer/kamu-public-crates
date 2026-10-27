@@ -43,7 +43,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch, 2026-07-16
         with:
           toolchain: ${{ fromJSON(steps.pins.outputs.manifest).rust.primary }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - name: Classify every changed path
         id: classify
         env:
@@ -104,7 +104,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just clippy-workspace
 
   clippy-iso3166:
@@ -123,7 +123,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just clippy-iso3166
 
   clippy-logging:
@@ -143,7 +143,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just clippy-logging
 
   clippy-snap:
@@ -162,7 +162,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just clippy-snap
 
   test-workspace:
@@ -186,7 +186,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just test-all
 
   test-iso3166-features:
@@ -204,7 +204,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just test-iso3166
 
   no-std-build:
@@ -223,7 +223,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just build-nostd
 
   build-wasm:
@@ -240,7 +240,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just build-wasm
 
   docs-workspace:
@@ -258,7 +258,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just doc-workspace
 
   docs-iso3166:
@@ -276,7 +276,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just doc-iso3166
 
   deny:
@@ -294,7 +294,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-deny@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-deny'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just deny
 
   lint-docs:
@@ -328,7 +328,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just test-policy
 
   check-worker-example:
@@ -348,7 +348,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
         with:
           workspaces: crates/logging/examples/cloudflare-worker
       - run: just check-worker-example
@@ -368,7 +368,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just check-examples
 
   publish-dry-run:
@@ -386,7 +386,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just publish-all
 
   coverage-iso3166:
@@ -405,7 +405,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-llvm-cov@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-llvm-cov'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just cov
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -426,7 +426,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-llvm-cov@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-llvm-cov'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just cov-logging
 
   build-wasm-snap:
@@ -443,7 +443,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just build-wasm-snap
 
   coverage-snap-crypto:
@@ -460,7 +460,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-llvm-cov@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-llvm-cov'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just cov-snap-crypto
 
   coverage-snap-response:
@@ -477,7 +477,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-llvm-cov@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-llvm-cov'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just cov-snap-response
 
   clippy-money:
@@ -494,7 +494,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just clippy-money
 
   test-money:
@@ -511,7 +511,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just test-money
 
   test-money-db:
@@ -527,7 +527,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just test-money-db
 
   docs-money:
@@ -543,7 +543,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just doc-money
 
   coverage-money:
@@ -560,7 +560,7 @@ jobs:
       - uses: taiki-e/install-action@288e746965032cfcc232e09af2daf5f23c14d780 # v2
         with:
           tool: just@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['just'].version }},cargo-llvm-cov@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-llvm-cov'].version }},cargo-nextest@${{ fromJSON(needs.changes.outputs.manifest).cargo_tools['cargo-nextest'].version }}
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: Swatinem/rust-cache@c8037a86dde8214a8310e9f54a8fc61ab362aa31 # v2
       - run: just cov-money
 
 
